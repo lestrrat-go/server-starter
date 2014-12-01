@@ -2,19 +2,62 @@ package server_starter
 
 import (
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
-//	"path/filepath"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
 
+var echoServerTxt = `package main
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+	"github.com/lestrrat/go-server-starter/listener"
+)
+
+func main() {
+	listeners, err := listener.ListenAll()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to listen: %s\n", err)
+		os.Exit(1)
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(w, r.Body)
+	})
+	for _, l := range listeners {
+		http.Serve(l, handler)
+	}
+
+	loop := false
+	sigCh := make(chan os.Signal)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
+	for loop {
+		select {
+		case <-sigCh:
+			loop = false
+		default:
+			time.Sleep(time.Second)
+		}
+	}
+}
+`
+
 func TestRun(t *testing.T) {
-/*
-	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%d", os.GetPid()))
+	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%d", os.Getpid()))
 	if err != nil {
 		t.Errorf("Failed to create temp directory: %s", err)
 		return
@@ -27,15 +70,21 @@ func TestRun(t *testing.T) {
 		t.Errorf("Failed to create %s: %s", srcFile, err)
 		return
 	}
-	defer f.Close()
-*/
+	io.WriteString(f, echoServerTxt)
+	f.Close()
+
+	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "echod"), ".")
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Errorf("Failed to compile %s: %s\n%s", dir, err, output)
+		return
+	}
 
 	ports := []int{9090, 8080}
 	sd := SuperDaemon{
 		ports:     ports,
 		listeners: make([]net.Listener, len(ports)),
-		files:     make([]*os.File, len(ports)),
-		stopCh:    make(chan struct{}),
+		Command:   filepath.Join(dir, "echod"),
 	}
 
 	doneCh := make(chan struct{})

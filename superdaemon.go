@@ -15,7 +15,6 @@ type SuperDaemon struct {
 	interval     time.Duration
 	signalOnHUP  os.Signal
 	signalOnTERM os.Signal
-	stopCh       chan struct{}
 	// you can't set this in go:	backlog
 	statusFile string
 	pidFile    string
@@ -23,7 +22,6 @@ type SuperDaemon struct {
 	ports      []int
 	paths      []string
 	listeners  []net.Listener
-	files      []*os.File
 	Command    string
 	Args       []string
 }
@@ -39,10 +37,9 @@ func (sd *SuperDaemon) Close() {
 }
 
 func (sd SuperDaemon) Stop() {
-	if sd.stopCh == nil {
-		return
-	}
-	sd.stopCh <- struct{}{}
+	fmt.Fprintf(os.Stderr, "Calling stop()\n")
+	p, _ := os.FindProcess(os.Getpid())
+	p.Signal(syscall.SIGTERM)
 }
 
 func grabExitStatus(st processState) syscall.WaitStatus {
@@ -76,25 +73,15 @@ func (d dummyProcessState) Sys() interface {} {
 func (sd *SuperDaemon) Run() error {
 	defer sd.Teardown()
 
-	ports := make([]string, len(sd.ports))
-
 	for i, port := range sd.ports {
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err != nil {
 			return err
 		}
 
-		f, err := l.(*net.TCPListener).File()
-		if err != nil {
-			return err
-		}
-
-		ports[i] = fmt.Sprintf("%d=%d", port, f.Fd())
 		sd.listeners[i] = l
-		sd.files[i] = f
 	}
 
-	os.Setenv("SERVER_STARTER_PORT", strings.Join(ports, ";"))
 	os.Setenv("SERVER_STARTER_GENERATION", "0")
 
 	// XXX Not portable
@@ -129,6 +116,9 @@ func (sd *SuperDaemon) Run() error {
 					// delete $old_workers{$died_worker}
 				}
 			case _ = <-sigCh:
+				// Temporary fix
+				p.Signal(syscall.SIGTERM)
+				return nil
 				/*
 					switch sig {
 					case syscall.SIGHUP:
@@ -166,6 +156,26 @@ func (sd *SuperDaemon) StartWorker(ch chan processState) *os.Process {
 		if sd.dir != "" {
 			cmd.Dir = sd.dir
 		}
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		files := make([]*os.File, len(sd.ports))
+		ports := make([]string, len(sd.ports))
+		for i, l := range sd.listeners {
+			f, err := l.(*net.TCPListener).File()
+			if err != nil {
+				panic(err)
+			}
+			defer f.Close()
+
+			// file descriptor numbers in ExtraFiles turn out to be
+			// index + 3, so we can just hard code it
+			ports[i] = fmt.Sprintf("%d=%d", sd.ports[i], i+3)
+			files[i] = f
+		}
+
+		os.Setenv("SERVER_STARTER_PORT", strings.Join(ports, ";"))
+		cmd.ExtraFiles = files
 
 		if err := cmd.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to exec %s: %s\n", cmd.Path, err)
@@ -211,13 +221,6 @@ func (sd *SuperDaemon) StartWorker(ch chan processState) *os.Process {
 }
 
 func (sd *SuperDaemon) Teardown() error {
-	for _, f := range sd.files {
-		if f == nil {
-			continue
-		}
-		f.Close()
-	}
-
 	for _, l := range sd.listeners {
 		if l == nil {
 			continue
