@@ -73,12 +73,15 @@ func main() {
 func _main() (st int) {
 	st = 1
 
-	opts := &options{}
+	opts := &options{OptInterval: -1}
 	p := flags.NewParser(opts, flags.PrintErrors|flags.PassDoubleDash)
 	args, err := p.Parse()
 	if err != nil {
 		showHelp()
 		return
+	}
+	if opts.OptInterval < 0 {
+		opts.OptInterval = time.Second
 	}
 	opts.OptCommand = args[0]
 	if len(args) > 1 {

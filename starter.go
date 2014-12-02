@@ -150,7 +150,7 @@ func (s *Starter) Run() error {
 	os.Setenv("SERVER_STARTER_GENERATION", fmt.Sprintf("%d", s.generation))
 
 	// XXX Not portable
-	sigCh := make(chan os.Signal)
+	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh,
 		syscall.SIGHUP,
 		syscall.SIGINT,
@@ -160,13 +160,15 @@ func (s *Starter) Run() error {
 
 	// Okay, ready to launch the program now...
 	workerCh := make(chan processState)
-	p := s.StartWorker(workerCh)
+	p := s.StartWorker(sigCh, workerCh)
 	oldWorkers := make(map[int]int)
 	var sigReceived os.Signal
 	var sigToSend os.Signal
 
 	defer func() {
-		oldWorkers[p.Pid] = s.generation
+		if p != nil {
+			oldWorkers[p.Pid] = s.generation
+		}
 
 		fmt.Fprintf(os.Stderr, "received %s, sending %s to all workers:",
 			signame(sigReceived),
@@ -219,7 +221,7 @@ func (s *Starter) Run() error {
 				if p.Pid == st.Pid() { // current worker
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
-					p = s.StartWorker(workerCh)
+					p = s.StartWorker(sigCh, workerCh)
 					// lastRestartTime = time.Now()
 				} else {
 					exitSt := grabExitStatus(st)
@@ -228,6 +230,7 @@ func (s *Starter) Run() error {
 				}
 			case sigReceived = <-sigCh:
 				// Temporary fix
+fmt.Fprintf(os.Stderr, "received %v\n", sigReceived)
 				switch sigReceived {
 				case syscall.SIGHUP:
 					// When we receive a HUP signal, we need to spawn a new worker
@@ -245,7 +248,7 @@ func (s *Starter) Run() error {
 			if restart > 1 || restart > 0 && len(oldWorkers) == 0 {
 				fmt.Fprintf(os.Stderr, "spawning a new worker (num_old_workers=TODO)\n")
 				oldWorkers[p.Pid] = s.generation
-				p = s.StartWorker(workerCh)
+				p = s.StartWorker(sigCh, workerCh)
 				fmt.Fprintf(os.Stderr, "new worker is now running, sending $opts->{signal_on_hup} to old workers:")
 				size := len(oldWorkers)
 				if size == 0 {
@@ -307,7 +310,7 @@ const (
 )
 
 // StartWorker starts the actual command.
-func (s *Starter) StartWorker(ch chan processState) *os.Process {
+func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Process {
 	// Don't give up until we're running.
 	for {
 		pid := -1
@@ -344,39 +347,63 @@ func (s *Starter) StartWorker(ch chan processState) *os.Process {
 		// Now start!
 		if err := cmd.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to exec %s: %s\n", cmd.Path, err)
-			goto FAILED_TO_START
-		}
+		} else {
+			// Save pid...
+			pid = cmd.Process.Pid
+			fmt.Fprintf(os.Stderr, "starting new worker %d\n", pid)
 
-		// Save pid...
-		pid = cmd.Process.Pid
-		fmt.Fprintf(os.Stderr, "starting new worker %d\n", pid)
-
-		// Wait for interval before checking if the process is alive
-		time.Sleep(s.interval)
-
-		// XXX We punted this
-		// if ((grep { $_ ne 'HUP' } @signals_received)
-
-		// Check if we can find a process by its pid
-		if p, err := os.FindProcess(pid); err == nil {
-			// No error? We were successful! Make sure we capture
-			// the program exiting
-			go func() {
-				err := cmd.Wait()
-				if err != nil {
-					ch <- err.(*exec.ExitError).ProcessState
-				} else {
-					ch <- &dummyProcessState{pid: pid, status: 0}
+			// Wait for interval before checking if the process is alive
+			tch := time.After(s.interval)
+			sigs := []os.Signal{}
+			for loop := true; loop; {
+				select {
+				case <-tch:
+					// bail out
+					loop = false
+				case sig := <-sigCh:
+					sigs = append(sigs, sig)
 				}
-			}()
-			// Bail out
-			return p
-		}
+			}
 
+			// if received any signals, during the wait, we bail out
+			gotSig := false
+			if len(sigs) > 0 {
+				for _, sig := range sigs {
+					// we need to resend these signals so it can be caught in the
+					// main routine...
+					go func() { sigCh <- sig }()
+					if sysSig, ok := sig.(syscall.Signal); ok {
+						if sysSig != syscall.SIGHUP {
+							gotSig = true
+						}
+					}
+				}
+			}
+
+			// Check if we can find a process by its pid
+			p, err := os.FindProcess(pid)
+			if gotSig || err == nil {
+				// No error? We were successful! Make sure we capture
+				// the program exiting
+				go func() {
+					err := cmd.Wait()
+					if err != nil {
+						ch <- err.(*exec.ExitError).ProcessState
+					} else {
+						ch <- &dummyProcessState{pid: pid, status: 0}
+					}
+				}()
+				// Bail out
+				return p
+			}
+
+		}
 		// If we fall through here, we prematurely exited :/
-	FAILED_TO_START:
 		// Make sure to wait to release resources
 		cmd.Wait()
+		for _, f := range cmd.ExtraFiles {
+			f.Close()
+		}
 
 		fmt.Fprintf(os.Stderr, "new worker %d seems to have failed to start\n", pid)
 	}
