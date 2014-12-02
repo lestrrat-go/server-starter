@@ -1,4 +1,4 @@
-package server_starter
+package starter
 
 import (
 	"bufio"
@@ -25,7 +25,7 @@ func reloadEnv() (map[string]string, error) {
 		return nil, errNoEnv
 	}
 
-	var m map[string]string = nil
+	var m map[string]string
 
 	filepath.Walk(dn, func(path string, fi os.FileInfo, err error) error {
 		// Ignore errors

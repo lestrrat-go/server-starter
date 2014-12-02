@@ -1,4 +1,4 @@
-package server_starter
+package starter
 
 import (
 	"fmt"
@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -82,11 +81,13 @@ func TestRun(t *testing.T) {
 	}
 
 	ports := []int{9090, 8080}
-	sd := Starter{
-		ports:        ports,
-		listeners:    make([]net.Listener, len(ports)),
-		signalOnTERM: syscall.SIGTERM,
-		Command:      filepath.Join(dir, "echod"),
+	sd, err := NewStarter(&Config{
+		Ports:   ports,
+		Command: filepath.Join(dir, "echod"),
+	})
+	if err != nil {
+		t.Errorf("Failed to create starter: %s", err)
+		return
 	}
 
 	doneCh := make(chan struct{})
