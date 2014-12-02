@@ -37,7 +37,6 @@ func (s *Starter) Close() {
 }
 
 func (s Starter) Stop() {
-	fmt.Fprintf(os.Stderr, "Calling stop()\n")
 	p, _ := os.FindProcess(os.Getpid())
 	p.Signal(syscall.SIGTERM)
 }
@@ -159,6 +158,9 @@ func (s *Starter) StartWorker(ch chan processState) *os.Process {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
+		// This whole section here basically sets up the env
+		// var and the file descriptors that are inherited by the
+		// external process
 		files := make([]*os.File, len(s.ports))
 		ports := make([]string, len(s.ports))
 		for i, l := range s.listeners {
@@ -173,10 +175,11 @@ func (s *Starter) StartWorker(ch chan processState) *os.Process {
 			ports[i] = fmt.Sprintf("%d=%d", s.ports[i], i+3)
 			files[i] = f
 		}
-
-		os.Setenv("SERVER_STARTER_PORT", strings.Join(ports, ";"))
 		cmd.ExtraFiles = files
 
+		os.Setenv("SERVER_STARTER_PORT", strings.Join(ports, ";"))
+
+		// Now start!
 		if err := cmd.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to exec %s: %s\n", cmd.Path, err)
 			goto FAILED_TO_START
