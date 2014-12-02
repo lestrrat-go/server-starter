@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-type SuperDaemon struct {
+type Starter struct {
 	interval     time.Duration
 	signalOnHUP  os.Signal
 	signalOnTERM os.Signal
@@ -26,17 +26,17 @@ type SuperDaemon struct {
 	Args       []string
 }
 
-func (sd *SuperDaemon) Close() {
-	if sd.statusFile != "" {
-		os.Remove(sd.statusFile)
+func (s *Starter) Close() {
+	if s.statusFile != "" {
+		os.Remove(s.statusFile)
 	}
 
-	if sd.pidFile != "" {
-		os.Remove(sd.pidFile)
+	if s.pidFile != "" {
+		os.Remove(s.pidFile)
 	}
 }
 
-func (sd SuperDaemon) Stop() {
+func (s Starter) Stop() {
 	fmt.Fprintf(os.Stderr, "Calling stop()\n")
 	p, _ := os.FindProcess(os.Getpid())
 	p.Signal(syscall.SIGTERM)
@@ -70,16 +70,16 @@ func (d dummyProcessState) Sys() interface {} {
 	return d.status
 }
 
-func (sd *SuperDaemon) Run() error {
-	defer sd.Teardown()
+func (s *Starter) Run() error {
+	defer s.Teardown()
 
-	for i, port := range sd.ports {
+	for i, port := range s.ports {
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err != nil {
 			return err
 		}
 
-		sd.listeners[i] = l
+		s.listeners[i] = l
 	}
 
 	os.Setenv("SERVER_STARTER_GENERATION", "0")
@@ -90,7 +90,7 @@ func (sd *SuperDaemon) Run() error {
 
 	// Okay, ready to launch the program now...
 	workerCh := make(chan processState)
-	p := sd.StartWorker(workerCh)
+	p := s.StartWorker(workerCh)
 
 //	var lastRestartTime time.Time
 	for { // outer loop
@@ -107,7 +107,7 @@ func (sd *SuperDaemon) Run() error {
 				if p.Pid == st.Pid() { // current worker
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
-					p = sd.StartWorker(workerCh)
+					p = s.StartWorker(workerCh)
 					// lastRestartTime = time.Now()
 				} else {
 					exitSt := grabExitStatus(st)
@@ -123,9 +123,9 @@ func (sd *SuperDaemon) Run() error {
 					switch sig {
 					case syscall.SIGHUP:
 					case syscall.SIGTERM:
-						sd.terminate(sd.signalOnTERM)
+						s.terminate(s.signalOnTERM)
 					default:
-						sd.terminate(syscall.SIGTERM)
+						s.terminate(syscall.SIGTERM)
 						return nil
 					}
 				*/
@@ -136,7 +136,7 @@ func (sd *SuperDaemon) Run() error {
 	return nil
 }
 
-func (sd *SuperDaemon) terminate(sig os.Signal) {
+func (s *Starter) terminate(sig os.Signal) {
 
 }
 
@@ -148,20 +148,20 @@ const (
 )
 
 // StartWorker starts the actual command.
-func (sd *SuperDaemon) StartWorker(ch chan processState) *os.Process {
+func (s *Starter) StartWorker(ch chan processState) *os.Process {
 	// Don't give up until we're running.
 	for {
 		pid := -1
-		cmd := exec.Command(sd.Command, sd.Args...)
-		if sd.dir != "" {
-			cmd.Dir = sd.dir
+		cmd := exec.Command(s.Command, s.Args...)
+		if s.dir != "" {
+			cmd.Dir = s.dir
 		}
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
-		files := make([]*os.File, len(sd.ports))
-		ports := make([]string, len(sd.ports))
-		for i, l := range sd.listeners {
+		files := make([]*os.File, len(s.ports))
+		ports := make([]string, len(s.ports))
+		for i, l := range s.listeners {
 			f, err := l.(*net.TCPListener).File()
 			if err != nil {
 				panic(err)
@@ -170,7 +170,7 @@ func (sd *SuperDaemon) StartWorker(ch chan processState) *os.Process {
 
 			// file descriptor numbers in ExtraFiles turn out to be
 			// index + 3, so we can just hard code it
-			ports[i] = fmt.Sprintf("%d=%d", sd.ports[i], i+3)
+			ports[i] = fmt.Sprintf("%d=%d", s.ports[i], i+3)
 			files[i] = f
 		}
 
@@ -187,7 +187,7 @@ func (sd *SuperDaemon) StartWorker(ch chan processState) *os.Process {
 		fmt.Fprintf(os.Stderr, "starting new worker %d\n", pid)
 
 		// Wait for interval before checking if the process is alive
-		time.Sleep(sd.interval)
+		time.Sleep(s.interval)
 
 		// XXX We punted this
 		// if ((grep { $_ ne 'HUP' } @signals_received)
@@ -220,8 +220,8 @@ func (sd *SuperDaemon) StartWorker(ch chan processState) *os.Process {
 	return nil
 }
 
-func (sd *SuperDaemon) Teardown() error {
-	for _, l := range sd.listeners {
+func (s *Starter) Teardown() error {
+	for _, l := range s.listeners {
 		if l == nil {
 			continue
 		}

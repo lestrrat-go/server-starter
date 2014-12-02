@@ -81,7 +81,7 @@ func TestRun(t *testing.T) {
 	}
 
 	ports := []int{9090, 8080}
-	sd := SuperDaemon{
+	sd := Starter{
 		ports:     ports,
 		listeners: make([]net.Listener, len(ports)),
 		Command:   filepath.Join(dir, "echod"),
