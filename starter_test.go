@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -82,9 +83,10 @@ func TestRun(t *testing.T) {
 
 	ports := []int{9090, 8080}
 	sd := Starter{
-		ports:     ports,
-		listeners: make([]net.Listener, len(ports)),
-		Command:   filepath.Join(dir, "echod"),
+		ports:        ports,
+		listeners:    make([]net.Listener, len(ports)),
+		signalOnTERM: syscall.SIGTERM,
+		Command:      filepath.Join(dir, "echod"),
 	}
 
 	doneCh := make(chan struct{})

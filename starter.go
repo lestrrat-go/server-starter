@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ type Starter struct {
 	ports      []int
 	paths      []string
 	listeners  []net.Listener
+	generation int
 	Command    string
 	Args       []string
 }
@@ -65,8 +67,22 @@ func (d dummyProcessState) Pid() int {
 	return d.pid
 }
 
-func (d dummyProcessState) Sys() interface {} {
+func (d dummyProcessState) Sys() interface{} {
 	return d.status
+}
+
+var niceSigNames = map[syscall.Signal]string{
+	syscall.SIGHUP:  "HUP",
+	syscall.SIGINT:  "INT",
+	syscall.SIGQUIT: "QUIT",
+	syscall.SIGTERM: "TERM",
+}
+
+func signame(s os.Signal) string {
+	if ss, ok := s.(syscall.Signal); ok {
+		return niceSigNames[ss]
+	}
+	return "UNKNOWN"
 }
 
 func (s *Starter) Run() error {
@@ -81,7 +97,8 @@ func (s *Starter) Run() error {
 		s.listeners[i] = l
 	}
 
-	os.Setenv("SERVER_STARTER_GENERATION", "0")
+	s.generation = 0
+	os.Setenv("SERVER_STARTER_GENERATION", fmt.Sprintf("%d", s.generation))
 
 	// XXX Not portable
 	sigCh := make(chan os.Signal)
@@ -90,8 +107,45 @@ func (s *Starter) Run() error {
 	// Okay, ready to launch the program now...
 	workerCh := make(chan processState)
 	p := s.StartWorker(workerCh)
+	oldWorkers := make(map[int]int)
+	var sigReceived os.Signal
+	var sigToSend os.Signal
 
-//	var lastRestartTime time.Time
+	defer func() {
+		oldWorkers[p.Pid] = s.generation
+
+		fmt.Fprintf(os.Stderr, "received %s, sending %s to all workers:",
+			signame(sigReceived),
+			signame(sigToSend),
+		)
+		size := len(oldWorkers)
+		i := 0
+		for pid := range oldWorkers {
+			i++
+			fmt.Fprintf(os.Stderr, "%d", pid)
+			if i < size {
+				fmt.Fprintf(os.Stderr, ",")
+			}
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+
+		for pid := range oldWorkers {
+			worker, err := os.FindProcess(pid)
+			if err != nil {
+				continue
+			}
+			worker.Signal(sigToSend)
+		}
+
+		for len(oldWorkers) > 0 {
+			st := <-workerCh
+			fmt.Fprintf(os.Stderr, "worker %d died, status:%d\n", st.Pid(), grabExitStatus(st))
+			delete(oldWorkers, st.Pid())
+		}
+		fmt.Fprintf(os.Stderr, "exiting\n")
+	}()
+
+	//	var lastRestartTime time.Time
 	for { // outer loop
 		_, err := reloadEnv()
 		if err != nil {
@@ -100,6 +154,11 @@ func (s *Starter) Run() error {
 
 		// Just wait for the worker to exit, or for us to receive a signal
 		for {
+			// restart = 2: force restart
+			// restart = 1 and no workers: force restart
+			// restart = 0: no restart
+			restart := 0
+
 			select {
 			case st := <-workerCh:
 				// oops, the worker exited? check for its pid
@@ -111,28 +170,75 @@ func (s *Starter) Run() error {
 				} else {
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "old worker %d died, status:%d\n", st.Pid(), exitSt)
-
-					// delete $old_workers{$died_worker}
+					delete(oldWorkers, st.Pid())
 				}
-			case _ = <-sigCh:
+			case sigReceived = <-sigCh:
 				// Temporary fix
-				p.Signal(syscall.SIGTERM)
-				return nil
-				/*
-					switch sig {
-					case syscall.SIGHUP:
-					case syscall.SIGTERM:
-						s.terminate(s.signalOnTERM)
-					default:
-						s.terminate(syscall.SIGTERM)
-						return nil
+				switch sigReceived {
+				case syscall.SIGHUP:
+					// When we receive a HUP signal, we need to spawn a new worker
+					fmt.Fprintf(os.Stderr, "received HUP (num_old_workers=TODO)\n")
+					restart = 1
+				case syscall.SIGTERM:
+					sigToSend = s.signalOnTERM
+					return nil
+				default:
+					sigToSend = syscall.SIGTERM
+					return nil
+				}
+			}
+
+			if restart > 1 || restart > 0 && len(oldWorkers) == 0 {
+				fmt.Fprintf(os.Stderr, "spawning a new worker (num_old_workers=TODO)\n")
+				oldWorkers[p.Pid] = s.generation
+				p = s.StartWorker(workerCh)
+				fmt.Fprintf(os.Stderr, "new worker is now running, sending $opts->{signal_on_hup} to old workers:")
+				size := len(oldWorkers)
+				if size == 0 {
+					fmt.Fprintf(os.Stderr, "none\n")
+				} else {
+					i := 0
+					for pid := range oldWorkers {
+						i++
+						fmt.Fprintf(os.Stderr, "%d", pid)
+						if i < size {
+							fmt.Fprintf(os.Stderr, ",")
+						}
 					}
-				*/
+					fmt.Fprintf(os.Stderr, "\n")
+
+					killOldDelay := getKillOldDelay()
+					fmt.Fprintf(os.Stderr, "sleep %d secs\n", int(killOldDelay/time.Second))
+					if killOldDelay > 0 {
+						time.Sleep(killOldDelay)
+					}
+
+					fmt.Fprintf(os.Stderr, "killing old workers\n")
+
+					for pid := range oldWorkers {
+						worker, err := os.FindProcess(pid)
+						if err != nil {
+							continue
+						}
+						worker.Signal(s.signalOnHUP)
+					}
+				}
 			}
 		}
 	}
 
 	return nil
+}
+
+func getKillOldDelay() time.Duration {
+	// Ignore errors.
+	delay, _ := strconv.ParseInt(os.Getenv("KILL_OLD_DELAY"), 10, 0)
+	autoRestart, _ := strconv.ParseBool(os.Getenv("ENABLE_AUTO_RESTART"))
+	if autoRestart && delay == 0 {
+		delay = 5
+	}
+
+	return time.Duration(delay) * time.Second
 }
 
 func (s *Starter) terminate(sig os.Signal) {
@@ -177,7 +283,9 @@ func (s *Starter) StartWorker(ch chan processState) *os.Process {
 		}
 		cmd.ExtraFiles = files
 
+		s.generation++
 		os.Setenv("SERVER_STARTER_PORT", strings.Join(ports, ";"))
+		os.Setenv("SERVER_STARTER_GENERATION", fmt.Sprintf("%d", s.generation))
 
 		// Now start!
 		if err := cmd.Start(); err != nil {
