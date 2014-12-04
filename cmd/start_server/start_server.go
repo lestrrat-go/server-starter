@@ -86,6 +86,12 @@ func _main() (st int) {
 	if opts.OptInterval < 0 {
 		opts.OptInterval = 1
 	}
+
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "server program not specified\n")
+		return
+	}
+
 	opts.OptCommand = args[0]
 	if len(args) > 1 {
 		opts.OptArgs = args[1:]
