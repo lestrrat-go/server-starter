@@ -12,13 +12,58 @@ import (
 	"time"
 )
 
+var niceSigNames map[syscall.Signal]string
+var niceNameToSigs map[string]syscall.Signal
+
+func init() {
+	niceSigNames = map[syscall.Signal]string{
+		syscall.SIGABRT: "ABRT",
+		syscall.SIGALRM: "ALRM",
+		syscall.SIGBUS:  "BUS",
+		syscall.SIGCHLD: "CHLD",
+		syscall.SIGCONT: "CONT",
+		syscall.SIGEMT:  "EMT",
+		syscall.SIGFPE:  "FPE",
+		syscall.SIGHUP:  "HUP",
+		syscall.SIGILL:  "ILL",
+		syscall.SIGINFO: "INFO",
+		syscall.SIGINT:  "INT",
+		syscall.SIGIO:   "IO",
+		//	syscall.SIGIOT:    "IOT",
+		syscall.SIGKILL:   "KILL",
+		syscall.SIGPIPE:   "PIPE",
+		syscall.SIGPROF:   "PROF",
+		syscall.SIGQUIT:   "QUIT",
+		syscall.SIGSEGV:   "SEGV",
+		syscall.SIGSTOP:   "STOP",
+		syscall.SIGSYS:    "SYS",
+		syscall.SIGTERM:   "TERM",
+		syscall.SIGTRAP:   "TRAP",
+		syscall.SIGTSTP:   "TSTP",
+		syscall.SIGTTIN:   "TTIN",
+		syscall.SIGTTOU:   "TTOU",
+		syscall.SIGURG:    "URG",
+		syscall.SIGUSR1:   "USR1",
+		syscall.SIGUSR2:   "USR2",
+		syscall.SIGVTALRM: "VTALRM",
+		syscall.SIGWINCH:  "WINCH",
+		syscall.SIGXCPU:   "XCPU",
+		syscall.SIGXFSZ:   "GXFSZ",
+	}
+
+	niceNameToSigs := make(map[string]syscall.Signal)
+	for sig, name := range niceSigNames {
+		niceNameToSigs[name] = sig
+	}
+}
+
 type Config interface {
 	Args() []string
 	Command() string
 	Dir() string             // Dirctory to chdir to before executing the command
 	Interval() time.Duration // Time between checks for liveness
 	PidFile() string
-	Ports() []int            // Ports to bind to
+	Ports() []string         // Ports to bind to (addr:port or port, so it's a string)
 	Paths() []string         // Paths (UNIX domain socket) to bind to
 	SignalOnHUP() os.Signal  // Signal to send when HUP is received
 	SignalOnTERM() os.Signal // Signal to send when TERM is received
@@ -33,7 +78,7 @@ type Starter struct {
 	statusFile string
 	pidFile    string
 	dir        string
-	ports      []int
+	ports      []string
 	paths      []string
 	listeners  []net.Listener
 	generation int
@@ -120,13 +165,6 @@ func (d dummyProcessState) Sys() interface{} {
 	return d.status
 }
 
-var niceSigNames = map[syscall.Signal]string{
-	syscall.SIGHUP:  "HUP",
-	syscall.SIGINT:  "INT",
-	syscall.SIGQUIT: "QUIT",
-	syscall.SIGTERM: "TERM",
-}
-
 func signame(s os.Signal) string {
 	if ss, ok := s.(syscall.Signal); ok {
 		return niceSigNames[ss]
@@ -134,15 +172,30 @@ func signame(s os.Signal) string {
 	return "UNKNOWN"
 }
 
+func SigFromName(n string) os.Signal {
+	if sig, ok := niceNameToSigs[n]; ok {
+		return sig
+	}
+	return nil
+}
+
 func (s *Starter) Run() error {
 	defer s.Teardown()
 
-	for i, port := range s.ports {
-		l, err := net.Listen("tcp4", fmt.Sprintf(":%d", port))
-		if err != nil {
-			return err
+	for i, addr := range s.ports {
+		var l net.Listener
+		port, err := strconv.ParseInt(addr, 10, 64)
+		if err == nil { // Looks like port only
+			l, err = net.Listen("tcp4", fmt.Sprintf(":%d", port))
+			if err != nil {
+				return err
+			}
+		} else {
+			l, err = net.Listen("tcp4", addr)
+			if err != nil {
+				return err
+			}
 		}
-
 		s.listeners[i] = l
 	}
 
@@ -230,12 +283,12 @@ func (s *Starter) Run() error {
 				}
 			case sigReceived = <-sigCh:
 				// Temporary fix
-fmt.Fprintf(os.Stderr, "received %v\n", sigReceived)
 				switch sigReceived {
 				case syscall.SIGHUP:
 					// When we receive a HUP signal, we need to spawn a new worker
 					fmt.Fprintf(os.Stderr, "received HUP (num_old_workers=TODO)\n")
 					restart = 1
+					sigToSend = s.signalOnHUP
 				case syscall.SIGTERM:
 					sigToSend = s.signalOnTERM
 					return nil
@@ -249,7 +302,7 @@ fmt.Fprintf(os.Stderr, "received %v\n", sigReceived)
 				fmt.Fprintf(os.Stderr, "spawning a new worker (num_old_workers=TODO)\n")
 				oldWorkers[p.Pid] = s.generation
 				p = s.StartWorker(sigCh, workerCh)
-				fmt.Fprintf(os.Stderr, "new worker is now running, sending $opts->{signal_on_hup} to old workers:")
+				fmt.Fprintf(os.Stderr, "new worker is now running, sending %s to old workers:", signame(sigToSend))
 				size := len(oldWorkers)
 				if size == 0 {
 					fmt.Fprintf(os.Stderr, "none\n")

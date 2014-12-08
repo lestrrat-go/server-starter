@@ -14,13 +14,13 @@ import (
 type options struct {
 	OptArgs         []string
 	OptCommand      string
-	OptDir          string    `long:"dir" arg:"path" description:"working directory, start_server do chdir to before exec (optional)"`
-	OptInterval     int       `long:"interval" arg:"seconds" description:"minimum interval (in seconds) to respawn the server program (default: 1)"`
-	OptPidFile      string    `long:"pid-file" arg:"filename" description:"if set, writes the process id of the start_server process to the file"`
-	OptPorts        []int     `long:"port" arg:"(port|host:port)" description:"TCP port to listen to (if omitted, will not bind to any ports)"`
-	OptPaths        []string  `long:"path" arg:"path" description:"path at where to listen using unix socket (optional)"`
-	OptSignalOnHUP  os.Signal `long:"signal-on-hup" arg:"Signal" description:"name of the signal to be sent to the server process when start_server\nreceives a SIGHUP (default: SIGTERM). If you use this option, be sure to\nalso use '--signal-on-term' below."`
-	OptSignalOnTERM os.Signal `long:"signal-on-term" arg:"Signal" description:"name of the signal to be sent to the server process when start_server\nreceives a SIGTERM (default: SIGTERM)"`
+	OptDir          string   `long:"dir" arg:"path" description:"working directory, start_server do chdir to before exec (optional)"`
+	OptInterval     int      `long:"interval" arg:"seconds" description:"minimum interval (in seconds) to respawn the server program (default: 1)"`
+	OptPidFile      string   `long:"pid-file" arg:"filename" description:"if set, writes the process id of the start_server process to the file"`
+	OptPorts        []string `long:"port" arg:"(port|host:port)" description:"TCP port to listen to (if omitted, will not bind to any ports)"`
+	OptPaths        []string `long:"path" arg:"path" description:"path at where to listen using unix socket (optional)"`
+	OptSignalOnHUP  string   `long:"signal-on-hup" arg:"Signal" description:"name of the signal to be sent to the server process when start_server\nreceives a SIGHUP (default: SIGTERM). If you use this option, be sure to\nalso use '--signal-on-term' below."`
+	OptSignalOnTERM string   `long:"signal-on-term" arg:"Signal" description:"name of the signal to be sent to the server process when start_server\nreceives a SIGTERM (default: SIGTERM)"`
 	OptStatusFile   string
 }
 
@@ -29,10 +29,10 @@ func (o options) Command() string         { return o.OptCommand }
 func (o options) Dir() string             { return o.OptDir }
 func (o options) Interval() time.Duration { return time.Duration(o.OptInterval) * time.Second }
 func (o options) PidFile() string         { return o.OptPidFile }
-func (o options) Ports() []int            { return o.OptPorts }
+func (o options) Ports() []string         { return o.OptPorts }
 func (o options) Paths() []string         { return o.OptPaths }
-func (o options) SignalOnHUP() os.Signal  { return o.OptSignalOnHUP }
-func (o options) SignalOnTERM() os.Signal { return o.OptSignalOnTERM }
+func (o options) SignalOnHUP() os.Signal  { return starter.SigFromName(o.OptSignalOnHUP) }
+func (o options) SignalOnTERM() os.Signal { return starter.SigFromName(o.OptSignalOnTERM) }
 func (o options) StatusFile() string      { return o.OptStatusFile }
 
 func showHelp() {
