@@ -56,6 +56,30 @@ func main() {
 }
 `
 
+type config struct {
+	args       []string
+	command    string
+	dir        string
+	interval   int
+	pidfile    string
+	ports      []string
+	paths      []string
+	sigonhup   string
+	sigonterm  string
+	statusfile string
+}
+
+func (c config) Args() []string          { return c.args }
+func (c config) Command() string         { return c.command }
+func (c config) Dir() string             { return c.dir }
+func (c config) Interval() time.Duration { return time.Duration(c.interval) * time.Second }
+func (c config) PidFile() string         { return c.pidfile }
+func (c config) Ports() []string         { return c.ports }
+func (c config) Paths() []string         { return c.paths }
+func (c config) SignalOnHUP() os.Signal  { return SigFromName(c.sigonhup) }
+func (c config) SignalOnTERM() os.Signal { return SigFromName(c.sigonterm) }
+func (c config) StatusFile() string      { return c.statusfile }
+
 func TestRun(t *testing.T) {
 	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%d", os.Getpid()))
 	if err != nil {
@@ -80,10 +104,10 @@ func TestRun(t *testing.T) {
 		return
 	}
 
-	ports := []int{9090, 8080}
-	sd, err := NewStarter(&Config{
-		Ports:   ports,
-		Command: filepath.Join(dir, "echod"),
+	ports := []string{"9090", "8080"}
+	sd, err := NewStarter(&config{
+		ports:   ports,
+		command: filepath.Join(dir, "echod"),
 	})
 	if err != nil {
 		t.Errorf("Failed to create starter: %s", err)
@@ -106,9 +130,9 @@ func TestRun(t *testing.T) {
 	<-readyCh
 
 	for _, port := range ports {
-		_, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		_, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", port))
 		if err != nil {
-			t.Errorf("Error connecing to port '%d': %s", port, err)
+			t.Errorf("Error connecing to port '%s': %s", port, err)
 		}
 	}
 
@@ -119,7 +143,7 @@ func TestRun(t *testing.T) {
 
 	patterns := make([]string, len(ports))
 	for i, port := range ports {
-		patterns[i] = fmt.Sprintf(`%d=\d+`, port)
+		patterns[i] = fmt.Sprintf(`%s=\d+`, port)
 	}
 	pattern := regexp.MustCompile(strings.Join(patterns, ";"))
 
