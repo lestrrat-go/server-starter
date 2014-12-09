@@ -34,7 +34,7 @@ func reloadEnv() (map[string]string, error) {
 		}
 
 		// Don't go into directories
-		if fi.IsDir() {
+		if fi.IsDir() && dn != path {
 			return filepath.SkipDir
 		}
 
