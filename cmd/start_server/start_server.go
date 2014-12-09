@@ -11,6 +11,8 @@ import (
 	"github.com/lestrrat/go-server-starter"
 )
 
+const version = "0.0.1"
+
 type options struct {
 	OptArgs                []string
 	OptCommand             string
@@ -28,7 +30,7 @@ type options struct {
 	OptKillOldDelay        int      `long:"kill-old-delay" arg:"seconds" description:"time to suspend to send a signal to the old worker. The default value is\n5 when \"--enable-auto-restart\" is set, 0 otherwise. This can be\noverwritten by environment variable \"KILL_OLD_DELAY\"." note:"unimplemented"`
 	OptRestart             bool     `long:"restart" description:"this is a wrapper command that reads the pid of the start_server process\nfrom --pid-file, sends SIGHUP to the process and waits until the\nserver(s) of the older generation(s) die by monitoring the contents of\nthe --status-file" note:"unimplemented"`
 	OptHelp                bool     `long:"help" description:"prints this help"`
-	OptVersion             bool     `long:"version" description:"printes the version number" note:"unimplemented"`
+	OptVersion             bool     `long:"version" description:"printes the version number"`
 }
 
 func (o options) Args() []string          { return o.OptArgs }
@@ -120,6 +122,13 @@ func _main() (st int) {
 		showHelp()
 		return
 	}
+
+	if opts.OptVersion {
+		fmt.Printf("%s\n", version)
+		st = 0
+		return
+	}
+
 	if opts.OptInterval < 0 {
 		opts.OptInterval = 1
 	}
