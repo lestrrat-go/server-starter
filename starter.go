@@ -179,6 +179,18 @@ func SigFromName(n string) os.Signal {
 	return nil
 }
 
+func setEnv() {
+	m, err := reloadEnv()
+	if err != nil {
+		// do something
+		fmt.Fprintf(os.Stderr, "failed to load from envdir: %s", err)
+	}
+
+	for k, v := range m {
+		os.Setenv(k, v)
+	}
+}
+
 func (s *Starter) Run() error {
 	defer s.Teardown()
 
@@ -212,6 +224,7 @@ func (s *Starter) Run() error {
 	)
 
 	// Okay, ready to launch the program now...
+	setEnv()
 	workerCh := make(chan processState)
 	p := s.StartWorker(sigCh, workerCh)
 	oldWorkers := make(map[int]int)
@@ -256,10 +269,7 @@ func (s *Starter) Run() error {
 
 	//	var lastRestartTime time.Time
 	for { // outer loop
-		_, err := reloadEnv()
-		if err != nil {
-			// do something
-		}
+		setEnv()
 
 		// Just wait for the worker to exit, or for us to receive a signal
 		for {
