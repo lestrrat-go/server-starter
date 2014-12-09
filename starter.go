@@ -388,7 +388,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 
 			// file descriptor numbers in ExtraFiles turn out to be
 			// index + 3, so we can just hard code it
-			ports[i] = fmt.Sprintf("%d=%d", s.ports[i], i+3)
+			ports[i] = fmt.Sprintf("%s=%d", s.ports[i], i+3)
 			files[i] = f
 		}
 		cmd.ExtraFiles = files
