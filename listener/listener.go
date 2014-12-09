@@ -89,7 +89,7 @@ func parseListenTargets(str string) ([]Listener, error) {
 		fdString := strings.TrimSpace(pair[1])
 		fd, err := strconv.ParseUint(fdString, 10, 0)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to parse '%s' as listen target: %s", pairString, err)
 		}
 
 		if matches := reLooksLikeHostPort.FindAllString(hostPort, -1); matches != nil {
