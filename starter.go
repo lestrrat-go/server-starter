@@ -180,6 +180,10 @@ func SigFromName(n string) os.Signal {
 }
 
 func setEnv() {
+	if os.Getenv("ENVDIR") == "" {
+		return
+	}
+
 	m, err := reloadEnv()
 	if err != nil {
 		// do something
@@ -193,6 +197,16 @@ func setEnv() {
 
 func (s *Starter) Run() error {
 	defer s.Teardown()
+
+	if s.pidFile != "" {
+		f, err := os.OpenFile(s.pidFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			return err
+		}
+
+		fmt.Fprintf(f, "%d", os.Getpid())
+		f.Close()
+	}
 
 	for i, addr := range s.ports {
 		var l net.Listener
@@ -476,6 +490,10 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 }
 
 func (s *Starter) Teardown() error {
+	if s.pidFile != "" {
+		os.Remove(s.pidFile)
+	}
+
 	for _, l := range s.listeners {
 		if l == nil {
 			continue
