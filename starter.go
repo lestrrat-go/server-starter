@@ -14,43 +14,36 @@ import (
 
 var niceSigNames map[syscall.Signal]string
 var niceNameToSigs map[string]syscall.Signal
+var successStatus syscall.WaitStatus
+var failureStatus syscall.WaitStatus
 
-func init() {
-	niceSigNames = map[syscall.Signal]string{
+func makeNiceSigNamesCommon() map[syscall.Signal]string {
+	return map[syscall.Signal]string{
 		syscall.SIGABRT: "ABRT",
 		syscall.SIGALRM: "ALRM",
 		syscall.SIGBUS:  "BUS",
-		syscall.SIGCHLD: "CHLD",
-		syscall.SIGCONT: "CONT",
-		syscall.SIGEMT:  "EMT",
-		syscall.SIGFPE:  "FPE",
-		syscall.SIGHUP:  "HUP",
-		syscall.SIGILL:  "ILL",
-		syscall.SIGINFO: "INFO",
-		syscall.SIGINT:  "INT",
-		syscall.SIGIO:   "IO",
-		//	syscall.SIGIOT:    "IOT",
+		// syscall.SIGEMT:  "EMT",
+		syscall.SIGFPE: "FPE",
+		syscall.SIGHUP: "HUP",
+		syscall.SIGILL: "ILL",
+		// syscall.SIGINFO: "INFO",
+		syscall.SIGINT: "INT",
+		// syscall.SIGIOT:    "IOT",
 		syscall.SIGKILL:   "KILL",
 		syscall.SIGPIPE:   "PIPE",
-		syscall.SIGPROF:   "PROF",
 		syscall.SIGQUIT:   "QUIT",
 		syscall.SIGSEGV:   "SEGV",
-		syscall.SIGSTOP:   "STOP",
-		syscall.SIGSYS:    "SYS",
 		syscall.SIGTERM:   "TERM",
 		syscall.SIGTRAP:   "TRAP",
-		syscall.SIGTSTP:   "TSTP",
-		syscall.SIGTTIN:   "TTIN",
-		syscall.SIGTTOU:   "TTOU",
-		syscall.SIGURG:    "URG",
-		syscall.SIGUSR1:   "USR1",
-		syscall.SIGUSR2:   "USR2",
-		syscall.SIGVTALRM: "VTALRM",
-		syscall.SIGWINCH:  "WINCH",
-		syscall.SIGXCPU:   "XCPU",
-		syscall.SIGXFSZ:   "GXFSZ",
 	}
+}
 
+func makeNiceSigNames() map[syscall.Signal]string {
+	return addPlatformDependentNiceSigNames(makeNiceSigNamesCommon())
+}
+
+func init() {
+	niceSigNames = makeNiceSigNames()
 	niceNameToSigs := make(map[string]syscall.Signal)
 	for sig, name := range niceSigNames {
 		niceNameToSigs[name] = sig
@@ -122,16 +115,6 @@ func NewStarter(c Config) (*Starter, error) {
 	return s, nil
 }
 
-func (s *Starter) Close() {
-	if s.statusFile != "" {
-		os.Remove(s.statusFile)
-	}
-
-	if s.pidFile != "" {
-		os.Remove(s.pidFile)
-	}
-}
-
 func (s Starter) Stop() {
 	p, _ := os.FindProcess(os.Getpid())
 	p.Signal(syscall.SIGTERM)
@@ -143,7 +126,7 @@ func grabExitStatus(st processState) syscall.WaitStatus {
 	exitSt, ok := st.Sys().(syscall.WaitStatus)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Oh no, you are running on a platform where ProcessState.Sys().(syscall.WaitStatus) doesn't work! We're doomed! Temporarily setting status to 255. Please contact the author about this\n")
-		exitSt = syscall.WaitStatus(255)
+		exitSt = failureStatus
 	}
 	return exitSt
 }
@@ -244,6 +227,26 @@ func (s *Starter) Run() error {
 	oldWorkers := make(map[int]int)
 	var sigReceived os.Signal
 	var sigToSend os.Signal
+
+	statusCh := make(chan map[int]int)
+	go func(fn string, ch chan map[int]int) {
+		for wmap := range ch {
+			if fn == "" {
+				continue
+			}
+
+			f, err := os.OpenFile(fn, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+			if err != nil {
+				continue
+			}
+
+			for gen, pid := range wmap {
+				fmt.Fprintf(f, "%d:%d\n", gen, pid)
+			}
+
+			f.Close()
+		}
+	}(s.statusFile, statusCh)
 
 	defer func() {
 		if p != nil {
@@ -467,7 +470,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 					if err != nil {
 						ch <- err.(*exec.ExitError).ProcessState
 					} else {
-						ch <- &dummyProcessState{pid: pid, status: 0}
+						ch <- &dummyProcessState{pid: pid, status: successStatus}
 					}
 				}()
 				// Bail out
@@ -492,6 +495,10 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 func (s *Starter) Teardown() error {
 	if s.pidFile != "" {
 		os.Remove(s.pidFile)
+	}
+
+	if s.statusFile != "" {
+		os.Remove(s.statusFile)
 	}
 
 	for _, l := range s.listeners {
