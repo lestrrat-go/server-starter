@@ -1,7 +1,8 @@
 Changes
 =======
 
-0.0.2
+0.0.2 Jan 06 2015
+   - Check if given command is executable before starting start_server
    - Add support for unix domain sockets (kazeburo)
 
 0.0.1 Jan 05 2015

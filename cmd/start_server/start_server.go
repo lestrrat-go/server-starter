@@ -11,7 +11,7 @@ import (
 	"github.com/lestrrat/go-server-starter"
 )
 
-const version = "0.0.1"
+const version = "0.0.2"
 
 type options struct {
 	OptArgs                []string
