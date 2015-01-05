@@ -1,0 +1,8 @@
+Changes
+=======
+
+0.0.2
+   - Add support for unix domain sockets (kazeburo)
+
+0.0.1 Jan 05 2015
+   - Initial release
