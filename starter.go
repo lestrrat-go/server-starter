@@ -98,6 +98,10 @@ func NewStarter(c Config) (*Starter, error) {
 	if c.Command() == "" {
 		return nil, fmt.Errorf("argument Command must be specified")
 	}
+	if _, err := exec.LookPath(c.Command()); err != nil {
+		return nil, err
+	}
+
 	s := &Starter{
 		args:         c.Args(),
 		command:      c.Command(),
@@ -111,7 +115,9 @@ func NewStarter(c Config) (*Starter, error) {
 		signalOnTERM: signalOnTERM,
 		statusFile:   c.StatusFile(),
 	}
+
 	return s, nil
+
 }
 
 func (s Starter) Stop() {
@@ -396,10 +402,6 @@ func getKillOldDelay() time.Duration {
 	}
 
 	return time.Duration(delay) * time.Second
-}
-
-func (s *Starter) terminate(sig os.Signal) {
-
 }
 
 type WorkerState int
