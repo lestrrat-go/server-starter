@@ -1,16 +1,26 @@
 go-server-starter
 =================
 
-Go port of [Server::Starter](https://metacpan.org/pod/Server::Starter) (NOT DONE YET)
+Go port of ```start_server``` utility (a.k.a. [Server::Starter](https://metacpan.org/pod/Server::Starter)).
 
-## For The Brave Of Hearts
+## DESCRIPTION
 
-I repeat: This is NOT DONE YET.
+*note: this description is almost entirely taken from the original Server::Starter module*
 
-But even knowing that this software is still buggy and you want to try it out, just do:
+The ```start_server``` utility is a superdaemon for hot-deploying server programs.
+
+It is often a pain to write a server program that supports graceful restarts, with no resource leaks. Server::Starter solves the problem by splitting the task into two: ```start_server``` works as a superdaemon that binds to zero or more TCP ports or unix sockets, and repeatedly spawns the server program that actually handles the necessary tasks (for example, responding to incoming commenctions). The spawned server programs under ```start_server``` call accept(2) and handle the requests.
+
+To gracefully restart the server program, send SIGHUP to the superdaemon. The superdaemon spawns a new server program, and if (and only if) it starts up successfully, sends SIGTERM to the old server program.
+
+By using ```start_server``` it is much easier to write a hot-deployable server. Following are the only requirements a server program to be run under ```start_server``` should conform to:
+
+- receive file descriptors to listen to through an environment variable - perform a graceful shutdown when receiving SIGTERM
+
+Many PSGI servers support this. If you want your Go program to support it, you can look ander the [listener](https://github.com/lestrrat/go-server-starter/tree/master/listener) directory for an implementation that also fills the ```net.Listener``` interface.
+
+## INSTALLATION
 
 ```
-$ go get ./...
-$ go build cmd/start_server/start_server.go
-$ ./start_server --port=5000 -- your_server
+go get github.com/lestrrat/go-server-starter/cmd/start_server
 ```
