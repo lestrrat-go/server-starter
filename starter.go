@@ -29,12 +29,12 @@ func makeNiceSigNamesCommon() map[syscall.Signal]string {
 		// syscall.SIGINFO: "INFO",
 		syscall.SIGINT: "INT",
 		// syscall.SIGIOT:    "IOT",
-		syscall.SIGKILL:   "KILL",
-		syscall.SIGPIPE:   "PIPE",
-		syscall.SIGQUIT:   "QUIT",
-		syscall.SIGSEGV:   "SEGV",
-		syscall.SIGTERM:   "TERM",
-		syscall.SIGTRAP:   "TRAP",
+		syscall.SIGKILL: "KILL",
+		syscall.SIGPIPE: "PIPE",
+		syscall.SIGQUIT: "QUIT",
+		syscall.SIGSEGV: "SEGV",
+		syscall.SIGTERM: "TERM",
+		syscall.SIGTRAP: "TRAP",
 	}
 }
 
@@ -98,7 +98,6 @@ func NewStarter(c Config) (*Starter, error) {
 	if c.Command() == "" {
 		return nil, fmt.Errorf("argument Command must be specified")
 	}
-
 	s := &Starter{
 		args:         c.Args(),
 		command:      c.Command(),
@@ -197,15 +196,36 @@ func (s *Starter) Run() error {
 		if err == nil { // Looks like port only
 			l, err = net.Listen("tcp4", fmt.Sprintf(":%d", port))
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to listen to :%d:%s\n", port, err)
 				return err
 			}
 		} else {
 			l, err = net.Listen("tcp4", addr)
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", addr, err)
 				return err
 			}
 		}
 		s.listeners[i] = l
+	}
+
+	for i, path := range s.paths {
+		var l net.Listener
+		if fl, err := os.Lstat(path); err == nil && fl.Mode()&os.ModeSocket == os.ModeSocket {
+			fmt.Fprintf(os.Stderr, "removing existing socket file:%s\n", path)
+			err = os.Remove(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to remove existing socket file:%s:%s\n", path, err)
+				return err
+			}
+		}
+		_ = os.Remove(path)
+		l, err := net.Listen("unix", path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
+			return err
+		}
+		s.listeners[i+len(s.ports)] = l
 	}
 
 	s.generation = 0
@@ -404,19 +424,29 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		// This whole section here basically sets up the env
 		// var and the file descriptors that are inherited by the
 		// external process
-		files := make([]*os.File, len(s.ports))
-		ports := make([]string, len(s.ports))
+		files := make([]*os.File, len(s.ports)+len(s.paths))
+		ports := make([]string, len(s.ports)+len(s.paths))
 		for i, l := range s.listeners {
-			f, err := l.(*net.TCPListener).File()
-			if err != nil {
-				panic(err)
-			}
-			defer f.Close()
-
 			// file descriptor numbers in ExtraFiles turn out to be
 			// index + 3, so we can just hard code it
-			ports[i] = fmt.Sprintf("%s=%d", s.ports[i], i+3)
-			files[i] = f
+			if i < len(s.ports) {
+				f, err := l.(*net.TCPListener).File()
+				if err != nil {
+					panic(err)
+				}
+				defer f.Close()
+				ports[i] = fmt.Sprintf("%s=%d", s.ports[i], i+3)
+				files[i] = f
+			} else {
+				f, err := l.(*net.UnixListener).File()
+				if err != nil {
+					panic(err)
+				}
+				defer f.Close()
+				ports[i] = fmt.Sprintf("%s=%d", s.paths[i-len(s.ports)], i+3)
+				files[i] = f
+			}
+
 		}
 		cmd.ExtraFiles = files
 
