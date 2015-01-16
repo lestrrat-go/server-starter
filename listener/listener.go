@@ -9,6 +9,8 @@ import (
 	"strconv"
 )
 
+const ServerStarterEnvVarName = "SERVER_STARTER_PORT"
+
 // Listener is the interface for things that listen on file descriptors
 // specified by Start::Server / server_starter 
 type Listener interface {
@@ -125,15 +127,21 @@ func parseListenTargets(str string) ([]Listener, error) {
 	return ret, nil
 }
 
+// GetPortsSpecification returns the value of SERVER_STARTER_PORT
+// environment variable
+func GetPortsSpecification() string {
+	return os.Getenv(ServerStarterEnvVarName)
+}
+
 // Ports parses environment variable SERVER_STARTER_PORT
 func Ports() ([]Listener, error) {
-	return parseListenTargets(os.Getenv("SERVER_STARTER_PORT"))
+	return parseListenTargets(GetPortsSpecification())
 }
 
 // ListenAll parses environment variable SERVER_STARTER_PORT, and creates
 // net.Listener objects
 func ListenAll() ([]net.Listener, error) {
-	targets, err := parseListenTargets(os.Getenv("SERVER_STARTER_PORT"))
+	targets, err := parseListenTargets(GetPortsSpecification())
 	if err != nil {
 		return nil, err
 	}
