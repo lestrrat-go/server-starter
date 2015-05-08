@@ -24,3 +24,16 @@ func TestPort(t *testing.T) {
 		}
 	}
 }
+
+func TestPortNoEnv(t *testing.T) {
+	os.Setenv("SERVER_STARTER_PORT", "")
+
+	ports, err := Ports()
+	if err != ErrNoListeningTarget {
+		t.Error("Ports must return error if no env")
+	}
+
+	if ports != nil {
+		t.Errorf("Ports must return nil if no env")
+	}
+}
