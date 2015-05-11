@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +12,9 @@ import (
 
 const ServerStarterEnvVarName = "SERVER_STARTER_PORT"
 
+var (
+	ErrNoListeningTarget = errors.New("No listening target")
+)
 // Listener is the interface for things that listen on file descriptors
 // specified by Start::Server / server_starter 
 type Listener interface {
@@ -82,6 +86,10 @@ var reLooksLikeHostPort = regexp.MustCompile(`^(\d+):(\d+)$`)
 var reLooksLikePort = regexp.MustCompile(`^\d+$`)
 
 func parseListenTargets(str string) ([]Listener, error) {
+	if str == "" {
+		return nil, ErrNoListeningTarget
+	}
+
 	rawspec := strings.Split(str, ";")
 	ret := make([]Listener, len(rawspec))
 
