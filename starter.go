@@ -431,7 +431,8 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		for i, l := range s.listeners {
 			// file descriptor numbers in ExtraFiles turn out to be
 			// index + 3, so we can just hard code it
-			if i < len(s.ports) {
+			switch l.(type) {
+			case *net.TCPListener:
 				f, err := l.(*net.TCPListener).File()
 				if err != nil {
 					panic(err)
@@ -439,7 +440,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 				defer f.Close()
 				ports[i] = fmt.Sprintf("%s=%d", s.ports[i], i+3)
 				files[i] = f
-			} else {
+			case *net.UnixListener:
 				f, err := l.(*net.UnixListener).File()
 				if err != nil {
 					panic(err)
@@ -447,6 +448,8 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 				defer f.Close()
 				ports[i] = fmt.Sprintf("%s=%d", s.paths[i-len(s.ports)], i+3)
 				files[i] = f
+			default:
+				panic("Unknown listener type")
 			}
 
 		}
