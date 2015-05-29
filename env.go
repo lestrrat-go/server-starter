@@ -18,11 +18,11 @@ func reloadEnv() (map[string]string, error) {
 
 	fi, err := os.Stat(dn)
 	if err != nil {
-		return nil, errNoEnv
+		return nil, err
 	}
 
 	if !fi.IsDir() {
-		return nil, errNoEnv
+		return nil, err
 	}
 
 	var m map[string]string

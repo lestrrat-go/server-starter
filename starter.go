@@ -50,6 +50,11 @@ func init() {
 	}
 }
 
+type listener struct {
+	listener net.Listener
+	spec string // path or port spec
+}
+
 type Config interface {
 	Args() []string
 	Command() string
@@ -73,7 +78,7 @@ type Starter struct {
 	dir        string
 	ports      []string
 	paths      []string
-	listeners  []net.Listener
+	listeners  []listener
 	generation int
 	command    string
 	args       []string
@@ -107,7 +112,7 @@ func NewStarter(c Config) (*Starter, error) {
 		command:      c.Command(),
 		dir:          c.Dir(),
 		interval:     c.Interval(),
-		listeners:    make([]net.Listener, 0, len(c.Ports())+len(c.Paths())),
+		listeners:    make([]listener, 0, len(c.Ports())+len(c.Paths())),
 		pidFile:      c.PidFile(),
 		ports:        c.Ports(),
 		paths:        c.Paths(),
@@ -173,14 +178,33 @@ func setEnv() {
 	}
 
 	m, err := reloadEnv()
-	if err != nil {
+	if err != nil && err != errNoEnv {
 		// do something
-		fmt.Fprintf(os.Stderr, "failed to load from envdir: %s", err)
+		fmt.Fprintf(os.Stderr, "failed to load from envdir: %s\n", err)
 	}
 
 	for k, v := range m {
 		os.Setenv(k, v)
 	}
+}
+
+func parsePortSpec(addr string) (string, int, error) {
+	i := strings.IndexByte(addr, ':')
+	portPart := ""
+	if i < 0 {
+		portPart = addr
+		addr = ""
+	} else {
+		portPart = addr[i+1:]
+		addr = addr[:i]
+	}
+
+	port, err := strconv.ParseInt(portPart, 10, 64)
+	if err != nil {
+		return "", -1, err
+	}
+
+	return addr, int(port), nil
 }
 
 func (s *Starter) Run() error {
@@ -198,21 +222,27 @@ func (s *Starter) Run() error {
 
 	for _, addr := range s.ports {
 		var l net.Listener
-		port, err := strconv.ParseInt(addr, 10, 64)
-		if err == nil { // Looks like port only
-			l, err = net.Listen("tcp4", fmt.Sprintf(":%d", port))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to listen to :%d:%s\n", port, err)
-				return err
-			}
-		} else {
-			l, err = net.Listen("tcp4", addr)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", addr, err)
-				return err
-			}
+
+		host, port, err := parsePortSpec(addr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to parse addr spec '%s': %s", addr, err)
+			return err
 		}
-		s.listeners = append(s.listeners, l)
+
+		hostport := fmt.Sprintf("%s:%d", host, port)
+		l, err = net.Listen("tcp4", hostport)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", hostport, err)
+			return err
+		}
+
+		spec := ""
+		if host == "" {
+			spec = fmt.Sprintf("%d", port)
+		} else {
+			spec = fmt.Sprintf("%s:%d", host, port)
+		}
+		s.listeners = append(s.listeners, listener{ listener: l, spec: spec })
 	}
 
 	for _, path := range s.paths {
@@ -231,7 +261,7 @@ func (s *Starter) Run() error {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
 			return err
 		}
-		s.listeners = append(s.listeners, l)
+		s.listeners = append(s.listeners, listener{ listener: l, spec: path })
 	}
 
 	s.generation = 0
@@ -431,27 +461,22 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		for i, l := range s.listeners {
 			// file descriptor numbers in ExtraFiles turn out to be
 			// index + 3, so we can just hard code it
-			switch l.(type) {
+			var f *os.File
+			var err error
+			switch l.listener.(type) {
 			case *net.TCPListener:
-				f, err := l.(*net.TCPListener).File()
-				if err != nil {
-					panic(err)
-				}
-				defer f.Close()
-				ports[i] = fmt.Sprintf("%s=%d", s.ports[i], i+3)
-				files[i] = f
+				f, err = l.listener.(*net.TCPListener).File()
 			case *net.UnixListener:
-				f, err := l.(*net.UnixListener).File()
-				if err != nil {
-					panic(err)
-				}
-				defer f.Close()
-				ports[i] = fmt.Sprintf("%s=%d", s.paths[i-len(s.ports)], i+3)
-				files[i] = f
+				f, err = l.listener.(*net.UnixListener).File()
 			default:
 				panic("Unknown listener type")
 			}
-
+			if err != nil {
+				panic(err)
+			}
+			defer f.Close()
+			ports[i] = fmt.Sprintf("%s=%d", l.spec, i+3)
+			files[i] = f
 		}
 		cmd.ExtraFiles = files
 
@@ -537,10 +562,7 @@ func (s *Starter) Teardown() error {
 	}
 
 	for _, l := range s.listeners {
-		if l == nil {
-			continue
-		}
-		l.Close()
+		l.listener.Close()
 	}
 
 	return nil
