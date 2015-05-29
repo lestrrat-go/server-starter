@@ -52,7 +52,7 @@ func init() {
 
 type listener struct {
 	listener net.Listener
-	spec string // path or port spec
+	spec     string // path or port spec
 }
 
 type Config interface {
@@ -242,7 +242,7 @@ func (s *Starter) Run() error {
 		} else {
 			spec = fmt.Sprintf("%s:%d", host, port)
 		}
-		s.listeners = append(s.listeners, listener{ listener: l, spec: spec })
+		s.listeners = append(s.listeners, listener{listener: l, spec: spec})
 	}
 
 	for _, path := range s.paths {
@@ -261,7 +261,7 @@ func (s *Starter) Run() error {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
 			return err
 		}
-		s.listeners = append(s.listeners, listener{ listener: l, spec: path })
+		s.listeners = append(s.listeners, listener{listener: l, spec: path})
 	}
 
 	s.generation = 0

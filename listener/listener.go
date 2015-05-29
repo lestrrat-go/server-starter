@@ -6,8 +6,8 @@ import (
 	"net"
 	"os"
 	"regexp"
-	"strings"
 	"strconv"
+	"strings"
 )
 
 const ServerStarterEnvVarName = "SERVER_STARTER_PORT"
@@ -15,8 +15,9 @@ const ServerStarterEnvVarName = "SERVER_STARTER_PORT"
 var (
 	ErrNoListeningTarget = errors.New("No listening target")
 )
+
 // Listener is the interface for things that listen on file descriptors
-// specified by Start::Server / server_starter 
+// specified by Start::Server / server_starter
 type Listener interface {
 	Fd() uintptr
 	Listen() (net.Listener, error)
