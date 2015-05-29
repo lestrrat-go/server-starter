@@ -107,7 +107,7 @@ func NewStarter(c Config) (*Starter, error) {
 		command:      c.Command(),
 		dir:          c.Dir(),
 		interval:     c.Interval(),
-		listeners:    make([]net.Listener, len(c.Ports())+len(c.Paths())),
+		listeners:    make([]net.Listener, 0, len(c.Ports())+len(c.Paths())),
 		pidFile:      c.PidFile(),
 		ports:        c.Ports(),
 		paths:        c.Paths(),
@@ -196,7 +196,7 @@ func (s *Starter) Run() error {
 		f.Close()
 	}
 
-	for i, addr := range s.ports {
+	for _, addr := range s.ports {
 		var l net.Listener
 		port, err := strconv.ParseInt(addr, 10, 64)
 		if err == nil { // Looks like port only
@@ -212,10 +212,10 @@ func (s *Starter) Run() error {
 				return err
 			}
 		}
-		s.listeners[i] = l
+		s.listeners = append(s.listeners, l)
 	}
 
-	for i, path := range s.paths {
+	for _, path := range s.paths {
 		var l net.Listener
 		if fl, err := os.Lstat(path); err == nil && fl.Mode()&os.ModeSocket == os.ModeSocket {
 			fmt.Fprintf(os.Stderr, "removing existing socket file:%s\n", path)
@@ -231,7 +231,7 @@ func (s *Starter) Run() error {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
 			return err
 		}
-		s.listeners[i+len(s.ports)] = l
+		s.listeners = append(s.listeners, l)
 	}
 
 	s.generation = 0
