@@ -188,9 +188,11 @@ func setEnv() {
 	}
 }
 
-func parsePortSpec(addr string) (string, int, error) {
+func parsePortSpec(addr string) (string, int, int, error) {
 	i := strings.IndexByte(addr, ':')
 	portPart := ""
+	fdPart := ""
+
 	if i < 0 {
 		portPart = addr
 		addr = ""
@@ -199,12 +201,26 @@ func parsePortSpec(addr string) (string, int, error) {
 		addr = addr[:i]
 	}
 
-	port, err := strconv.ParseInt(portPart, 10, 64)
-	if err != nil {
-		return "", -1, err
+	j := strings.IndexByte(portPart, '=')
+	if j > 0 {
+		fdPart = portPart[j+1:]
+		portPart = portPart[:j]
 	}
 
-	return addr, int(port), nil
+	port, err := strconv.ParseInt(portPart, 10, 64)
+	if err != nil {
+		return "", -1, -1, err
+	}
+
+	if fdPart == "" {
+		return addr, int(port), -1, nil
+	} else {
+		fd, err := strconv.ParseInt(fdPart, 10, 64)
+		if err != nil {
+			return addr, int(port), -1, err
+		}
+		return addr, int(port), int(fd), nil
+	}
 }
 
 func (s *Starter) Run() error {
@@ -223,7 +239,7 @@ func (s *Starter) Run() error {
 	for _, addr := range s.ports {
 		var l net.Listener
 
-		host, port, err := parsePortSpec(addr)
+		host, port, fd, err := parsePortSpec(addr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to parse addr spec '%s': %s", addr, err)
 			return err
@@ -234,6 +250,20 @@ func (s *Starter) Run() error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", hostport, err)
 			return err
+		}
+		if fd != -1 {
+			file, err := l.(*net.TCPListener).File()
+			if err == nil {
+				oldFD := file.Fd()
+				err = syscall.Dup2 ( int(oldFD), fd)
+				if err == nil {
+					err = syscall.Close( int(oldFD) )
+				}
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to duplicate fd: %s", err)
+				return err
+			}
 		}
 
 		spec := ""
