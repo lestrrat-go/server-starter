@@ -255,9 +255,12 @@ func (s *Starter) Run() error {
 			file, err := l.(*net.TCPListener).File()
 			if err == nil {
 				oldFD := file.Fd()
-				err = syscall.Dup2 ( int(oldFD), fd)
+				err = syscall.Dup2 (int(oldFD), fd)
 				if err == nil {
-					err = syscall.Close( int(oldFD) )
+					l, err = net.FileListener(os.NewFile(uintptr(fd), ""))
+					if err == nil {
+						err = syscall.Close(int(oldFD))
+					}
 				}
 			}
 			if err != nil {
