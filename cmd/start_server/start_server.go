@@ -148,7 +148,7 @@ func _main() (st int) {
 	}
 
 	if opts.OptPidFile != "" && fileExist(opts.OptPidFile) {
-		fmt.Print("already boot?")
+		fmt.Print("pid file exists. already boot?")
 		return
 	}
 
