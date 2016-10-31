@@ -211,13 +211,19 @@ func (s *Starter) Run() error {
 	defer s.Teardown()
 
 	if s.pidFile != "" {
-		f, err := os.OpenFile(s.pidFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		f, err := os.OpenFile(s.pidFile, os.O_EXCL|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
 			return err
 		}
 
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+			return err
+		}
 		fmt.Fprintf(f, "%d", os.Getpid())
-		f.Close()
+		defer func() {
+			os.Remove(f.Name())
+			f.Close()
+		}()
 	}
 
 	for _, addr := range s.ports {
@@ -553,10 +559,6 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 }
 
 func (s *Starter) Teardown() error {
-	if s.pidFile != "" {
-		os.Remove(s.pidFile)
-	}
-
 	if s.statusFile != "" {
 		os.Remove(s.statusFile)
 	}
