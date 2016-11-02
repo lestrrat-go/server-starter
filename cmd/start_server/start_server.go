@@ -152,7 +152,10 @@ func _main() (st int) {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		return
 	}
-	s.Run()
+	if err := s.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		return
+	}
 	st = 0
 	return
 }
