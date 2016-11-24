@@ -44,7 +44,7 @@ func makeNiceSigNames() map[syscall.Signal]string {
 
 func init() {
 	niceSigNames = makeNiceSigNames()
-	niceNameToSigs := make(map[string]syscall.Signal)
+	niceNameToSigs = make(map[string]syscall.Signal)
 	for sig, name := range niceSigNames {
 		niceNameToSigs[name] = sig
 	}
@@ -165,6 +165,8 @@ func signame(s os.Signal) string {
 	return "UNKNOWN"
 }
 
+// SigFromName returns the signal corresponding to the given signal name string.
+// If the given name string is not defined, it returns nil.
 func SigFromName(n string) os.Signal {
 	if sig, ok := niceNameToSigs[n]; ok {
 		return sig
