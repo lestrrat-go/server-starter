@@ -44,7 +44,7 @@ func makeNiceSigNames() map[syscall.Signal]string {
 
 func init() {
 	niceSigNames = makeNiceSigNames()
-	niceNameToSigs := make(map[string]syscall.Signal)
+	niceNameToSigs = make(map[string]syscall.Signal)
 	for sig, name := range niceSigNames {
 		niceNameToSigs[name] = sig
 	}

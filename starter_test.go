@@ -152,3 +152,11 @@ func TestRun(t *testing.T) {
 	}
 
 }
+
+func TestSigFromName(t *testing.T) {
+	for sig, name := range niceSigNames {
+		if got := SigFromName(name); sig != got {
+			t.Errorf("%v: wants '%v' but got '%v'", name, sig, got)
+		}
+	}
+}
