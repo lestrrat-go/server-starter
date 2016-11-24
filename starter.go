@@ -168,6 +168,11 @@ func signame(s os.Signal) string {
 // SigFromName returns the signal corresponding to the given signal name string.
 // If the given name string is not defined, it returns nil.
 func SigFromName(n string) os.Signal {
+	n = strings.ToUpper(n)
+	if strings.HasPrefix(n, "SIG") {
+		n = n[3:] // remove SIG prefix
+	}
+
 	if sig, ok := niceNameToSigs[n]; ok {
 		return sig
 	}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -155,6 +156,17 @@ func TestRun(t *testing.T) {
 
 func TestSigFromName(t *testing.T) {
 	for sig, name := range niceSigNames {
+		if got := SigFromName(name); sig != got {
+			t.Errorf("%v: wants '%v' but got '%v'", name, sig, got)
+		}
+	}
+
+	variants := map[string]syscall.Signal{
+		"SIGTERM": syscall.SIGTERM,
+		"sigterm": syscall.SIGTERM,
+		"Hup":     syscall.SIGHUP,
+	}
+	for name, sig := range variants {
 		if got := SigFromName(name); sig != got {
 			t.Errorf("%v: wants '%v' but got '%v'", name, sig, got)
 		}
