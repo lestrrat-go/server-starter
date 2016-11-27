@@ -1,16 +1,14 @@
 package starter
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -82,6 +80,9 @@ func (c config) SignalOnTERM() os.Signal { return SigFromName(c.sigonterm) }
 func (c config) StatusFile() string      { return c.statusfile }
 
 func TestRun(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%d", os.Getpid()))
 	if err != nil {
 		t.Errorf("Failed to create temp directory: %s", err)
@@ -106,52 +107,33 @@ func TestRun(t *testing.T) {
 	}
 
 	ports := []string{"9090", "8080"}
-	sd, err := NewStarter(&config{
-		ports:   ports,
-		command: filepath.Join(dir, "echod"),
-	})
-	if err != nil {
-		t.Errorf("Failed to create starter: %s", err)
-		return
-	}
+	sd := New(filepath.Join(dir, "echod"), WithPorts(ports))
+	go sd.Run(ctx)
 
-	doneCh := make(chan struct{})
-	readyCh := make(chan struct{})
-	go func() {
-		defer func() { doneCh <- struct{}{} }()
-		time.AfterFunc(500*time.Millisecond, func() {
-			readyCh <- struct{}{}
-		})
-		if err := sd.Run(); err != nil {
-			t.Errorf("sd.Run() failed: %s", err)
-		}
-		t.Logf("Exiting...")
-	}()
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
 
-	<-readyCh
-
-	for _, port := range ports {
-		_, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", port))
-		if err != nil {
-			t.Errorf("Error connecing to port '%s': %s", port, err)
+	ctx, cancel2 := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel2()
+	for loop := true; loop; {
+		select {
+		case <-ctx.Done():
+			t.Errorf("Error connecing: %s", ctx.Err())
+			return
+		case <-tick.C:
+			ok := 0
+			for _, port := range ports {
+				_, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", port))
+				if err == nil {
+					t.Logf("Successfully connected to port %s", port)
+					ok++
+				}
+			}
+			if ok == len(ports) {
+				loop = false
+			}
 		}
 	}
-
-	time.AfterFunc(time.Second, sd.Stop)
-	<-doneCh
-
-	log.Printf("Checking ports...")
-
-	patterns := make([]string, len(ports))
-	for i, port := range ports {
-		patterns[i] = fmt.Sprintf(`%s=\d+`, port)
-	}
-	pattern := regexp.MustCompile(strings.Join(patterns, ";"))
-
-	if envPort := os.Getenv("SERVER_STARTER_PORT"); !pattern.MatchString(envPort) {
-		t.Errorf("SERVER_STARTER_PORT: Expected '%s', but got '%s'", pattern, envPort)
-	}
-
 }
 
 func TestSigFromName(t *testing.T) {

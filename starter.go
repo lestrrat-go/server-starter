@@ -5,83 +5,18 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-var niceSigNames map[syscall.Signal]string
-var niceNameToSigs map[string]syscall.Signal
-var successStatus syscall.WaitStatus
-var failureStatus syscall.WaitStatus
-
-func makeNiceSigNamesCommon() map[syscall.Signal]string {
-	return map[syscall.Signal]string{
-		syscall.SIGABRT: "ABRT",
-		syscall.SIGALRM: "ALRM",
-		syscall.SIGBUS:  "BUS",
-		// syscall.SIGEMT:  "EMT",
-		syscall.SIGFPE: "FPE",
-		syscall.SIGHUP: "HUP",
-		syscall.SIGILL: "ILL",
-		// syscall.SIGINFO: "INFO",
-		syscall.SIGINT: "INT",
-		// syscall.SIGIOT:    "IOT",
-		syscall.SIGKILL: "KILL",
-		syscall.SIGPIPE: "PIPE",
-		syscall.SIGQUIT: "QUIT",
-		syscall.SIGSEGV: "SEGV",
-		syscall.SIGTERM: "TERM",
-		syscall.SIGTRAP: "TRAP",
+func New(command string, options ...Option) *Starter {
+	return &Starter{
+		command: command,
+		options: options, // This is stored as-is on purpose.
+		noticeWriter: os.Stderr,
 	}
-}
-
-func makeNiceSigNames() map[syscall.Signal]string {
-	return addPlatformDependentNiceSigNames(makeNiceSigNamesCommon())
-}
-
-func init() {
-	niceSigNames = makeNiceSigNames()
-	niceNameToSigs = make(map[string]syscall.Signal)
-	for sig, name := range niceSigNames {
-		niceNameToSigs[name] = sig
-	}
-}
-
-type listener struct {
-	listener net.Listener
-	spec     string // path or port spec
-}
-
-type Config interface {
-	Args() []string
-	Command() string
-	Dir() string             // Directory to chdir to before executing the command
-	Interval() time.Duration // Time between checks for liveness
-	PidFile() string
-	Ports() []string         // Ports to bind to (addr:port or port, so it's a string)
-	Paths() []string         // Paths (UNIX domain socket) to bind to
-	SignalOnHUP() os.Signal  // Signal to send when HUP is received
-	SignalOnTERM() os.Signal // Signal to send when TERM is received
-	StatusFile() string
-}
-
-type Starter struct {
-	interval     time.Duration
-	signalOnHUP  os.Signal
-	signalOnTERM os.Signal
-	// you can't set this in go:	backlog
-	statusFile string
-	pidFile    string
-	dir        string
-	ports      []string
-	paths      []string
-	listeners  []listener
-	generation int
-	command    string
-	args       []string
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
@@ -141,44 +76,6 @@ func grabExitStatus(st processState) syscall.WaitStatus {
 	return exitSt
 }
 
-type processState interface {
-	Pid() int
-	Sys() interface{}
-}
-type dummyProcessState struct {
-	pid    int
-	status syscall.WaitStatus
-}
-
-func (d dummyProcessState) Pid() int {
-	return d.pid
-}
-
-func (d dummyProcessState) Sys() interface{} {
-	return d.status
-}
-
-func signame(s os.Signal) string {
-	if ss, ok := s.(syscall.Signal); ok {
-		return niceSigNames[ss]
-	}
-	return "UNKNOWN"
-}
-
-// SigFromName returns the signal corresponding to the given signal name string.
-// If the given name string is not defined, it returns nil.
-func SigFromName(n string) os.Signal {
-	n = strings.ToUpper(n)
-	if strings.HasPrefix(n, "SIG") {
-		n = n[3:] // remove SIG prefix
-	}
-
-	if sig, ok := niceNameToSigs[n]; ok {
-		return sig
-	}
-	return nil
-}
-
 func setEnv() {
 	if os.Getenv("ENVDIR") == "" {
 		return
@@ -214,6 +111,7 @@ func parsePortSpec(addr string) (string, int, error) {
 	return addr, int(port), nil
 }
 
+/*
 func (s *Starter) Run() error {
 	defer s.Teardown()
 
@@ -424,6 +322,7 @@ func (s *Starter) Run() error {
 					for pid := range oldWorkers {
 						worker, err := os.FindProcess(pid)
 						if err != nil {
+							fmt.Fprintf(os.Stderr, "failed to find process %d\n", pid)
 							continue
 						}
 						worker.Signal(s.signalOnHUP)
@@ -435,6 +334,7 @@ func (s *Starter) Run() error {
 
 	return nil
 }
+*/
 
 func getKillOldDelay() time.Duration {
 	// Ignore errors.
@@ -446,13 +346,6 @@ func getKillOldDelay() time.Duration {
 
 	return time.Duration(delay) * time.Second
 }
-
-type WorkerState int
-
-const (
-	WorkerStarted WorkerState = iota
-	ErrFailedToStart
-)
 
 // StartWorker starts the actual command.
 func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Process {
