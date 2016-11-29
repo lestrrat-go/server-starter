@@ -19,7 +19,7 @@ func NewCLI() *CLI {
 func makeOptionList(opts *options) []Option {
 	var list []Option
 	if len(opts.Args) > 0 {
-		list = append(list, WithArgs(opts.Args))
+		list = append(list, WithArgs(opts.Args...))
 	}
 	if opts.AutoRestartInterval.Valid {
 		list = append(list, WithAutoRestartInterval(time.Duration(opts.AutoRestartInterval.Value)*time.Second))

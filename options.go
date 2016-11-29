@@ -28,7 +28,7 @@ func WithAutoRestartInterval(t time.Duration) Option {
 	return &valueOption{name: "auto_restart_interval", value: t}
 }
 
-func WithArgs(a []string) Option {
+func WithArgs(a ...string) Option {
 	return &valueOption{name: "args", value: a}
 }
 
