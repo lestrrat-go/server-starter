@@ -14,10 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
-var echoServerTxt = `package main
+var echoServerSrc = `package main
 
 import (
 	"fmt"
@@ -56,34 +57,47 @@ func main() {
 }
 `
 
+func build(name string, src string) (string, func(), error) {
+	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%s-%d", name, os.Getpid()))
+	if err != nil {
+		return "", nil, errors.Wrapf(err, "failed to create tempdir %s", dir)
+	}
+	cleanup := func() {
+		os.RemoveAll(dir)
+	}
+	srcFile := filepath.Join(dir, fmt.Sprintf("%s.go", name))
+	f, err := os.OpenFile(srcFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+	if err != nil {
+		return "", cleanup, errors.Wrapf(err, "failed to create source file %s", f)
+	}
+	io.WriteString(f, src)
+	f.Close()
+
+	result := filepath.Join(dir, name)
+	cmd := exec.Command("go", "build", "-o", result, ".")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", cleanup, errors.Wrapf(err, "failed to compile %s: %s", name, output)
+	}
+	return result, cleanup, nil
+}
+
 func TestRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%d", os.Getpid()))
-	if !assert.NoError(t, err, "failed to create tempdir %s", dir) {
-		return
+	cmdname, cleanup, err := build("echod", echoServerSrc)
+	if cleanup != nil {
+		defer cleanup()
 	}
-	defer os.RemoveAll(dir)
-
-	srcFile := filepath.Join(dir, "echod.go")
-	f, err := os.OpenFile(srcFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-	if !assert.NoError(t, err, "failed to create source file %s", f) {
-		return
-	}
-	io.WriteString(f, echoServerTxt)
-	f.Close()
-
-	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "echod"), ".")
-	cmd.Dir = dir
-	if output, err := cmd.CombinedOutput(); !assert.NoError(t, err, "failed to compile echod") {
-		t.Logf("%s", output)
+	if !assert.NoError(t, err, "build failed") {
 		return
 	}
 
 	ports := []string{"9090", "8080"}
 	var output bytes.Buffer
-	sd := New(filepath.Join(dir, "echod"), WithPorts(ports), WithNoticeOutput(&output))
+	sd := New(cmdname, WithPorts(ports), WithNoticeOutput(&output))
 
 	done := make(chan struct{})
 	go func() {
