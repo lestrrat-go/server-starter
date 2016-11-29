@@ -35,8 +35,9 @@ import (
 )
 
 func main() {
-	var maxSigterm int // number of times we "withstand" a sigterm
-	flag.IntVar(&maxSigterm, "sigterm", 0, "")
+	fmt.Fprintf(os.Stderr, "Starting echod (%d)\n", os.Getpid())
+	var maxSigusr1 int // number of times we "withstand" a sigusr1
+	flag.IntVar(&maxSigusr1, "sigusr1", 0, "")
 	flag.Parse()
 
 	listeners, err := listener.ListenAll()
@@ -54,22 +55,29 @@ func main() {
 		io.Copy(w, r.Body)
 	})
 	for _, l := range listeners {
-		http.Serve(l, handler)
+		go http.Serve(l, handler)
 	}
 
+	fmt.Fprintf(os.Stderr, "echod: Waiting for signal (max USR1 = %d)\n", maxSigusr1)
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1)
 
-	sigterm := 0
+	sigusr1 := 0
 	for loop := true; loop; {
 		select {
 		case s := <-sigCh:
+			fmt.Fprintf(os.Stderr, "echod: received %s\n", s)
 			switch s {
-			case syscall.SIGTERM:
-				sigterm++
-				if maxSigterm <= sigterm {
+			case syscall.SIGUSR1:
+				sigusr1++
+				if maxSigusr1 > sigusr1 {
+					fmt.Fprintf(os.Stderr, "echod: got USR1, ignoring (max = %d, count = %d)\n", maxSigusr1, sigusr1)
+				} else {
+					fmt.Fprintf(os.Stderr, "echod: reached max USR1 limit (%d)\n", maxSigusr1)
 					loop = false
 				}
+			case syscall.SIGTERM:
+				loop = false
 			default:
 				// do nothing
 			}
@@ -190,7 +198,11 @@ func TestRun(t *testing.T) {
 	l.Restore(context.Background(), sysenv)
 
 	t.Run("send multiple signals", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// Note: this test does NOT test that the same echod server has received
+		// signals, because doing that intelligently would require rpc between
+		// this test code and the echod, and I really am in no mood to do it
+		// for now. However, visually it looks like it's doing the right job
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
 		port, err := tcputil.EmptyPort()
@@ -202,7 +214,14 @@ func TestRun(t *testing.T) {
 		defer func() {
 			t.Logf("%s", output.String())
 		}()
-		sd := New(cmdname, WithArgs("-sigterm", "2"), WithPorts([]string{strconv.Itoa(port)}), WithNoticeOutput(&output))
+		sd := New(cmdname,
+			WithArgs("--sigusr1=2"),
+			WithPorts([]string{strconv.Itoa(port)}),
+			WithNoticeOutput(&output),
+			WithLogStdout(&output),
+			WithLogStderr(&output),
+			WithSignalOnHUP(syscall.SIGUSR1),
+		)
 
 		done := make(chan struct{})
 		go func() {
@@ -224,10 +243,25 @@ func TestRun(t *testing.T) {
 
 		if !closed {
 			p, _ := os.FindProcess(os.Getpid())
-			p.Signal(syscall.SIGTERM)
+			p.Signal(syscall.SIGHUP)
 		}
 
-		time.Sleep(time.Second)
+		time.Sleep(2 * time.Second)
+
+		closed = false
+		select {
+		case <-done:
+			closed = true
+			t.Errorf("unexpected exit")
+		default:
+		}
+
+		if !closed {
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(syscall.SIGHUP)
+		}
+
+		time.Sleep(2 * time.Second)
 
 		closed = false
 		select {
@@ -242,9 +276,13 @@ func TestRun(t *testing.T) {
 			p.Signal(syscall.SIGTERM)
 		}
 
+		time.Sleep(time.Second)
+
 		select {
 		case <-ctx.Done():
 			t.Errorf("context prematurely ended: %s", ctx.Err())
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(syscall.SIGTERM)
 		case <-done:
 		}
 	})

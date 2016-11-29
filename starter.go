@@ -132,6 +132,7 @@ func (s *Starter) Run(ctx context.Context) error {
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 
+	var cmdArgs []string
 	var dir string
 	var interval time.Duration = time.Second
 	var paths []string
@@ -142,9 +143,13 @@ func (s *Starter) Run(ctx context.Context) error {
 	var sigonterm os.Signal = os.Signal(syscall.SIGTERM)
 	var statusFile string
 	var noticeOutput io.Writer = os.Stderr
+	var logStdout io.Writer = os.Stdout
+	var logStderr io.Writer = os.Stderr
 
 	for _, opt := range s.options {
 		switch opt.Name() {
+		case "args":
+			cmdArgs = opt.Value().([]string)
 		case "auto_restart_interval":
 			v := opt.Value().(int)
 			os.Setenv(`AUTO_RESTART_INTERVAL`, strconv.Itoa(v))
@@ -177,6 +182,10 @@ func (s *Starter) Run(ctx context.Context) error {
 			statusFile = opt.Value().(string)
 		case "notice_output":
 			noticeOutput = opt.Value().(io.Writer)
+		case "log_stdout":
+			logStdout = opt.Value().(io.Writer)
+		case "log_stderr":
+			logStderr = opt.Value().(io.Writer)
 		}
 	}
 	notice := func(f string, args ...interface{}) {
@@ -408,12 +417,12 @@ func (s *Starter) Run(ctx context.Context) error {
 	}
 
 	newCommand := func() *exec.Cmd {
-		cmd := exec.Command(s.command, s.args...)
+		cmd := exec.Command(s.command, cmdArgs...)
 		if dir != "" {
 			cmd.Dir = dir
 		}
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = logStdout
+		cmd.Stderr = logStderr
 		cmd.ExtraFiles = extraFiles
 		return cmd
 	}
@@ -522,6 +531,7 @@ func (s *Starter) Run(ctx context.Context) error {
 			case sig := <-sigCh:
 				switch sig {
 				case syscall.SIGHUP:
+					notice("received HUP, spawning a new worker")
 					restart = true
 					loop = false
 				case syscall.SIGALRM:

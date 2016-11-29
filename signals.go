@@ -1,6 +1,7 @@
 package starter
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -46,7 +47,7 @@ func signame(s os.Signal) string {
 	if ss, ok := s.(syscall.Signal); ok {
 		return niceSigNames[ss]
 	}
-	return "UNKNOWN"
+	return fmt.Sprintf("UNKNOWN (%s)", s)
 }
 
 func sigFromName(n string) os.Signal {

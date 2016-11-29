@@ -76,6 +76,14 @@ func WithNoticeOutput(w io.Writer) Option {
 	return &valueOption{name: "notice_output", value: w}
 }
 
+func WithLogStdout(w io.Writer) Option {
+	return &valueOption{name: "log_stdout", value: w}
+}
+
+func WithLogStderr(w io.Writer) Option {
+	return &valueOption{name: "log_stderr", value: w}
+}
+
 func (o *stringOpt) String() string {
 	return o.Value
 }
