@@ -212,7 +212,7 @@ func TestRun(t *testing.T) {
 			}
 		}()
 
-		time.Sleep(time.Second)
+		time.Sleep(2 * time.Second)
 
 		var closed bool
 		select {
