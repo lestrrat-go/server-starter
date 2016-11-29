@@ -49,10 +49,10 @@ func makeOptionList(opts *options) []Option {
 		list = append(list, WithPorts(opts.Ports))
 	}
 	if opts.SignalOnHUP != "" {
-		list = append(list, WithSignalOnHUP(SigFromName(opts.SignalOnHUP)))
+		list = append(list, WithSignalOnHUP(sigFromName(opts.SignalOnHUP)))
 	}
 	if opts.SignalOnTERM != "" {
-		list = append(list, WithSignalOnTERM(SigFromName(opts.SignalOnTERM)))
+		list = append(list, WithSignalOnTERM(sigFromName(opts.SignalOnTERM)))
 	}
 	if opts.StatusFile != "" {
 		list = append(list, WithStatusFile(opts.StatusFile))

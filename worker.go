@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -66,7 +67,7 @@ func acceptSignals(ctx context.Context, dst chan os.Signal) {
 	}
 }
 
-func wait(sigCh chan os.Signal, workerDone chan *exec.Cmd) *exec.Cmd {
+func wait(ctx context.Context, sigCh chan os.Signal, workerDone chan *exec.Cmd) *exec.Cmd {
 	// Original code in lib/Server/Starter.pm (_wait3) looks... interesting
 	// currently going to punt it in light of just "wait for a process to
 	// finish or a signal is received"
@@ -74,6 +75,10 @@ func wait(sigCh chan os.Signal, workerDone chan *exec.Cmd) *exec.Cmd {
 	defer t.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(os.Signal(syscall.SIGTERM))
+			return nil
 		case <-t.C:
 			if len(sigCh) > 0 {
 				return nil
@@ -127,6 +132,7 @@ func (s *Starter) Run(ctx context.Context) error {
 	var sigonhup os.Signal = os.Signal(syscall.SIGTERM)
 	var sigonterm os.Signal = os.Signal(syscall.SIGTERM)
 	var statusFile string
+	var noticeOutput io.Writer = os.Stderr
 
 	for _, opt := range s.options {
 		switch opt.Name() {
@@ -160,7 +166,22 @@ func (s *Starter) Run(ctx context.Context) error {
 			sigonterm = opt.Value().(os.Signal)
 		case "status_file":
 			statusFile = opt.Value().(string)
+		case "notice_output":
+			noticeOutput = opt.Value().(io.Writer)
 		}
+	}
+	notice := func(f string, args ...interface{}) {
+		var buf bytes.Buffer
+		fmt.Fprintf(&buf, f, args...)
+		if buf.Len() == 0 {
+			return
+		}
+
+		b := buf.Bytes()
+		if b[len(b)-1] != '\n' {
+			buf.WriteByte('\n')
+		}
+		buf.WriteTo(noticeOutput)
 	}
 
 	generation := 0 // This is SERVER_STARTER_GENERATION
@@ -180,14 +201,14 @@ func (s *Starter) Run(ctx context.Context) error {
 
 		host, port, err := parsePortSpec(addr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to parse addr spec '%s': %s", addr, err)
+			notice("failed to parse addr spec '%s': %s", addr, err)
 			return err
 		}
 
 		hostport := fmt.Sprintf("%s:%d", host, port)
 		l, err = net.Listen("tcp4", hostport)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", hostport, err)
+			notice("failed to listen to %s:%s\n", hostport, err)
 			return err
 		}
 
@@ -210,17 +231,17 @@ func (s *Starter) Run(ctx context.Context) error {
 	for _, path := range paths {
 		var l net.Listener
 		if fl, err := os.Lstat(path); err == nil && fl.Mode()&os.ModeSocket == os.ModeSocket {
-			fmt.Fprintf(os.Stderr, "removing existing socket file:%s\n", path)
+			notice("removing existing socket file:%s\n", path)
 			err = os.Remove(path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to remove existing socket file:%s:%s\n", path, err)
+				notice("failed to remove existing socket file:%s:%s\n", path, err)
 				return err
 			}
 		}
 		_ = os.Remove(path)
 		l, err := net.Listen("unix", path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
+			notice("failed to listen file:%s:%s\n", path, err)
 			return err
 		}
 		f, err := l.(*net.UnixListener).File()
@@ -297,11 +318,11 @@ func (s *Starter) Run(ctx context.Context) error {
 	errTryExec := errors.New("keep trying")
 	startCmd := func(cmd *exec.Cmd) error {
 		if err := cmd.Start(); err != nil {
-			s.Notice("%s", err.Error())
+			notice("%s", err.Error())
 			// We would LOVE to continue immediately, but we need to do the
 			// same check-for-signals and etc here, so we go on..
 		} else {
-			s.Notice("starting new worker %d", cmd.Process.Pid)
+			notice("starting new worker %d", cmd.Process.Pid)
 		}
 
 		// Wait for up to `interval` seconds before
@@ -324,7 +345,6 @@ func (s *Starter) Run(ctx context.Context) error {
 			}
 		}
 		if len(bufferedSigs) > 0 {
-			fmt.Printf("%#v\n", bufferedSigs)
 			go func() {
 				for _, s := range bufferedSigs {
 					sigCh <- s
@@ -352,11 +372,11 @@ func (s *Starter) Run(ctx context.Context) error {
 
 		switch {
 		case cmd.ProcessState != nil:
-			s.Notice("new worker %d seems to have failed to start, exit status:%d", cmd.ProcessState.Pid(), grabExitStatus(cmd.ProcessState))
+			notice("new worker %d seems to have failed to start, exit status:%d", cmd.ProcessState.Pid(), grabExitStatus(cmd.ProcessState))
 		case cmd.Process != nil:
-			s.Notice("new worker %d seems to have failed to start", cmd.Process.Pid)
+			notice("new worker %d seems to have failed to start", cmd.Process.Pid)
 		default:
-			s.Notice("new worker seems to have failed to start")
+			notice("new worker seems to have failed to start")
 		}
 		return errTryExec
 	}
@@ -435,7 +455,7 @@ func (s *Starter) Run(ctx context.Context) error {
 				buf.WriteByte(',')
 			}
 		}
-		s.Notice(buf.String())
+		notice(buf.String())
 
 		for _, pid := range keys {
 			p, err := os.FindProcess(pid)
@@ -450,11 +470,10 @@ func (s *Starter) Run(ctx context.Context) error {
 			if !ok {
 				panic("workerDone channel closed while still waiting for children to be reaped")
 			}
-			s.Notice("worker %d died, status:%d", cmd.ProcessState.Pid(), grabExitStatus(cmd.ProcessState))
+			notice("worker %d died, status:%d", cmd.ProcessState.Pid(), grabExitStatus(cmd.ProcessState))
 			delete(oldWorkers, cmd.ProcessState.Pid())
 			updateStatus()
 		}
-		s.Notice("exiting")
 	}
 
 	if err := startWorker(); err != nil {
@@ -463,7 +482,7 @@ func (s *Starter) Run(ctx context.Context) error {
 
 	for {
 		// wait for next signal (or when auto-restart becomes necessary)
-		exited := wait(sigCh, workerDone)
+		exited := wait(ctx, sigCh, workerDone)
 
 		// reload env if necessary
 		envLoader.Apply(ctx, sysenv)
@@ -477,12 +496,12 @@ func (s *Starter) Run(ctx context.Context) error {
 		if exited != nil { // got some command exit
 			pid := exited.ProcessState.Pid()
 			if pid == currentWorker {
-				s.Notice("worker %d died unexpectedly with status: %d, restarting\n", pid, grabExitStatus(exited.ProcessState))
+				notice("worker %d died unexpectedly with status: %d, restarting\n", pid, grabExitStatus(exited.ProcessState))
 				if err := startWorker(); err != nil {
 					return errors.Wrap(err, "failed to start worker")
 				}
 			} else {
-				s.Notice("old worker %d died, status:%d", pid, grabExitStatus(exited.ProcessState))
+				notice("old worker %d died, status:%d", pid, grabExitStatus(exited.ProcessState))
 				delete(oldWorkers, pid)
 				updateStatus()
 			}
@@ -511,10 +530,10 @@ func (s *Starter) Run(ctx context.Context) error {
 			autoRestartInterval := envAsDuration("AUTO_RESTART_INTERVAL")
 			elapsedSinceRestart := time.Since(lastRestartTime)
 			if elapsedSinceRestart >= autoRestartInterval && len(oldWorkers) == 0 {
-				s.Notice("autorestart triggered (interval=%s)", autoRestartInterval)
+				notice("autorestart triggered (interval=%s)", autoRestartInterval)
 				restart = true
 			} else if elapsedSinceRestart >= autoRestartInterval*2 {
-				s.Notice("autorestart triggered (forced, interval=%s)", autoRestartInterval)
+				notice("autorestart triggered (forced, interval=%s)", autoRestartInterval)
 			}
 		}
 
@@ -537,7 +556,7 @@ func (s *Starter) Run(ctx context.Context) error {
 					}
 				}
 			}
-			s.Notice("new worker is now running, sending %s to old workers: %s", signame(sigonhup), buf.String())
+			notice("new worker is now running, sending %s to old workers: %s", signame(sigonhup), buf.String())
 
 			killOldDelay := envAsDuration(`KILL_OLD_DELAY`)
 			if killOldDelay == 0 && envAsBool(`ENABLE_AUTO_RESTART`) {

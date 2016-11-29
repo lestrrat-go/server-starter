@@ -1,6 +1,7 @@
 package starter
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var echoServerTxt = `package main
@@ -23,7 +26,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 	"github.com/lestrrat/go-server-starter/listener"
 )
 
@@ -33,6 +35,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to listen: %s\n", err)
 		os.Exit(1)
 	}
+	defer func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(w, r.Body)
@@ -41,59 +48,27 @@ func main() {
 		http.Serve(l, handler)
 	}
 
-	loop := false
 	sigCh := make(chan os.Signal)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
-	for loop {
-		select {
-		case <-sigCh:
-			loop = false
-		default:
-			time.Sleep(time.Second)
-		}
+	select {
+	case <-sigCh:
 	}
 }
 `
 
-type config struct {
-	args       []string
-	command    string
-	dir        string
-	interval   int
-	pidfile    string
-	ports      []string
-	paths      []string
-	sigonhup   string
-	sigonterm  string
-	statusfile string
-}
-
-func (c config) Args() []string          { return c.args }
-func (c config) Command() string         { return c.command }
-func (c config) Dir() string             { return c.dir }
-func (c config) Interval() time.Duration { return time.Duration(c.interval) * time.Second }
-func (c config) PidFile() string         { return c.pidfile }
-func (c config) Ports() []string         { return c.ports }
-func (c config) Paths() []string         { return c.paths }
-func (c config) SignalOnHUP() os.Signal  { return SigFromName(c.sigonhup) }
-func (c config) SignalOnTERM() os.Signal { return SigFromName(c.sigonterm) }
-func (c config) StatusFile() string      { return c.statusfile }
-
 func TestRun(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%d", os.Getpid()))
-	if err != nil {
-		t.Errorf("Failed to create temp directory: %s", err)
+	if !assert.NoError(t, err, "failed to create tempdir %s", dir) {
 		return
 	}
 	defer os.RemoveAll(dir)
 
 	srcFile := filepath.Join(dir, "echod.go")
 	f, err := os.OpenFile(srcFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
-	if err != nil {
-		t.Errorf("Failed to create %s: %s", srcFile, err)
+	if !assert.NoError(t, err, "failed to create source file %s", f) {
 		return
 	}
 	io.WriteString(f, echoServerTxt)
@@ -101,14 +76,22 @@ func TestRun(t *testing.T) {
 
 	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "echod"), ".")
 	cmd.Dir = dir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Errorf("Failed to compile %s: %s\n%s", dir, err, output)
+	if output, err := cmd.CombinedOutput(); !assert.NoError(t, err, "failed to compile echod") {
+		t.Logf("%s", output)
 		return
 	}
 
 	ports := []string{"9090", "8080"}
-	sd := New(filepath.Join(dir, "echod"), WithPorts(ports))
-	go sd.Run(ctx)
+	var output bytes.Buffer
+	sd := New(filepath.Join(dir, "echod"), WithPorts(ports), WithNoticeOutput(&output))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if !assert.NoError(t, sd.Run(ctx), "Run should exit with no errors") {
+			return
+		}
+	}()
 
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()
@@ -134,11 +117,30 @@ func TestRun(t *testing.T) {
 			}
 		}
 	}
+
+	time.Sleep(time.Second)
+
+	var closed bool
+	select {
+	case <-done:
+		// grr, if we got here, done is closed
+		closed = true
+	default:
+	}
+
+	if !closed {
+		p, _ := os.FindProcess(os.Getpid())
+		p.Signal(os.Signal(syscall.SIGTERM))
+	}
+
+	<-done
+
+	t.Logf("%s", output.String())
 }
 
 func TestSigFromName(t *testing.T) {
 	for sig, name := range niceSigNames {
-		if got := SigFromName(name); sig != got {
+		if got := sigFromName(name); sig != got {
 			t.Errorf("%v: wants '%v' but got '%v'", name, sig, got)
 		}
 	}
@@ -149,7 +151,7 @@ func TestSigFromName(t *testing.T) {
 		"Hup":     syscall.SIGHUP,
 	}
 	for name, sig := range variants {
-		if got := SigFromName(name); sig != got {
+		if got := sigFromName(name); sig != got {
 			t.Errorf("%v: wants '%v' but got '%v'", name, sig, got)
 		}
 	}

@@ -1,6 +1,7 @@
 package starter
 
 import (
+	"io"
 	"os"
 	"strconv"
 	"time"
@@ -69,6 +70,10 @@ func WithSignalOnTERM(s os.Signal) Option {
 
 func WithStatusFile(s string) Option {
 	return &valueOption{name: "status_file", value: s}
+}
+
+func WithNoticeOutput(w io.Writer) Option {
+	return &valueOption{name: "notice_output", value: w}
 }
 
 func (o *stringOpt) String() string {
