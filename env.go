@@ -1,65 +1,21 @@
 package starter
 
 import (
-	"bufio"
-	"errors"
 	"os"
-	"path/filepath"
-	"strings"
+	"strconv"
+	"time"
 )
 
-var errNoEnv = errors.New("no ENVDIR specified, or ENVDIR does not exist")
+func envAsBool(name string) bool {
+	b, err := strconv.ParseBool(os.Getenv(name))
+	return err == nil && b
+}
 
-func reloadEnv() (map[string]string, error) {
-	dn := os.Getenv("ENVDIR")
-	if dn == "" {
-		return nil, errNoEnv
-	}
+func envAsInt(name string) int {
+	i, _ := strconv.ParseInt(os.Getenv(name), 10, 64)
+	return int(i)
+}
 
-	fi, err := os.Stat(dn)
-	if err != nil {
-		return nil, err
-	}
-
-	if !fi.IsDir() {
-		return nil, err
-	}
-
-	var m map[string]string
-
-	filepath.Walk(dn, func(path string, fi os.FileInfo, err error) error {
-		// Ignore errors
-		if err != nil {
-			return nil
-		}
-
-		// Don't go into directories
-		if fi.IsDir() && dn != path {
-			return filepath.SkipDir
-		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-
-		envName := filepath.Base(path)
-		scanner := bufio.NewScanner(f)
-		if scanner.Scan() {
-			if m == nil {
-				m = make(map[string]string)
-			}
-			l := scanner.Text()
-			m[envName] = strings.TrimSpace(l)
-		}
-
-		return nil
-	})
-
-	if m == nil {
-		return nil, errNoEnv
-	}
-
-	return m, nil
+func envAsDuration(name string) time.Duration {
+	return time.Duration(envAsInt(name)) * time.Second
 }
