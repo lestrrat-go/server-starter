@@ -2,14 +2,13 @@ package starter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"time"
 
-	flags "github.com/jessevdk/go-flags"
+	"github.com/pkg/errors"
 )
 
 func NewCLI() *CLI {
@@ -34,7 +33,7 @@ func makeOptionList(opts *options) []Option {
 		list = append(list, WithEnvdir(opts.Envdir.Value))
 	}
 	if opts.Interval > -1 {
-		list = append(list, WithInterval(time.Duration(opts.Interval) * time.Second))
+		list = append(list, WithInterval(time.Duration(opts.Interval)*time.Second))
 	}
 	if opts.KillOldDelay.Valid {
 		list = append(list, WithKillOldDelay(time.Duration(opts.KillOldDelay.Value)*time.Second))
@@ -59,12 +58,39 @@ func makeOptionList(opts *options) []Option {
 	}
 	return list
 }
-func (cli *CLI) Run(ctx context.Context) error {
+
+func (cli *CLI) ParseArgs(args ...string) (*options, error) {
 	var opts options
 	opts.Interval = -1 // allow 0
-	p := flags.NewParser(&opts, flags.PrintErrors|flags.PassDoubleDash)
-	args, err := p.Parse()
-	if err != nil || opts.Help {
+	if err := opts.Parse(args...); err != nil {
+		return nil, errors.Wrap(err, "failed to parse arguments")
+	}
+
+	if opts.Interval < 0 {
+		opts.Interval = 1
+	}
+
+	if len(opts.Args) == 0 {
+		return nil, errors.New("server program not specified")
+	}
+
+	opts.Command = opts.Args[0]
+	if len(opts.Args) > 1 {
+		opts.Args = opts.Args[1:]
+	} else {
+		opts.Args = []string(nil)
+	}
+
+	return &opts, nil
+}
+
+func (cli *CLI) Run(ctx context.Context) error {
+	opts, err := cli.ParseArgs(os.Args...)
+	if err != nil {
+		return err
+	}
+
+	if opts.Help {
 		showHelp()
 		return nil
 	}
@@ -74,20 +100,7 @@ func (cli *CLI) Run(ctx context.Context) error {
 		return nil
 	}
 
-	if opts.Interval <= 0 {
-		opts.Interval = 1
-	}
-
-	if len(args) == 0 {
-		return errors.New("server program not specified")
-	}
-
-	opts.Command = args[0]
-	if len(args) > 1 {
-		opts.Args = args[1:]
-	}
-
-	s := New(opts.Command, makeOptionList(&opts)...)
+	s := New(opts.Command, makeOptionList(opts)...)
 	return s.Run(ctx)
 }
 

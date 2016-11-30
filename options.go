@@ -3,8 +3,12 @@ package starter
 import (
 	"io"
 	"os"
+	"reflect"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 type valueOption struct {
@@ -119,6 +123,85 @@ func (o *boolOpt) Set(s string) error {
 	}
 	o.Valid = true
 	o.Value = b
+	return nil
+}
+
+type optsetter interface {
+	Set(string) error
+}
+
+var osv = reflect.TypeOf((*optsetter)(nil)).Elem()
+
+func (o *options) Parse(args ...string) error {
+	rv := reflect.ValueOf(o).Elem()
+	tv := rv.Type()
+	names := map[string]reflect.Value{}
+	for i := 0; i < tv.NumField(); i++ {
+		f := tv.Field(i)
+		if f.PkgPath != "" || f.Anonymous {
+			continue
+		}
+		names[f.Tag.Get("long")] = rv.Field(i)
+	}
+
+	var arguments []string
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
+		l := len(arg)
+		if l == 2 && arg == "--" {
+			// stop processing, everything after this is an argument
+			if len(args) > 0 {
+				arguments = append(arguments, args[1:]...)
+			}
+			args = []string(nil) // force loop termination
+			break
+		}
+
+		if !strings.HasPrefix(arg, "--") {
+			arguments = append(arguments, arg)
+			continue
+		}
+		end := l
+		var opval string
+		if ei := strings.IndexByte(arg, '='); ei > -1 {
+			end = ei
+			if end < l-1 {
+				opval = arg[end+1:]
+			} else {
+				return errors.Errorf("invalid argument '%s'", arg)
+			}
+		} else {
+			// is the next argument the argument to this option
+			if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
+				opval = args[0]
+				args = args[1:]
+			}
+		}
+		opname := arg[2:end]
+		f := names[opname]
+		opvalv := reflect.ValueOf(opval)
+		switch f.Kind() {
+		case reflect.Struct:
+			if reflect.PtrTo(f.Type()).Implements(osv) {
+				f.Addr().MethodByName("Set").Call([]reflect.Value{opvalv})
+			} else if opvalv.Type().AssignableTo(f.Type()) {
+				f.Set(opvalv)
+			}
+		case reflect.String:
+			f.Set(opvalv)
+		case reflect.Int:
+			i, err := strconv.ParseInt(opval, 10, 64)
+			if err != nil {
+				return err
+			}
+			f.Set(reflect.ValueOf(int(i)))
+		case reflect.Slice:
+			f.Set(reflect.Append(f, opvalv))
+		}
+	}
+
+	o.Args = arguments
 	return nil
 }
 
