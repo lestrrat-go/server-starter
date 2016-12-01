@@ -43,21 +43,22 @@ func TestCLIArgs(t *testing.T) {
 		}
 	})
 
-	t.Run("--interval=0", func(t *testing.T) {
-		opts, err := c.ParseArgs("ls", "--interval=0")
+	t.Run("--auto-restart-interval=5", func(t *testing.T) {
+		opts, err := c.ParseArgs("ls", "--auto-restart-interval=5")
 		if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
 			return
 		}
 
 		expected := options{
-			Command:  "ls",
-			Interval: 0,
+			Command:             "ls",
+			Interval:            1,
+			AutoRestartInterval: intOpt{Valid: true, Value: 5},
 		}
 
 		if !assert.Equal(t, &expected, opts) {
 			return
 		}
-		if err := findInOptionList(t, opts, "interval", time.Duration(0)); err != nil {
+		if err := findInOptionList(t, opts, "auto_restart_interval", 5*time.Second); err != nil {
 			return
 		}
 	})
@@ -93,13 +94,56 @@ func TestCLIArgs(t *testing.T) {
 			expected := options{
 				Command:           "ls",
 				Interval:          1,
-				EnableAutoRestart: boolOpt{ Valid: true, Value: val },
+				EnableAutoRestart: boolOpt{Valid: true, Value: val},
 			}
 
 			if !assert.Equal(t, &expected, opts) {
 				return
 			}
 			if err := findInOptionList(t, opts, "enable_auto_restart", val); err != nil {
+				return
+			}
+		})
+	}
+
+	t.Run("--envdir=foo", func(t *testing.T) {
+		opts, err := c.ParseArgs("ls", "--envdir=foo")
+		if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
+			return
+		}
+
+		expected := options{
+			Command:  "ls",
+			Interval: 1,
+			Envdir:   stringOpt{Valid: true, Value:"foo"},
+		}
+
+		if !assert.Equal(t, &expected, opts) {
+			return
+		}
+		if err := findInOptionList(t, opts, "envdir", "foo"); err != nil {
+			return
+		}
+	})
+
+	// 0 is a special case, so we must test
+	for i := 0; i < 2; i++ {
+		arg := fmt.Sprintf("--interval=%d", i)
+		t.Run(arg, func(t *testing.T) {
+			opts, err := c.ParseArgs("ls", arg)
+			if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
+				return
+			}
+
+			expected := options{
+				Command:  "ls",
+				Interval: i,
+			}
+
+			if !assert.Equal(t, &expected, opts) {
+				return
+			}
+			if err := findInOptionList(t, opts, "interval", time.Duration(i)*time.Second); err != nil {
 				return
 			}
 		})
