@@ -3,6 +3,7 @@ package starter
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -212,6 +213,88 @@ func TestCLIArgs(t *testing.T) {
 				return
 			}
 			if err := findInOptionList(t, opts, "kill_old_delay", time.Duration(i)*time.Second); err != nil {
+				return
+			}
+		})
+	}
+
+	paths := []string{
+		"/tmp/foo.sock",
+		"/tmp/bar.sock",
+	}
+	for i := 1; i <= 2; i++ {
+		args := make([]string, len(paths))
+		for i, p := range paths {
+			args[i] = "--path=" + p
+		}
+		name := strings.Join(args, " ")
+		t.Run(name, func(t *testing.T) {
+			opts, err := c.ParseArgs(append([]string{"ls"}, args[:i]...)...)
+			if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
+				return
+			}
+
+			expected := options{
+				Command:  "ls",
+				Interval: 1,
+				Paths:    paths[:i],
+			}
+
+			if !assert.Equal(t, &expected, opts) {
+				return
+			}
+			if err := findInOptionList(t, opts, "paths", paths[:i]); err != nil {
+				return
+			}
+		})
+	}
+
+	t.Run("--pid-file=/path/to/foo", func(t *testing.T) {
+		opts, err := c.ParseArgs("ls", "--pid-file=/path/to/foo")
+		if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
+			return
+		}
+
+		expected := options{
+			Command:  "ls",
+			Interval: 1,
+			PidFile:  "/path/to/foo",
+		}
+
+		if !assert.Equal(t, &expected, opts) {
+			return
+		}
+		if err := findInOptionList(t, opts, "pid_file", "/path/to/foo"); err != nil {
+			return
+		}
+	})
+
+	ports := []string{
+		"8080",
+		"0.0.0.0:9090",
+	}
+	for i := 1; i <= 2; i++ {
+		args := make([]string, len(ports))
+		for i, p := range ports {
+			args[i] = "--port=" + p
+		}
+		name := strings.Join(args, " ")
+		t.Run(name, func(t *testing.T) {
+			opts, err := c.ParseArgs(append([]string{"ls"}, args[:i]...)...)
+			if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
+				return
+			}
+
+			expected := options{
+				Command:  "ls",
+				Interval: 1,
+				Ports:    ports[:i],
+			}
+
+			if !assert.Equal(t, &expected, opts) {
+				return
+			}
+			if err := findInOptionList(t, opts, "ports", ports[:i]); err != nil {
 				return
 			}
 		})
