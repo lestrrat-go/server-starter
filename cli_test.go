@@ -303,15 +303,22 @@ func TestCLIArgs(t *testing.T) {
 	for _, val := range []bool{true, false} {
 		arg := fmt.Sprintf("--restart=%t", val)
 		t.Run(arg, func(t *testing.T) {
-			opts, err := c.ParseArgs("ls", arg)
+			args := []string{arg}
+			if !val {
+				args = append([]string{"ls"}, args...)
+			}
+			opts, err := c.ParseArgs(args...)
 			if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
+				t.Logf("%s", err)
 				return
 			}
 
 			expected := options{
-				Command:  "ls",
 				Interval: 1,
 				Restart:  val,
+			}
+			if !val {
+				expected.Command = "ls"
 			}
 
 			if !assert.Equal(t, &expected, opts) {
