@@ -145,6 +145,7 @@ func (s *Starter) Run(ctx context.Context) error {
 	var noticeOutput io.Writer = os.Stderr
 	var logStdout io.Writer = os.Stdout
 	var logStderr io.Writer = os.Stderr
+	var killOldDelay time.Duration = 5 * time.Second
 
 	for _, opt := range s.options {
 		switch opt.Name() {
@@ -167,7 +168,7 @@ func (s *Starter) Run(ctx context.Context) error {
 		case "interval":
 			interval = opt.Value().(time.Duration)
 		case "kill_old_delay":
-			os.Setenv(`KILL_OLD_DELAY`, strconv.Itoa(int(opt.Value().(time.Duration)/time.Second)))
+			killOldDelay = opt.Value().(time.Duration)
 		case "paths":
 			paths = opt.Value().([]string)
 		case "pid_file":
@@ -188,6 +189,11 @@ func (s *Starter) Run(ctx context.Context) error {
 			logStderr = opt.Value().(io.Writer)
 		}
 	}
+
+	if envAsBool(`ENABLE_AUTO_RESTART`) {
+		os.Setenv(`KILL_OLD_DELAY`, strconv.Itoa(int(killOldDelay/time.Second)))
+	}
+
 	notice := func(f string, args ...interface{}) {
 		var buf bytes.Buffer
 		fmt.Fprintf(&buf, f, args...)

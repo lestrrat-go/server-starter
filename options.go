@@ -49,7 +49,7 @@ func WithInterval(t time.Duration) Option {
 }
 
 func WithKillOldDelay(t time.Duration) Option {
-	return &valueOption{name: "kill_old_interval", value: t}
+	return &valueOption{name: "kill_old_delay", value: t}
 }
 
 func WithPaths(l []string) Option {

@@ -115,7 +115,7 @@ func TestCLIArgs(t *testing.T) {
 		expected := options{
 			Command:  "ls",
 			Interval: 1,
-			Envdir:   stringOpt{Valid: true, Value:"foo"},
+			Envdir:   stringOpt{Valid: true, Value: "foo"},
 		}
 
 		if !assert.Equal(t, &expected, opts) {
@@ -193,4 +193,28 @@ func TestCLIArgs(t *testing.T) {
 			}
 		})
 	}
+
+	for _, i := range []int{5, 10} {
+		arg := fmt.Sprintf("--kill-old-delay=%d", i)
+		t.Run(arg, func(t *testing.T) {
+			opts, err := c.ParseArgs("ls", arg)
+			if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
+				return
+			}
+
+			expected := options{
+				Command:      "ls",
+				Interval:     1,
+				KillOldDelay: intOpt{Valid: true, Value: i},
+			}
+
+			if !assert.Equal(t, &expected, opts) {
+				return
+			}
+			if err := findInOptionList(t, opts, "kill_old_delay", time.Duration(i)*time.Second); err != nil {
+				return
+			}
+		})
+	}
+
 }
