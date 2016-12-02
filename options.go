@@ -152,7 +152,7 @@ func (o *options) Parse(args ...string) error {
 		if l == 2 && arg == "--" {
 			// stop processing, everything after this is an argument
 			if len(args) > 0 {
-				arguments = append(arguments, args[1:]...)
+				arguments = append(arguments, args...)
 			}
 			args = []string(nil) // force loop termination
 			break

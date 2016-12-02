@@ -85,7 +85,7 @@ func (cli *CLI) ParseArgs(args ...string) (*options, error) {
 }
 
 func (cli *CLI) Run(ctx context.Context) error {
-	opts, err := cli.ParseArgs(os.Args...)
+	opts, err := cli.ParseArgs(os.Args[1:]...)
 	if err != nil {
 		return err
 	}
