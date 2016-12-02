@@ -100,6 +100,15 @@ func (cli *CLI) Run(ctx context.Context) error {
 		return nil
 	}
 
+	if opts.Restart {
+		if opts.PidFile == "" || opts.StatusFile == "" {
+			return errors.New("--restart option requires --pid-file and --status-file to be set as well")
+		}
+
+		s := NewRestarter(opts.PidFile, opts.StatusFile)
+		return s.Run(ctx)
+	}
+
 	s := New(opts.Command, makeOptionList(opts)...)
 	return s.Run(ctx)
 }

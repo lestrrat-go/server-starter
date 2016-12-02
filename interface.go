@@ -19,6 +19,11 @@ type Option interface {
 	Value() interface{}
 }
 
+type Restarter struct {
+	pidFile    string
+	statusFile string
+}
+
 type Starter struct {
 	options []Option
 	command string
