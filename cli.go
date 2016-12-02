@@ -70,15 +70,17 @@ func (cli *CLI) ParseArgs(args ...string) (*options, error) {
 		opts.Interval = 1
 	}
 
-	if len(opts.Args) == 0 {
-		return nil, errors.New("server program not specified")
-	}
+	if !opts.Help && !opts.Version && !opts.Restart {
+		if len(opts.Args) == 0 {
+			return nil, errors.New("server program not specified")
+		}
 
-	opts.Command = opts.Args[0]
-	if len(opts.Args) > 1 {
-		opts.Args = opts.Args[1:]
-	} else {
-		opts.Args = []string(nil)
+		opts.Command = opts.Args[0]
+		if len(opts.Args) > 1 {
+			opts.Args = opts.Args[1:]
+		} else {
+			opts.Args = []string(nil)
+		}
 	}
 
 	return &opts, nil

@@ -163,17 +163,20 @@ func (o *options) Parse(args ...string) error {
 			continue
 		}
 		end := l
+		var hasOpval bool
 		var opval string
 		if ei := strings.IndexByte(arg, '='); ei > -1 {
 			end = ei
 			if end < l-1 {
 				opval = arg[end+1:]
+				hasOpval = true
 			} else {
 				return errors.Errorf("invalid argument '%s'", arg)
 			}
 		} else {
 			// is the next argument the argument to this option
 			if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
+				hasOpval = true
 				opval = args[0]
 				args = args[1:]
 			}
@@ -191,6 +194,9 @@ func (o *options) Parse(args ...string) error {
 		case reflect.String:
 			f.Set(opvalv)
 		case reflect.Bool:
+			if !hasOpval {
+				opval = "true"
+			}
 			b, err := strconv.ParseBool(opval)
 			if err != nil {
 				return err
