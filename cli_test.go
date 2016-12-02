@@ -320,4 +320,24 @@ func TestCLIArgs(t *testing.T) {
 		})
 	}
 
+	t.Run("--status-file=/path/to/foo", func(t *testing.T) {
+		opts, err := c.ParseArgs("ls", "--status-file=/path/to/foo")
+		if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
+			return
+		}
+
+		expected := options{
+			Command:  "ls",
+			Interval: 1,
+			StatusFile:  "/path/to/foo",
+		}
+
+		if !assert.Equal(t, &expected, opts) {
+			return
+		}
+		if err := findInOptionList(t, opts, "status_file", "/path/to/foo"); err != nil {
+			return
+		}
+	})
+
 }
