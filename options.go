@@ -190,6 +190,12 @@ func (o *options) Parse(args ...string) error {
 			}
 		case reflect.String:
 			f.Set(opvalv)
+		case reflect.Bool:
+			b, err := strconv.ParseBool(opval)
+			if err != nil {
+				return err
+			}
+			f.Set(reflect.ValueOf(b))
 		case reflect.Int:
 			i, err := strconv.ParseInt(opval, 10, 64)
 			if err != nil {

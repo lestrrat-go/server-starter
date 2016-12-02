@@ -300,4 +300,24 @@ func TestCLIArgs(t *testing.T) {
 		})
 	}
 
+	for _, val := range []bool{true, false} {
+		arg := fmt.Sprintf("--restart=%t", val)
+		t.Run(arg, func(t *testing.T) {
+			opts, err := c.ParseArgs("ls", arg)
+			if !assert.NoError(t, err, "cli.ParseArgs should succeed") {
+				return
+			}
+
+			expected := options{
+				Command:  "ls",
+				Interval: 1,
+				Restart:  val,
+			}
+
+			if !assert.Equal(t, &expected, opts) {
+				return
+			}
+		})
+	}
+
 }
