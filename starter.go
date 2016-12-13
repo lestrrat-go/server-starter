@@ -584,8 +584,12 @@ func (s *Starter) Run(ctx context.Context) error {
 			notice("new worker is now running, sending %s to old workers: %s", signame(sigonhup), buf.String())
 
 			killOldDelay := envAsDuration(`KILL_OLD_DELAY`)
-			if killOldDelay == 0 && envAsBool(`ENABLE_AUTO_RESTART`) {
-				killOldDelay = 5 * time.Second
+			if killOldDelay == 0 {
+				if envAsBool(`ENABLE_AUTO_RESTART`) {
+					killOldDelay = 5 * time.Second
+				} else {
+					killOldDelay = 1
+				}
 			}
 
 			time.Sleep(killOldDelay)
