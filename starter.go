@@ -58,7 +58,7 @@ type listener struct {
 type Config interface {
 	Args() []string
 	Command() string
-	Dir() string             // Dirctory to chdir to before executing the command
+	Dir() string             // Directory to chdir to before executing the command
 	Interval() time.Duration // Time between checks for liveness
 	PidFile() string
 	Ports() []string         // Ports to bind to (addr:port or port, so it's a string)
