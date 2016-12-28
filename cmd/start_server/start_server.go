@@ -147,6 +147,11 @@ func _main() (st int) {
 		os.Setenv("ENVDIR", opts.OptEnvdir)
 	}
 
+	if opts.OptPidFile != "" && fileExist(opts.OptPidFile) {
+		fmt.Print("pid file exists. already boot?")
+		return
+	}
+
 	s, err := starter.NewStarter(opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
@@ -158,4 +163,9 @@ func _main() (st int) {
 	}
 	st = 0
 	return
+}
+
+func fileExist(path string) bool {
+	_, err := os.Stat(path)
+	return !os.IsNotExist(err)
 }
