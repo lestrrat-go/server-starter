@@ -1,162 +1,296 @@
 package starter
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strings"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
+
+	envload "github.com/lestrrat/go-envload"
+	tcputil "github.com/lestrrat/go-tcputil"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 )
 
-var echoServerTxt = `package main
+var echoServerSrc = `package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 	"github.com/lestrrat/go-server-starter/listener"
 )
 
 func main() {
+	fmt.Fprintf(os.Stderr, "Starting echod (%d)\n", os.Getpid())
+	var maxSigusr1 int // number of times we "withstand" a sigusr1
+	flag.IntVar(&maxSigusr1, "sigusr1", 0, "")
+	flag.Parse()
+
 	listeners, err := listener.ListenAll()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to listen: %s\n", err)
 		os.Exit(1)
 	}
+	defer func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(w, r.Body)
 	})
 	for _, l := range listeners {
-		http.Serve(l, handler)
+		go http.Serve(l, handler)
 	}
 
-	loop := false
-	sigCh := make(chan os.Signal)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
-	for loop {
+	fmt.Fprintf(os.Stderr, "echod: Waiting for signal (max USR1 = %d)\n", maxSigusr1)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1)
+
+	sigusr1 := 0
+	for loop := true; loop; {
 		select {
-		case <-sigCh:
-			loop = false
-		default:
-			time.Sleep(time.Second)
+		case s := <-sigCh:
+			fmt.Fprintf(os.Stderr, "echod: received %s\n", s)
+			switch s {
+			case syscall.SIGUSR1:
+				sigusr1++
+				if maxSigusr1 > sigusr1 {
+					fmt.Fprintf(os.Stderr, "echod: got USR1, ignoring (max = %d, count = %d)\n", maxSigusr1, sigusr1)
+				} else {
+					fmt.Fprintf(os.Stderr, "echod: reached max USR1 limit (%d)\n", maxSigusr1)
+					loop = false
+				}
+			case syscall.SIGTERM:
+				loop = false
+			default:
+				// do nothing
+			}
 		}
 	}
 }
 `
 
-type config struct {
-	args       []string
-	command    string
-	dir        string
-	interval   int
-	pidfile    string
-	ports      []string
-	paths      []string
-	sigonhup   string
-	sigonterm  string
-	statusfile string
-}
-
-func (c config) Args() []string          { return c.args }
-func (c config) Command() string         { return c.command }
-func (c config) Dir() string             { return c.dir }
-func (c config) Interval() time.Duration { return time.Duration(c.interval) * time.Second }
-func (c config) PidFile() string         { return c.pidfile }
-func (c config) Ports() []string         { return c.ports }
-func (c config) Paths() []string         { return c.paths }
-func (c config) SignalOnHUP() os.Signal  { return SigFromName(c.sigonhup) }
-func (c config) SignalOnTERM() os.Signal { return SigFromName(c.sigonterm) }
-func (c config) StatusFile() string      { return c.statusfile }
-
-func TestRun(t *testing.T) {
-	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%d", os.Getpid()))
+func build(name string, src string) (string, func(), error) {
+	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%s-%d", name, os.Getpid()))
 	if err != nil {
-		t.Errorf("Failed to create temp directory: %s", err)
-		return
+		return "", nil, errors.Wrapf(err, "failed to create tempdir %s", dir)
 	}
-	defer os.RemoveAll(dir)
-
-	srcFile := filepath.Join(dir, "echod.go")
+	cleanup := func() {
+		os.RemoveAll(dir)
+	}
+	srcFile := filepath.Join(dir, fmt.Sprintf("%s.go", name))
 	f, err := os.OpenFile(srcFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
-		t.Errorf("Failed to create %s: %s", srcFile, err)
-		return
+		return "", cleanup, errors.Wrapf(err, "failed to create source file %s", f)
 	}
-	io.WriteString(f, echoServerTxt)
+	io.WriteString(f, src)
 	f.Close()
 
-	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "echod"), ".")
+	result := filepath.Join(dir, name)
+	cmd := exec.Command("go", "build", "-o", result, ".")
+	cmd.Env = nil
 	cmd.Dir = dir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Errorf("Failed to compile %s: %s\n%s", dir, err, output)
-		return
-	}
-
-	ports := []string{"9090", "8080"}
-	sd, err := NewStarter(&config{
-		ports:   ports,
-		command: filepath.Join(dir, "echod"),
-	})
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Errorf("Failed to create starter: %s", err)
+		return "", cleanup, errors.Wrapf(err, "failed to compile %s: %s", name, output)
+	}
+	return result, cleanup, nil
+}
+
+func TestRun(t *testing.T) {
+	l := envload.New()
+	defer l.Restore()
+
+	cmdname, cleanup, err := build("echod", echoServerSrc)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if !assert.NoError(t, err, "build failed") {
 		return
 	}
 
-	doneCh := make(chan struct{})
-	readyCh := make(chan struct{})
-	go func() {
-		defer func() { doneCh <- struct{}{} }()
-		time.AfterFunc(500*time.Millisecond, func() {
-			readyCh <- struct{}{}
-		})
-		if err := sd.Run(); err != nil {
-			t.Errorf("sd.Run() failed: %s", err)
+	t.Run("normal execution", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		portCount := 2
+		ports := make([]string, portCount)
+		for i := 0; i < 2; i++ {
+			p, err := tcputil.EmptyPort()
+			if !assert.NoError(t, err, "failed to find an empty port") {
+				return
+			}
+			ports[i] = strconv.Itoa(p)
 		}
-		t.Logf("Exiting...")
-	}()
+		var output bytes.Buffer
+		defer func() {
+			t.Logf("%s", output.String())
+		}()
+		sd := New(cmdname, WithPorts(ports), WithNoticeOutput(&output))
 
-	<-readyCh
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if !assert.NoError(t, sd.Run(ctx), "Run should exit with no errors") {
+				return
+			}
+		}()
 
-	for _, port := range ports {
-		_, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", port))
-		if err != nil {
-			t.Errorf("Error connecing to port '%s': %s", port, err)
+		tick := time.NewTicker(500 * time.Millisecond)
+		defer tick.Stop()
+
+		ctx, cancel2 := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel2()
+		for loop := true; loop; {
+			select {
+			case <-ctx.Done():
+				t.Errorf("Error connecing: %s", ctx.Err())
+				return
+			case <-tick.C:
+				ok := 0
+				for _, port := range ports {
+					_, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", port))
+					if err == nil {
+						t.Logf("Successfully connected to port %s", port)
+						ok++
+					}
+				}
+				if ok == len(ports) {
+					loop = false
+				}
+			}
 		}
-	}
 
-	time.AfterFunc(time.Second, sd.Stop)
-	<-doneCh
+		time.Sleep(time.Second)
 
-	log.Printf("Checking ports...")
+		var closed bool
+		select {
+		case <-done:
+			// grr, if we got here, done is closed
+			closed = true
+		default:
+		}
 
-	patterns := make([]string, len(ports))
-	for i, port := range ports {
-		patterns[i] = fmt.Sprintf(`%s=\d+`, port)
-	}
-	pattern := regexp.MustCompile(strings.Join(patterns, ";"))
+		if !closed {
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(os.Signal(syscall.SIGTERM))
+		}
 
-	if envPort := os.Getenv("SERVER_STARTER_PORT"); !pattern.MatchString(envPort) {
-		t.Errorf("SERVER_STARTER_PORT: Expected '%s', but got '%s'", pattern, envPort)
-	}
+		<-done
+	})
+	l.Restore()
 
+	t.Run("send multiple signals", func(t *testing.T) {
+		// Note: this test does NOT test that the same echod server has received
+		// signals, because doing that intelligently would require rpc between
+		// this test code and the echod, and I really am in no mood to do it
+		// for now. However, visually it looks like it's doing the right job
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		port, err := tcputil.EmptyPort()
+		if !assert.NoError(t, err, "failed to find an empty port") {
+			return
+		}
+
+		var output bytes.Buffer
+		defer func() {
+			t.Logf("%s", output.String())
+		}()
+		sd := New(cmdname,
+			WithArgs("--sigusr1=2"),
+			WithPorts([]string{strconv.Itoa(port)}),
+			WithNoticeOutput(&output),
+			WithLogStdout(&output),
+			WithLogStderr(&output),
+			WithSignalOnHUP(syscall.SIGUSR1),
+		)
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if !assert.NoError(t, sd.Run(ctx), "Run should exit with no errors") {
+				return
+			}
+		}()
+
+		time.Sleep(2 * time.Second)
+
+		var closed bool
+		select {
+		case <-done:
+			closed = true
+			t.Errorf("unexpected exit")
+		default:
+		}
+
+		if !closed {
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(syscall.SIGHUP)
+		}
+
+		time.Sleep(2 * time.Second)
+
+		closed = false
+		select {
+		case <-done:
+			closed = true
+			t.Errorf("unexpected exit")
+		default:
+		}
+
+		if !closed {
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(syscall.SIGHUP)
+		}
+
+		time.Sleep(2 * time.Second)
+
+		closed = false
+		select {
+		case <-done:
+			closed = true
+			t.Errorf("unexpected exit")
+		default:
+		}
+
+		if !closed {
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(syscall.SIGTERM)
+		}
+
+		time.Sleep(time.Second)
+
+		select {
+		case <-ctx.Done():
+			t.Errorf("context prematurely ended: %s", ctx.Err())
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(syscall.SIGTERM)
+		case <-done:
+		}
+	})
+	l.Restore()
 }
 
 func TestSigFromName(t *testing.T) {
 	for sig, name := range niceSigNames {
-		if got := SigFromName(name); sig != got {
+		if got := sigFromName(name); sig != got {
 			t.Errorf("%v: wants '%v' but got '%v'", name, sig, got)
 		}
 	}
@@ -167,7 +301,7 @@ func TestSigFromName(t *testing.T) {
 		"Hup":     syscall.SIGHUP,
 	}
 	for name, sig := range variants {
-		if got := SigFromName(name); sig != got {
+		if got := sigFromName(name); sig != got {
 			t.Errorf("%v: wants '%v' but got '%v'", name, sig, got)
 		}
 	}

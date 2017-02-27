@@ -1,0 +1,26 @@
+hash: 834007827c1b49861ec10a1fc2fcb83425427181a3bfc0aec736d2ea54f39bbc
+updated: 2017-02-27T09:46:02.670776913+09:00
+imports:
+- name: github.com/lestrrat/go-envload
+  version: d7bc6278d4641441e356c80af00fd627f9b199f0
+- name: github.com/pkg/errors
+  version: 248dadf4e9068a0b3e79f02ed0a610d935de5302
+- name: golang.org/x/net
+  version: 10c134ea0df15f7e34d789338c7a2d76cc7a3ab9
+  subpackages:
+  - context
+testImports:
+- name: github.com/davecgh/go-spew
+  version: 04cdfd42973bb9c8589fd6a731800cf222fde1a9
+  subpackages:
+  - spew
+- name: github.com/lestrrat/go-tcputil
+  version: 3cae7c8432aeb817399f001e0db3f5bb04e8b8a6
+- name: github.com/pmezard/go-difflib
+  version: d8ed2627bdf02c080bf22230dbb337003b7aba2d
+  subpackages:
+  - difflib
+- name: github.com/stretchr/testify
+  version: 4d4bfba8f1d1027c4fdbe371823030df51419987
+  subpackages:
+  - assert

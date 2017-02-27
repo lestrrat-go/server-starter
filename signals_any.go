@@ -4,11 +4,6 @@ package starter
 
 import "syscall"
 
-func init() {
-	failureStatus = syscall.WaitStatus(255)
-	successStatus = syscall.WaitStatus(0)
-}
-
 func addPlatformDependentNiceSigNames(v map[syscall.Signal]string) map[syscall.Signal]string {
 	v[syscall.SIGCHLD] = "CHLD"
 	v[syscall.SIGCONT] = "CONT"
