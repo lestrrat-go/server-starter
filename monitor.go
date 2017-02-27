@@ -51,6 +51,12 @@ func monitor(ctx context.Context, src chan *exec.Cmd, done chan *exec.Cmd) {
 		Cmd  *exec.Cmd
 	}
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		cases := make([]reflect.SelectCase, len(workers)+1)
 		for i, worker := range workers {
 			cases[i].Chan = reflect.ValueOf(worker.Chan)
