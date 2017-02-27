@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lestrrat/go-server-starter/internal/env"
+	envload "github.com/lestrrat/go-envload"
 	"github.com/pkg/errors"
 )
 
@@ -282,8 +282,7 @@ func (s *Starter) Run(ctx context.Context) error {
 
 	// Note: environment variables that are set after this
 	// will NOT be re-populated
-	sysenv := env.SystemEnvironment()
-	envLoader := env.NewLoader()
+	envLoader := envload.New()
 
 	var statusFileCreated bool
 	defer func() {
@@ -509,7 +508,7 @@ func (s *Starter) Run(ctx context.Context) error {
 		exited := wait(ctx, sigCh, workerDone)
 
 		// reload env if necessary
-		envLoader.Apply(ctx, sysenv)
+		envLoader.Restore(envload.WithLoadEnvdir(true))
 
 		if envAsBool(`ENABLE_AUTO_RESTART`) {
 			if os.Getenv("AUTO_RESTART_INTERVAL") == "" {

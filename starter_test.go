@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lestrrat/go-server-starter/internal/env"
+	envload "github.com/lestrrat/go-envload"
 	tcputil "github.com/lestrrat/go-tcputil"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -114,9 +114,8 @@ func build(name string, src string) (string, func(), error) {
 }
 
 func TestRun(t *testing.T) {
-	l := env.NewLoader()
-	sysenv := env.SystemEnvironment()
-	defer l.Restore(context.Background(), sysenv)
+	l := envload.New()
+	defer l.Restore()
 
 	cmdname, cleanup, err := build("echod", echoServerSrc)
 	if cleanup != nil {
@@ -195,7 +194,7 @@ func TestRun(t *testing.T) {
 
 		<-done
 	})
-	l.Restore(context.Background(), sysenv)
+	l.Restore()
 
 	t.Run("send multiple signals", func(t *testing.T) {
 		// Note: this test does NOT test that the same echod server has received
@@ -286,7 +285,7 @@ func TestRun(t *testing.T) {
 		case <-done:
 		}
 	})
-	l.Restore(context.Background(), sysenv)
+	l.Restore()
 }
 
 func TestSigFromName(t *testing.T) {
