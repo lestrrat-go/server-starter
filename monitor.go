@@ -93,10 +93,6 @@ func monitor(ctx context.Context, src chan *exec.Cmd, done chan *exec.Cmd) {
 		switch {
 		case len(workers) < 2:
 			workers = nil
-		case chosen == 0:
-			workers = workers[1:]
-		case chosen == len(workers)-1:
-			workers = workers[:chosen]
 		default:
 			workers = append(workers[:chosen], workers[chosen+1:]...)
 		}
