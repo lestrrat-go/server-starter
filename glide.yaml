@@ -1,0 +1,9 @@
+package: github.com/lestrrat/go-server-starter
+import:
+- package: github.com/lestrrat/go-envload
+- package: github.com/pkg/errors
+testImport:
+- package: github.com/lestrrat/go-tcputil
+- package: github.com/stretchr/testify
+  subpackages:
+  - assert
