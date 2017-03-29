@@ -91,7 +91,7 @@ func NewStarter(c Config) (*Starter, error) {
 		return nil, fmt.Errorf("config argument must be non-nil")
 	}
 
-	var signalOnHUP os.Signal = syscall.SIGTERM
+	var signalOnHUP os.Signal = syscall.SIGHUP
 	var signalOnTERM os.Signal = syscall.SIGTERM
 	if s := c.SignalOnHUP(); s != nil {
 		signalOnHUP = s
