@@ -426,7 +426,7 @@ func (s *Starter) Run() error {
 						if err != nil {
 							continue
 						}
-						worker.Signal(s.signalOnHUP)
+						worker.Signal(s.signalOnTERM)
 					}
 				}
 			}
