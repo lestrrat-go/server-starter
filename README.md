@@ -1,4 +1,4 @@
-go-server-starter
+server-starter
 =================
 
 Go port of ```start_server``` utility (a.k.a. [Server::Starter](https://metacpan.org/pod/Server::Starter)).
@@ -17,10 +17,10 @@ By using ```start_server``` it is much easier to write a hot-deployable server. 
 
 - receive file descriptors to listen to through an environment variable - perform a graceful shutdown when receiving SIGTERM
 
-Many PSGI servers support this. If you want your Go program to support it, you can look under the [listener](https://github.com/lestrrat/go-server-starter/tree/master/listener) directory for an implementation that also fills the ```net.Listener``` interface.
+Many PSGI servers support this. If you want your Go program to support it, you can look under the [listener](https://github.com/lestrrat-go/server-starter/tree/master/listener) directory for an implementation that also fills the ```net.Listener``` interface.
 
 ## INSTALLATION
 
 ```
-go get github.com/lestrrat/go-server-starter/cmd/start_server
+go get github.com/lestrrat-go/server-starter/cmd/start_server
 ```

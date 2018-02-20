@@ -19,7 +19,7 @@ if [ ! -e "$GITHUB_TOKEN_FILE" ]; then
 fi
 
 docker run --rm \
-    -v $SSDIR:/work/src/github.com/lestrrat/go-server-starter/ \
+    -v $SSDIR:/work/src/github.com/lestrrat-go/server-starter/ \
     -e SS_VERSION=$SS_VERSION \
     -e GITHUB_USERNAME=lestrrat \
     -e GITHUB_TOKEN=`cat $GITHUB_TOKEN_FILE` \

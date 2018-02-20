@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DIR=/work/src/github.com/lestrrat/go-server-starter
+DIR=/work/src/github.com/lestrrat-go/server-starter
 
 pushd $DIR
 go get github.com/jessevdk/go-flags

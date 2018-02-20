@@ -26,7 +26,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	"github.com/lestrrat/go-server-starter/listener"
+	"github.com/lestrrat-go/server-starter/listener"
 )
 
 func main() {

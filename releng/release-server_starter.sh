@@ -19,7 +19,7 @@ fi
 
 # Change directory to the project because that makes
 # things much easier
-cd /work/src/github.com/lestrrat/go-server-starter
+cd /work/src/github.com/lestrrat-go/server-starter
 
 /build-server_starter.sh
 ghr --debug -p 1 --replace -u "$GITHUB_USERNAME" $SS_VERSION /work/artifacts/snapshot
