@@ -3,6 +3,10 @@ server-starter
 
 Go port of ```start_server``` utility (a.k.a. [Server::Starter](https://metacpan.org/pod/Server::Starter)).
 
+[![Build Status](https://travis-ci.org/lestrrat-go/server-starter.png?branch=master)](https://travis-ci.org/lestrrat-go/server-starter)
+
+[![GoDoc](https://godoc.org/github.com/lestrrat-go/server-starter?status.svg)](https://godoc.org/github.com/lestrrat-go/server-starter)
+
 ## DESCRIPTION
 
 *note: this description is almost entirely taken from the original Server::Starter module*
