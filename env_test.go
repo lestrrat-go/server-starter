@@ -57,7 +57,7 @@ func TestEnvdir(t *testing.T) {
 	for _, fn := range files {
 		v, ok := m[fn]
 		if !ok {
-			t.Errorf("Expected environment variable '%s' to exist")
+			t.Errorf("Expected environment variable '%s' to exist", fn)
 			return
 		}
 		if v != fn {
