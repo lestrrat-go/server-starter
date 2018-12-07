@@ -517,7 +517,6 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 					sigs = append(sigs, sig)
 				}
 			}
-
 			// if received any signals, during the wait, we bail out
 			gotSig := false
 			if len(sigs) > 0 {
@@ -534,8 +533,10 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 			}
 
 			// Check if we can find a process by its pid
-			p, err := os.FindProcess(pid)
-			if gotSig || err == nil {
+			p, _ := os.FindProcess(pid)
+			var wstatus syscall.WaitStatus
+			waitpid, _ := syscall.Wait4(pid, &wstatus, syscall.WNOHANG, nil)
+			if gotSig || waitpid <= 0 {
 				// No error? We were successful! Make sure we capture
 				// the program exiting
 				go func() {
