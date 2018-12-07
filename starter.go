@@ -533,7 +533,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 			}
 
 			// Check if we can find a process by its pid
-			p := existsProcess(pid)
+			p := findWorker(pid)
 			if gotSig || p != nil {
 				// No error? We were successful! Make sure we capture
 				// the program exiting

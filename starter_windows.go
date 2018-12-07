@@ -14,7 +14,7 @@ func addPlatformDependentNiceSigNames(v map[syscall.Signal]string) map[syscall.S
 	return v
 }
 
-func existsProcess(pid int) *os.Process {
+func findWorker(pid int) *os.Process {
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		return p
