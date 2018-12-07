@@ -1,6 +1,9 @@
 package starter
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
 func init() {
 	failureStatus = syscall.WaitStatus{ExitCode: 255}
@@ -9,4 +12,12 @@ func init() {
 
 func addPlatformDependentNiceSigNames(v map[syscall.Signal]string) map[syscall.Signal]string {
 	return v
+}
+
+func existsProcess(pid int) *os.Process {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return p
+	}
+	return nil
 }

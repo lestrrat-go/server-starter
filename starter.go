@@ -533,10 +533,8 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 			}
 
 			// Check if we can find a process by its pid
-			p, _ := os.FindProcess(pid)
-			var wstatus syscall.WaitStatus
-			waitpid, _ := syscall.Wait4(pid, &wstatus, syscall.WNOHANG, nil)
-			if gotSig || waitpid <= 0 {
+			p := existsProcess(pid)
+			if gotSig || p != nil {
 				// No error? We were successful! Make sure we capture
 				// the program exiting
 				go func() {
