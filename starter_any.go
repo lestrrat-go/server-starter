@@ -2,7 +2,10 @@
 
 package starter
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
 func init() {
 	failureStatus = syscall.WaitStatus(255)
@@ -27,4 +30,14 @@ func addPlatformDependentNiceSigNames(v map[syscall.Signal]string) map[syscall.S
 	v[syscall.SIGXCPU] = "XCPU"
 	v[syscall.SIGXFSZ] = "GXFSZ"
 	return v
+}
+
+func findWorker(pid int) *os.Process {
+	var wstatus syscall.WaitStatus
+	waitpid, _ := syscall.Wait4(pid, &wstatus, syscall.WNOHANG, nil)
+	if waitpid <= 0 {
+		p, _ := os.FindProcess(pid)
+		return p
+	}
+	return nil
 }
