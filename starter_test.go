@@ -98,7 +98,17 @@ func TestRun(t *testing.T) {
 	io.WriteString(f, echoServerTxt)
 	f.Close()
 
-	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "echod"), ".")
+
+	_, lastComp := filepath.Split(dir)
+	cmd := exec.Command("go", "mod", "init", "github.com/lestrrat-go/server-starter/" + lastComp)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("%s", output)
+		t.Errorf("failed to run go mod init: %s", err)
+		return
+	}
+
+	cmd = exec.Command("go", "build", "-o", filepath.Join(dir, "echod"), ".")
 	cmd.Dir = dir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("Failed to compile %s: %s\n%s", dir, err, output)
