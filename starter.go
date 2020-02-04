@@ -359,6 +359,12 @@ func (s *Starter) Run() error {
 
 		// Just wait for the worker to exit, or for us to receive a signal
 		for {
+			status := make(map[int]int)
+		        for pid, gen := range oldWorkers {
+			    status[gen]  = pid
+			}
+			status[s.generation] = p.Pid
+			statusCh <- status
 			// restart = 2: force restart
 			// restart = 1 and no workers: force restart
 			// restart = 0: no restart
