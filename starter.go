@@ -274,6 +274,9 @@ func (s *Starter) Run() error {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
 			return err
 		}
+		if err = os.Chmod(path, 1777); err != nil {
+			return err
+		}
 		s.listeners = append(s.listeners, listener{listener: l, spec: path})
 	}
 
@@ -360,8 +363,8 @@ func (s *Starter) Run() error {
 		// Just wait for the worker to exit, or for us to receive a signal
 		for {
 			status := make(map[int]int)
-		        for pid, gen := range oldWorkers {
-			    status[gen]  = pid
+			for pid, gen := range oldWorkers {
+				status[gen] = pid
 			}
 			status[s.generation] = p.Pid
 			statusCh <- status
