@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	starter "github.com/aucfan-yotsuya/server-starter"
 	"github.com/jessevdk/go-flags"
-	starter "github.com/lestrrat-go/server-starter"
 )
 
 const version = "0.0.2"
