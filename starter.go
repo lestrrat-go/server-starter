@@ -269,12 +269,12 @@ func (s *Starter) Run() error {
 			}
 		}
 		_ = os.Remove(path)
+		if err = os.Chmod(path, 1777); err != nil {
+			return err
+		}
 		l, err := net.Listen("unix", path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
-			return err
-		}
-		if err = os.Chmod(path, 1777); err != nil {
 			return err
 		}
 		s.listeners = append(s.listeners, listener{listener: l, spec: path})
