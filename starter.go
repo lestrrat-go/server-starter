@@ -126,7 +126,7 @@ func NewStarter(c Config) (*Starter, error) {
 
 func (s Starter) Stop() {
 	p, _ := os.FindProcess(os.Getpid())
-	p.Signal(syscall.SIGTERM)
+	_ = p.Signal(syscall.SIGTERM)
 }
 
 func grabExitStatus(st processState) syscall.WaitStatus {
@@ -210,6 +210,7 @@ func parsePortSpec(addr string) (string, int, error) {
 }
 
 func (s *Starter) Run() error {
+	// nolint:errcheck
 	defer s.Teardown()
 
 	if s.pidFile != "" {
@@ -337,7 +338,7 @@ func (s *Starter) Run() error {
 			if err != nil {
 				continue
 			}
-			worker.Signal(sigToSend)
+			_ = worker.Signal(sigToSend)
 		}
 
 		for len(oldWorkers) > 0 {
@@ -427,7 +428,7 @@ func (s *Starter) Run() error {
 						if err != nil {
 							continue
 						}
-						worker.Signal(s.signalOnHUP)
+						_ = worker.Signal(s.signalOnHUP)
 					}
 				}
 			}
@@ -553,7 +554,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		}
 		// If we fall through here, we prematurely exited :/
 		// Make sure to wait to release resources
-		cmd.Wait()
+		_ = cmd.Wait()
 		for _, f := range cmd.ExtraFiles {
 			f.Close()
 		}

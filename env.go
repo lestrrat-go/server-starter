@@ -27,7 +27,7 @@ func reloadEnv() (map[string]string, error) {
 
 	var m map[string]string
 
-	filepath.Walk(dn, func(path string, fi os.FileInfo, err error) error {
+	_ = filepath.Walk(dn, func(path string, fi os.FileInfo, err error) error {
 		// Ignore errors
 		if err != nil {
 			return nil
