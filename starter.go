@@ -534,7 +534,9 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 				for _, sig := range sigs {
 					// we need to resend these signals so it can be caught in the
 					// main routine...
-					go func() { sigCh <- sig }()
+					go func(sig os.Signal) {
+						sigCh <- sig
+					}(sig)
 					if sysSig, ok := sig.(syscall.Signal); ok {
 						if sysSig != syscall.SIGHUP {
 							gotSig = true
