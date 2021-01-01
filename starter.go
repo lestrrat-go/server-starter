@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -82,6 +83,7 @@ type Starter struct {
 	generation int
 	command    string
 	args       []string
+	mu         sync.RWMutex
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
@@ -251,7 +253,9 @@ func (s *Starter) Run() error {
 		} else {
 			spec = fmt.Sprintf("%s:%d", host, port)
 		}
+		s.mu.Lock()
 		s.listeners = append(s.listeners, listener{listener: l, spec: spec})
+		s.mu.Unlock()
 	}
 
 	for _, path := range s.paths {
@@ -270,7 +274,9 @@ func (s *Starter) Run() error {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
 			return err
 		}
+		s.mu.Lock()
 		s.listeners = append(s.listeners, listener{listener: l, spec: path})
+		s.mu.Unlock()
 	}
 
 	s.generation = 0
@@ -474,6 +480,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		// external process
 		files := make([]*os.File, len(s.ports)+len(s.paths))
 		ports := make([]string, len(s.ports)+len(s.paths))
+		s.mu.RLock()
 		for i, l := range s.listeners {
 			// file descriptor numbers in ExtraFiles turn out to be
 			// index + 3, so we can just hard code it
@@ -494,6 +501,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 			ports[i] = fmt.Sprintf("%s=%d", l.spec, i+3)
 			files[i] = f
 		}
+		s.mu.RUnlock()
 		cmd.ExtraFiles = files
 
 		s.generation++
@@ -572,9 +580,11 @@ func (s *Starter) Teardown() error {
 		os.Remove(s.statusFile)
 	}
 
+	s.mu.RLock()
 	for _, l := range s.listeners {
 		l.listener.Close()
 	}
+	s.mu.RUnlock()
 
 	return nil
 }
