@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -82,6 +83,7 @@ type Starter struct {
 	generation int
 	command    string
 	args       []string
+	mu         sync.RWMutex
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
@@ -122,12 +124,11 @@ func NewStarter(c Config) (*Starter, error) {
 	}
 
 	return s, nil
-
 }
 
-func (s Starter) Stop() {
+func (s *Starter) Stop() {
 	p, _ := os.FindProcess(os.Getpid())
-	p.Signal(syscall.SIGTERM)
+	_ = p.Signal(syscall.SIGTERM)
 }
 
 func grabExitStatus(st processState) syscall.WaitStatus {
@@ -168,11 +169,7 @@ func signame(s os.Signal) string {
 // SigFromName returns the signal corresponding to the given signal name string.
 // If the given name string is not defined, it returns nil.
 func SigFromName(n string) os.Signal {
-	n = strings.ToUpper(n)
-	if strings.HasPrefix(n, "SIG") {
-		n = n[3:] // remove SIG prefix
-	}
-
+	n = strings.TrimPrefix(strings.ToUpper(n), "SIG")
 	if sig, ok := niceNameToSigs[n]; ok {
 		return sig
 	}
@@ -215,6 +212,7 @@ func parsePortSpec(addr string) (string, int, error) {
 }
 
 func (s *Starter) Run() error {
+	// nolint:errcheck
 	defer s.Teardown()
 
 	if s.pidFile != "" {
@@ -255,7 +253,9 @@ func (s *Starter) Run() error {
 		} else {
 			spec = fmt.Sprintf("%s:%d", host, port)
 		}
+		s.mu.Lock()
 		s.listeners = append(s.listeners, listener{listener: l, spec: spec})
+		s.mu.Unlock()
 	}
 
 	for _, path := range s.paths {
@@ -274,7 +274,9 @@ func (s *Starter) Run() error {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
 			return err
 		}
+		s.mu.Lock()
 		s.listeners = append(s.listeners, listener{listener: l, spec: path})
+		s.mu.Unlock()
 	}
 
 	s.generation = 0
@@ -342,7 +344,7 @@ func (s *Starter) Run() error {
 			if err != nil {
 				continue
 			}
-			worker.Signal(sigToSend)
+			_ = worker.Signal(sigToSend)
 		}
 
 		for len(oldWorkers) > 0 {
@@ -360,8 +362,8 @@ func (s *Starter) Run() error {
 		// Just wait for the worker to exit, or for us to receive a signal
 		for {
 			status := make(map[int]int)
-		        for pid, gen := range oldWorkers {
-			    status[gen]  = pid
+			for pid, gen := range oldWorkers {
+				status[gen] = pid
 			}
 			status[s.generation] = p.Pid
 			statusCh <- status
@@ -432,13 +434,14 @@ func (s *Starter) Run() error {
 						if err != nil {
 							continue
 						}
-						worker.Signal(s.signalOnHUP)
+						_ = worker.Signal(s.signalOnHUP)
 					}
 				}
 			}
 		}
 	}
 
+	// nolint:govet
 	return nil
 }
 
@@ -477,6 +480,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		// external process
 		files := make([]*os.File, len(s.ports)+len(s.paths))
 		ports := make([]string, len(s.ports)+len(s.paths))
+		s.mu.RLock()
 		for i, l := range s.listeners {
 			// file descriptor numbers in ExtraFiles turn out to be
 			// index + 3, so we can just hard code it
@@ -497,6 +501,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 			ports[i] = fmt.Sprintf("%s=%d", l.spec, i+3)
 			files[i] = f
 		}
+		s.mu.RUnlock()
 		cmd.ExtraFiles = files
 
 		s.generation++
@@ -554,11 +559,10 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 				// Bail out
 				return p
 			}
-
 		}
 		// If we fall through here, we prematurely exited :/
 		// Make sure to wait to release resources
-		cmd.Wait()
+		_ = cmd.Wait()
 		for _, f := range cmd.ExtraFiles {
 			f.Close()
 		}
@@ -567,6 +571,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 	}
 
 	// never reached
+	//nolint:govet
 	return nil
 }
 
@@ -575,9 +580,11 @@ func (s *Starter) Teardown() error {
 		os.Remove(s.statusFile)
 	}
 
+	s.mu.RLock()
 	for _, l := range s.listeners {
 		l.listener.Close()
 	}
+	s.mu.RUnlock()
 
 	return nil
 }

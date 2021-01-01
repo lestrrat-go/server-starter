@@ -13,7 +13,7 @@ import (
 const ServerStarterEnvVarName = "SERVER_STARTER_PORT"
 
 var (
-	ErrNoListeningTarget = errors.New("No listening target")
+	ErrNoListeningTarget = errors.New("no listening target")
 )
 
 // Listener is the interface for things that listen on file descriptors
@@ -24,13 +24,13 @@ type Listener interface {
 	String() string
 }
 
-// ListenerList holds a list of Listeners. This is here just for convenience
+// List holds a list of Listeners. This is here just for convenience
 // so that you can do
 //	list.String()
 // to get a string compatible with SERVER_STARTER_PORT
-type ListenerList []Listener
+type List []Listener
 
-func (ll ListenerList) String() string {
+func (ll List) String() string {
 	list := make([]string, len(ll))
 	for i, l := range ll {
 		list[i] = l.String()

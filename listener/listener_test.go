@@ -6,7 +6,7 @@ import (
 )
 
 func TestPort(t *testing.T) {
-	expect := ListenerList{
+	expect := List{
 		TCPListener{Addr: "127.0.0.1", Port: 9090, fd: 4},
 		TCPListener{Addr: "0.0.0.0", Port: 8080, fd: 5},
 		UnixListener{Path: "/foo/bar/baz.sock", fd: 6},
@@ -20,7 +20,7 @@ func TestPort(t *testing.T) {
 
 	for i, port := range ports {
 		if port.Fd() != expect[i].Fd() {
-			t.Errorf("parsed fd is not what we expected (expeced %d, got %d)", expect[i].Fd(), port.Fd())
+			t.Errorf("parsed fd is not what we expected (expected %d, got %d)", expect[i].Fd(), port.Fd())
 		}
 	}
 }
