@@ -20,7 +20,7 @@ func TestPort(t *testing.T) {
 
 	for i, port := range ports {
 		if port.Fd() != expect[i].Fd() {
-			t.Errorf("parsed fd is not what we expected (expeced %d, got %d)", expect[i].Fd(), port.Fd())
+			t.Errorf("parsed fd is not what we expected (expected %d, got %d)", expect[i].Fd(), port.Fd())
 		}
 	}
 }
