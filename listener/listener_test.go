@@ -6,7 +6,7 @@ import (
 )
 
 func TestPort(t *testing.T) {
-	expect := ListenerList{
+	expect := List{
 		TCPListener{Addr: "127.0.0.1", Port: 9090, fd: 4},
 		TCPListener{Addr: "0.0.0.0", Port: 8080, fd: 5},
 		UnixListener{Path: "/foo/bar/baz.sock", fd: 6},

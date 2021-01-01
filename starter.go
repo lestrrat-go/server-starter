@@ -126,7 +126,7 @@ func NewStarter(c Config) (*Starter, error) {
 	return s, nil
 }
 
-func (s Starter) Stop() {
+func (s *Starter) Stop() {
 	p, _ := os.FindProcess(os.Getpid())
 	_ = p.Signal(syscall.SIGTERM)
 }

@@ -54,6 +54,9 @@ issues:
     - path: /*_example_test.go
       linters:
         - forbidigo
+    - path: cmd/start_server/start_server.go
+      linters:
+        - forbidigo
 
   # Maximum issues count per one linter. Set to 0 to disable. Default is 50.
   max-issues-per-linter: 0
