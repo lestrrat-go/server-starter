@@ -122,7 +122,6 @@ func NewStarter(c Config) (*Starter, error) {
 	}
 
 	return s, nil
-
 }
 
 func (s Starter) Stop() {
@@ -168,11 +167,7 @@ func signame(s os.Signal) string {
 // SigFromName returns the signal corresponding to the given signal name string.
 // If the given name string is not defined, it returns nil.
 func SigFromName(n string) os.Signal {
-	n = strings.ToUpper(n)
-	if strings.HasPrefix(n, "SIG") {
-		n = n[3:] // remove SIG prefix
-	}
-
+	n = strings.TrimPrefix(strings.ToUpper(n), "SIG")
 	if sig, ok := niceNameToSigs[n]; ok {
 		return sig
 	}
@@ -360,8 +355,8 @@ func (s *Starter) Run() error {
 		// Just wait for the worker to exit, or for us to receive a signal
 		for {
 			status := make(map[int]int)
-		        for pid, gen := range oldWorkers {
-			    status[gen]  = pid
+			for pid, gen := range oldWorkers {
+				status[gen] = pid
 			}
 			status[s.generation] = p.Pid
 			statusCh <- status
@@ -439,6 +434,7 @@ func (s *Starter) Run() error {
 		}
 	}
 
+	// nolint:govet
 	return nil
 }
 
@@ -554,7 +550,6 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 				// Bail out
 				return p
 			}
-
 		}
 		// If we fall through here, we prematurely exited :/
 		// Make sure to wait to release resources
@@ -567,6 +562,7 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 	}
 
 	// never reached
+	//nolint:govet
 	return nil
 }
 

@@ -98,9 +98,8 @@ func TestRun(t *testing.T) {
 	io.WriteString(f, echoServerTxt)
 	f.Close()
 
-
 	_, lastComp := filepath.Split(dir)
-	cmd := exec.Command("go", "mod", "init", "github.com/lestrrat-go/server-starter/" + lastComp)
+	cmd := exec.Command("go", "mod", "init", "github.com/lestrrat-go/server-starter/"+lastComp)
 	cmd.Dir = dir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Logf("%s", output)
@@ -161,7 +160,6 @@ func TestRun(t *testing.T) {
 	if envPort := os.Getenv("SERVER_STARTER_PORT"); !pattern.MatchString(envPort) {
 		t.Errorf("SERVER_STARTER_PORT: Expected '%s', but got '%s'", pattern, envPort)
 	}
-
 }
 
 func TestSigFromName(t *testing.T) {
