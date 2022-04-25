@@ -83,7 +83,7 @@ func (l UnixListener) Listen() (net.Listener, error) {
 }
 
 // Being lazy here...
-var reLooksLikeHostPort = regexp.MustCompile(`^(\d+):(\d+)$`)
+var reLooksLikeHostPort = regexp.MustCompile(`^(.+?):(\d+)$`)
 var reLooksLikePort = regexp.MustCompile(`^\d+$`)
 
 func parseListenTargets(str string) ([]Listener, error) {
@@ -103,14 +103,14 @@ func parseListenTargets(str string) ([]Listener, error) {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: %s", pairString, err)
 		}
 
-		if matches := reLooksLikeHostPort.FindAllString(hostPort, -1); matches != nil {
-			port, err := strconv.ParseInt(matches[1], 10, 0)
+		if matches := reLooksLikeHostPort.FindStringSubmatch(hostPort); matches != nil {
+			port, err := strconv.ParseInt(matches[2], 10, 0)
 			if err != nil {
 				return nil, err
 			}
 
 			ret[i] = TCPListener{
-				Addr: matches[0],
+				Addr: matches[1],
 				Port: int(port),
 				fd:   uintptr(fd),
 			}
