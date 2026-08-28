@@ -24,7 +24,7 @@ func TestReadPIDEnforcesSigned32BitRange(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "pid")
 		require.NoError(t, os.WriteFile(path, []byte("2147483647\n"), 0600))
 
-		pid, err := statefile.ReadPID(t.Context(), path)
+		pid, err := statefile.ReadPID(context.Background(), path)
 		require.NoError(t, err)
 		require.Equal(t, 2147483647, pid)
 	})
@@ -34,7 +34,7 @@ func TestReadPIDEnforcesSigned32BitRange(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "pid")
 			require.NoError(t, os.WriteFile(path, []byte(value+"\n"), 0600))
 
-			_, err := statefile.ReadPID(t.Context(), path)
+			_, err := statefile.ReadPID(context.Background(), path)
 			require.ErrorContains(t, err, "invalid pid file")
 		})
 	}
