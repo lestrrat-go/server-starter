@@ -112,11 +112,15 @@ func Run() int {
 	// to read back (which is not safe: two supervisors running in one
 	// process would race on the shared environment). Precedence is the
 	// flag if it was explicitly passed, otherwise the ambient environment
-	// variable, otherwise a default -- the same result the old exporting
-	// code produced, without mutating the process environment to get it.
-	opts.resolved = resolveSettings(opts, func(long string) bool {
+	// variable, otherwise a default. Invalid ambient values abort startup.
+	resolved, err := resolveSettings(opts, func(long string) bool {
 		return p.FindOptionByLongName(long).IsSet()
 	})
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %s\n", err)
+		return 1
+	}
+	opts.resolved = resolved
 
 	s, err := supervisor.NewStarter(opts)
 	if err != nil {
