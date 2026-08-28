@@ -732,6 +732,7 @@ func (s *Starter) startWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 	}
 }
 
+//nolint:unparam // error return kept as-is; unparam only checks unexported funcs, exposed by this rename
 func (s *Starter) teardown() error {
 	if s.statusFile != "" {
 		os.Remove(s.statusFile)
