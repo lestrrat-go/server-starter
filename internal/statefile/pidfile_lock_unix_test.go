@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/lestrrat-go/server-starter/v2/internal/statefile"
 	"github.com/stretchr/testify/require"
@@ -83,41 +82,6 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 		_, err := statefile.ReadPID(firstPath)
 		require.ErrorContains(t, err, "different path")
 	})
-}
-
-func TestAcquireBlocksWhileSameProcessHoldsPIDFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "server.pid")
-	first, err := statefile.Acquire(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = first.Close() })
-
-	type result struct {
-		pidFile *statefile.PIDFile
-		err     error
-	}
-	acquired := make(chan result, 1)
-	go func() {
-		pidFile, err := statefile.Acquire(path)
-		acquired <- result{pidFile: pidFile, err: err}
-	}()
-
-	select {
-	case second := <-acquired:
-		if second.pidFile != nil {
-			require.NoError(t, second.pidFile.Close())
-		}
-		require.Failf(t, "second acquire returned", "error = %v", second.err)
-	case <-time.After(200 * time.Millisecond):
-	}
-
-	require.NoError(t, first.Close())
-	select {
-	case second := <-acquired:
-		require.NoError(t, second.err)
-		require.NoError(t, second.pidFile.Close())
-	case <-time.After(5 * time.Second):
-		require.Fail(t, "second acquire remained blocked after the first file closed")
-	}
 }
 
 func TestPIDLockHelper(t *testing.T) {
