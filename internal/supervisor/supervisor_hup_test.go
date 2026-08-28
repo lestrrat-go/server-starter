@@ -4,10 +4,13 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -141,13 +144,58 @@ func waitForDiagnostic(t *testing.T, stderr *syncBuffer, want string) {
 	t.Fatalf("timed out waiting for diagnostic %q; output:\n%s", want, stderr.String())
 }
 
-// TestHUPCoalescesWhileOldWorkerLives verifies that repeated restart requests
-// cannot accumulate worker generations. One request stays pending until the
-// old worker exits, then causes exactly one additional restart.
-func TestHUPCoalescesWhileOldWorkerLives(t *testing.T) {
+// exitDiagnosticGate blocks the first old-worker exit diagnostic before the
+// supervisor removes that worker from its drain set. Tests can then place a
+// HUP in the controller buffer at the exact point where the drain completes.
+type exitDiagnosticGate struct {
+	syncBuffer
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *exitDiagnosticGate) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "old worker ") && strings.Contains(string(p), " died, status:") {
+		b.once.Do(func() {
+			close(b.reached)
+			<-b.release
+		})
+	}
+	return b.syncBuffer.Write(p)
+}
+
+func waitForGenerationRemoval(t *testing.T, statusFile, removed string) []string {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	var last []string
+	for time.Now().Before(deadline) {
+		last = generations(t, statusFile)
+		if len(last) > 0 && !slices.Contains(last, removed) {
+			return last
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for generation %s to exit, last saw %v", removed, last)
+	return nil
+}
+
+// TestHUPCoalescesEntireDrain verifies that a third request buffered while the
+// first old worker's exit is being processed joins the pending restart instead
+// of starting a fourth generation after the second old worker exits.
+func TestHUPCoalescesEntireDrain(t *testing.T) {
 	dir := t.TempDir()
 	statusFile := filepath.Join(dir, "status")
-	var stderr syncBuffer
+	stderr := exitDiagnosticGate{
+		reached: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(stderr.release)
+		}
+	}()
 
 	sd, err := NewStarter(&config{
 		command:    buildStubbornWorker(t, dir),
@@ -178,7 +226,7 @@ func TestHUPCoalescesWhileOldWorkerLives(t *testing.T) {
 	waitForGenerationList(t, statusFile, []string{"1", "2"})
 
 	ctrl.Hangup()
-	waitForDiagnostic(t, &stderr, "coalescing hangup request until old workers exit")
+	waitForDiagnostic(t, &stderr.syncBuffer, "coalescing hangup request until old workers exit")
 	require.Equal(t, []string{"1", "2"}, generations(t, statusFile))
 
 	status, err := statefile.ReadStatus(statusFile)
@@ -187,5 +235,23 @@ func TestHUPCoalescesWhileOldWorkerLives(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, oldWorker.Signal(syscall.SIGTERM))
 
+	select {
+	case <-stderr.reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the old-worker exit interleaving")
+	}
+
+	ctrl.Hangup()
+	close(stderr.release)
+	released = true
+
 	waitForGenerationList(t, statusFile, []string{"2", "3"})
+	status, err = statefile.ReadStatus(statusFile)
+	require.NoError(t, err)
+	oldWorker, err = os.FindProcess(status[2])
+	require.NoError(t, err)
+	require.NoError(t, oldWorker.Signal(syscall.SIGTERM))
+
+	waitForDiagnostic(t, &stderr.syncBuffer, fmt.Sprintf("old worker %d died", status[2]))
+	require.Equal(t, []string{"3"}, waitForGenerationRemoval(t, statusFile, "2"))
 }

@@ -222,6 +222,13 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 				fmt.Fprintf(rs.cfg.stderr, "old worker %d died, status:%d\n", st.Pid(), exitSt)
 				delete(rs.oldWorkers, st.Pid())
 				if len(rs.oldWorkers) == 0 && hangupPending {
+					// A HUP can arrive after this worker-exit case wins the
+					// select but before the pending restart is consumed. Fold
+					// that buffered request into the same completed drain.
+					select {
+					case <-ctrl.hangup:
+					default:
+					}
 					hangupPending = false
 					restart = true
 					sigToSend = rs.cfg.signalOnHUP
