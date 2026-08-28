@@ -3,7 +3,6 @@ package starter
 import (
 	"fmt"
 	"os"
-	"syscall"
 )
 
 type pidFile struct {
@@ -16,7 +15,7 @@ func acquirePIDFile(path string) (*pidFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFile(f); err != nil {
 		f.Close()
 		return nil, err
 	}

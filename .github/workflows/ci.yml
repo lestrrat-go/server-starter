@@ -101,6 +101,15 @@ jobs:
           go build ./cmd/start_server
           rm start_server
 
+      # Compile-only checks: there is no Windows or macOS test runner here, so
+      # these just guard against the package silently losing the ability to
+      # build on either platform (e.g. an unguarded syscall.* reference).
+      - name: Cross-compile check (windows)
+        run: GOOS=windows go build ./...
+
+      - name: Cross-compile check (darwin)
+        run: GOOS=darwin go build ./...
+
       - name: Check for uncommitted changes
         run: |
           if [ -n "$(git status --porcelain)" ]; then
