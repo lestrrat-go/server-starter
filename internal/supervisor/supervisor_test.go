@@ -116,6 +116,96 @@ func TestRemoveExistingUnixSocketRemovesSocket(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
+	t.Run("replacement before move", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "server.sock")
+		addr, err := net.ResolveUnixAddr("unix", path)
+		require.NoError(t, err)
+		l, err := net.ListenUnix("unix", addr)
+		require.NoError(t, err)
+		l.SetUnlinkOnClose(false)
+		require.NoError(t, l.Close())
+
+		renameReached := make(chan struct{})
+		continueRename := make(chan struct{}, 1)
+		result := make(chan error, 1)
+		t.Cleanup(func() {
+			select {
+			case continueRename <- struct{}{}:
+			default:
+			}
+		})
+
+		go func() {
+			result <- removeExistingUnixSocketWithRename(path, func(oldpath, newpath string) error {
+				close(renameReached)
+				<-continueRename
+				return os.Rename(oldpath, newpath)
+			})
+		}()
+
+		<-renameReached
+		require.NoError(t, os.Remove(path))
+		contents := []byte("replacement")
+		require.NoError(t, os.WriteFile(path, contents, 0600))
+		continueRename <- struct{}{}
+
+		require.ErrorContains(t, <-result, "is not a socket")
+		got, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, contents, got)
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+	})
+
+	t.Run("replacement after move", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "server.sock")
+		addr, err := net.ResolveUnixAddr("unix", path)
+		require.NoError(t, err)
+		l, err := net.ListenUnix("unix", addr)
+		require.NoError(t, err)
+		l.SetUnlinkOnClose(false)
+		require.NoError(t, l.Close())
+
+		renameFinished := make(chan struct{})
+		continueRemoval := make(chan struct{}, 1)
+		result := make(chan error, 1)
+		t.Cleanup(func() {
+			select {
+			case continueRemoval <- struct{}{}:
+			default:
+			}
+		})
+
+		go func() {
+			result <- removeExistingUnixSocketWithRename(path, func(oldpath, newpath string) error {
+				if err := os.Rename(oldpath, newpath); err != nil {
+					return err
+				}
+				close(renameFinished)
+				<-continueRemoval
+				return nil
+			})
+		}()
+
+		<-renameFinished
+		contents := []byte("replacement")
+		require.NoError(t, os.WriteFile(path, contents, 0600))
+		continueRemoval <- struct{}{}
+
+		require.NoError(t, <-result)
+		got, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, contents, got)
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+	})
+}
+
 func TestRemoveExistingUnixSocketAllowsMissingPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.sock")
 	require.NoError(t, removeExistingUnixSocket(path))
