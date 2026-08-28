@@ -98,7 +98,8 @@ jobs:
 
       - name: Build start_server command
         run: |
-          go build -o /tmp/start_server ./cmd/start_server
+          go build ./cmd/start_server
+          rm start_server
 
       - name: Check for uncommitted changes
         run: |
