@@ -368,9 +368,14 @@ func (s *Starter) Run() error {
 			}
 			status[s.generation] = p.Pid
 			statusCh <- status
-			// restart == 2: force a respawn
-			// restart == 1 with no live workers: force a respawn
+			// restart == 2: respawn unconditionally
+			// restart == 1: respawn only if no old workers are still alive
 			// restart == 0: leave the worker alone
+			//
+			// Level 1 has no callers yet. It exists for ENABLE_AUTO_RESTART,
+			// whose two thresholds in Server::Starter differ in exactly this
+			// way: the ordinary interval waits for the old workers to go, the
+			// forced one (twice the interval) does not.
 			restart := 0
 
 			select {
@@ -390,9 +395,16 @@ func (s *Starter) Run() error {
 				// Temporary fix
 				switch sigReceived {
 				case syscall.SIGHUP:
-					// When we receive a HUP signal, we need to spawn a new worker
+					// When we receive a HUP signal, we need to spawn a new worker.
+					//
+					// This is level 2, not 1, on purpose. Server::Starter runs its
+					// HUP path unconditionally (Starter.pm's `if ($restart)`), while
+					// level 1 below is gated on there being no live old workers.
+					// Using level 1 here made a HUP a no-op whenever an earlier
+					// worker was still shutting down, so repeated HUPs never
+					// re-signalled it. See #9.
 					fmt.Fprintf(os.Stderr, "received HUP (num_old_workers=TODO)\n")
-					restart = 1
+					restart = 2
 					sigToSend = s.signalOnHUP
 				case syscall.SIGTERM:
 					sigToSend = s.signalOnTERM
