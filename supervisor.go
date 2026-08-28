@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/lestrrat-go/server-starter/v2/internal/statefile"
 )
 
 func (s *Starter) stop() {
@@ -21,7 +23,7 @@ func (s *Starter) Run() error {
 	defer s.teardown()
 
 	if s.pidFile != "" {
-		f, err := acquirePIDFile(s.pidFile)
+		f, err := statefile.Acquire(s.pidFile)
 		if err != nil {
 			return err
 		}
@@ -148,7 +150,7 @@ func (s *Starter) Run() error {
 			st := <-workerCh
 			fmt.Fprintf(os.Stderr, "worker %d died, status:%d\n", st.Pid(), grabExitStatus(st))
 			delete(oldWorkers, st.Pid())
-			if err := writeStatusFile(s.statusFile, statusMap(oldWorkers, 0, s.generation)); err != nil {
+			if err := statefile.WriteStatus(s.statusFile, statefile.StatusMap(oldWorkers, 0, s.generation)); err != nil {
 				fmt.Fprintf(os.Stderr, "failed to write status file: %s\n", err)
 			}
 		}
@@ -166,7 +168,7 @@ func (s *Starter) Run() error {
 			if p != nil {
 				currentPID = p.Pid
 			}
-			if err := writeStatusFile(s.statusFile, statusMap(oldWorkers, currentPID, s.generation)); err != nil {
+			if err := statefile.WriteStatus(s.statusFile, statefile.StatusMap(oldWorkers, currentPID, s.generation)); err != nil {
 				fmt.Fprintf(os.Stderr, "failed to write status file: %s\n", err)
 			}
 			// restart == 2: respawn unconditionally

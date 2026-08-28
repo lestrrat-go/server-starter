@@ -4,31 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
+
+	"github.com/lestrrat-go/server-starter/v2/internal/statefile"
 )
 
 const controlTimeout = 30 * time.Second
 
-func readPID(path string) (int, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	value := strings.TrimSpace(string(data))
-	pid, err := strconv.Atoi(value)
-	if err != nil || pid <= 0 {
-		return 0, fmt.Errorf("invalid pid file %q", path)
-	}
-	return pid, nil
-}
-
 // Stop reads the pid from pidPath, sends SIGTERM, and waits for the process
 // to exit.
 func Stop(pidPath string) error {
-	pid, err := readPID(pidPath)
+	pid, err := statefile.ReadPID(pidPath)
 	if err != nil {
 		return err
 	}
@@ -42,7 +29,7 @@ func Stop(pidPath string) error {
 			return nil
 		}
 		if err == nil {
-			err = tryLockPIDFile(f)
+			err = statefile.TryLock(f)
 			f.Close()
 			if err == nil {
 				return nil
@@ -53,33 +40,6 @@ func Stop(pidPath string) error {
 	return fmt.Errorf("timed out waiting for process %d to stop", pid)
 }
 
-func readStatus(path string) (map[int]int, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	status := make(map[int]int)
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.Split(line, ":")
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid status line %q", line)
-		}
-		generation, err := strconv.Atoi(parts[0])
-		if err != nil {
-			return nil, err
-		}
-		pid, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return nil, err
-		}
-		status[generation] = pid
-	}
-	return status, nil
-}
-
 // Restart reads the pid from pidPath, sends SIGHUP, and waits until the
 // server(s) of the older generation(s) die by monitoring the contents of
 // statusPath.
@@ -87,11 +47,11 @@ func Restart(pidPath, statusPath string) error {
 	if statusPath == "" {
 		return fmt.Errorf("--status-file is required with --restart")
 	}
-	pid, err := readPID(pidPath)
+	pid, err := statefile.ReadPID(pidPath)
 	if err != nil {
 		return err
 	}
-	previous, err := readStatus(statusPath)
+	previous, err := statefile.ReadStatus(statusPath)
 	if err != nil {
 		return err
 	}
@@ -100,7 +60,7 @@ func Restart(pidPath, statusPath string) error {
 	}
 	deadline := time.Now().Add(controlTimeout)
 	for time.Now().Before(deadline) {
-		current, err := readStatus(statusPath)
+		current, err := statefile.ReadStatus(statusPath)
 		if err == nil && generationAdvanced(previous, current) && oldWorkersGone(previous, current) {
 			return nil
 		}

@@ -1,16 +1,21 @@
-package starter
+package statefile
 
 import (
 	"fmt"
 	"os"
 )
 
-type pidFile struct {
+// PIDFile is a pid file that has been acquired via Acquire. Closing it
+// releases the lock and, if this process still owns the file on disk,
+// removes it.
+type PIDFile struct {
 	file *os.File
 	path string
 }
 
-func acquirePIDFile(path string) (*pidFile, error) {
+// Acquire opens path, takes a blocking exclusive lock on it, and writes the
+// current process's pid into it.
+func Acquire(path string) (*PIDFile, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
@@ -31,10 +36,10 @@ func acquirePIDFile(path string) (*pidFile, error) {
 		f.Close()
 		return nil, err
 	}
-	return &pidFile{file: f, path: path}, nil
+	return &PIDFile{file: f, path: path}, nil
 }
 
-func (p *pidFile) Close() error {
+func (p *PIDFile) Close() error {
 	if p == nil || p.file == nil {
 		return nil
 	}
