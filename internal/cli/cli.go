@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	"github.com/jessevdk/go-flags"
-	starter "github.com/lestrrat-go/server-starter/v2"
 	"github.com/lestrrat-go/server-starter/v2/internal/control"
+	"github.com/lestrrat-go/server-starter/v2/internal/supervisor"
 )
 
 // Run parses command-line arguments and dispatches to the appropriate
@@ -93,7 +93,7 @@ func Run() int {
 		os.Setenv("AUTO_RESTART_INTERVAL", strconv.Itoa(opts.OptAutoRestartInterval))
 	}
 
-	s, err := starter.NewStarter(opts)
+	s, err := supervisor.NewStarter(opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		return 1

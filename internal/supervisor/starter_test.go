@@ -1,4 +1,4 @@
-package starter
+package supervisor
 
 import (
 	"fmt"
@@ -95,7 +95,7 @@ func TestRun(t *testing.T) {
 	// The scratch module resolves the listener package through a replace
 	// directive back to this repository. The path must be absolute: a relative
 	// one would depend on where t.TempDir() happens to sit under $TMPDIR.
-	root, err := filepath.Abs(".")
+	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Errorf("Failed to resolve repository root: %s", err)
 		return
