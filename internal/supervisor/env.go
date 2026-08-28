@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 )
 
 var errNoEnv = errors.New("no ENVDIR specified, or ENVDIR does not exist")
+
+const maxEnvValueBytes = 128 * 1024
 
 // loadEnvdir reads the envdir at dn and returns the resulting variable map
 // for the caller to overlay onto a spawned worker's environment. Unlike the
@@ -25,9 +28,9 @@ func loadEnvdir(dn string, w io.Writer) map[string]string {
 	return m
 }
 
-// reloadEnv reads dn (one file per variable; a file's value is the first
-// line of its contents) into a map. It returns errNoEnv when dn is empty,
-// does not exist, or contains no usable entries.
+// reloadEnv reads dn (one regular file per variable; a file's value is its
+// first line, up to maxEnvValueBytes) into a map. It returns errNoEnv when dn
+// is empty, does not exist, or contains no usable entries.
 func reloadEnv(dn string) (map[string]string, error) {
 	if dn == "" {
 		return nil, errNoEnv
@@ -41,16 +44,17 @@ func reloadEnv(dn string) (map[string]string, error) {
 	m := make(map[string]string)
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") || entry.IsDir() {
+		if strings.HasPrefix(name, ".") || entry.Type()&os.ModeType != 0 {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dn, name))
-		if err != nil || len(data) == 0 {
+
+		file, err := openEnvFile(filepath.Join(dn, name))
+		if err != nil {
 			continue
 		}
-		value := string(data)
-		if i := strings.IndexByte(value, '\n'); i >= 0 {
-			value = value[:i]
+		value, ok := readEnvValue(file)
+		if err := file.Close(); err != nil || !ok {
+			continue
 		}
 		m[name] = value
 	}
@@ -60,4 +64,19 @@ func reloadEnv(dn string) (map[string]string, error) {
 	}
 
 	return m, nil
+}
+
+func readEnvValue(file *os.File) (string, bool) {
+	data, err := io.ReadAll(io.LimitReader(file, maxEnvValueBytes+1))
+	if err != nil || len(data) == 0 {
+		return "", false
+	}
+
+	if line, _, found := bytes.Cut(data, []byte("\n")); found {
+		return string(line), true
+	}
+	if len(data) > maxEnvValueBytes {
+		return "", false
+	}
+	return string(data), true
 }

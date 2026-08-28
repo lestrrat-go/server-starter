@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestEnvdir(t *testing.T) {
@@ -62,10 +64,23 @@ func TestReloadEnvdirCompatibility(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "EMPTY"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "LONG"), []byte(strings.Repeat("x", 128*1024)), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "LONG"), []byte(strings.Repeat("x", maxEnvValueBytes)), 0600); err != nil {
 		t.Fatal(err)
 	}
-
+	if err := os.WriteFile(
+		filepath.Join(dir, "FIRST_LINE"),
+		[]byte("first\n"+strings.Repeat("x", maxEnvValueBytes+1)),
+		0600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, "TOO_LONG"),
+		[]byte(strings.Repeat("x", maxEnvValueBytes+1)),
+		0600,
+	); err != nil {
+		t.Fatal(err)
+	}
 	got, err := reloadEnv(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -73,8 +88,11 @@ func TestReloadEnvdirCompatibility(t *testing.T) {
 	if got["VALUE"] != "  keep whitespace  " {
 		t.Fatalf("VALUE = %q", got["VALUE"])
 	}
-	if got["LONG"] != strings.Repeat("x", 128*1024) {
+	if got["LONG"] != strings.Repeat("x", maxEnvValueBytes) {
 		t.Fatalf("LONG was not read in full")
+	}
+	if got["FIRST_LINE"] != "first" {
+		t.Fatalf("FIRST_LINE = %q", got["FIRST_LINE"])
 	}
 	if _, ok := got[".hidden"]; ok {
 		t.Fatal("hidden envdir entries must be ignored")
@@ -82,6 +100,21 @@ func TestReloadEnvdirCompatibility(t *testing.T) {
 	if _, ok := got["EMPTY"]; ok {
 		t.Fatal("empty envdir entries must be ignored")
 	}
+	if _, ok := got["TOO_LONG"]; ok {
+		t.Fatal("oversized envdir entries must be ignored")
+	}
+}
+
+func TestReloadEnvdirSkipsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "target")
+	require.NoError(t, os.WriteFile(target, []byte("linked"), 0600))
+	if err := os.Symlink(target, filepath.Join(dir, "LINK")); err != nil {
+		t.Skipf("symlinks are unavailable: %s", err)
+	}
+
+	_, err := reloadEnv(dir)
+	require.ErrorIs(t, err, errNoEnv)
 }
 
 // TestLoadEnvdirDropsDeletedValues proves loadEnvdir's map reflects the
