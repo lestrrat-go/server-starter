@@ -187,3 +187,11 @@ func lockUnavailable(err error) bool {
 func TryLock(f *os.File) error {
 	return fmt.Errorf("waiting for a stopped process is not supported on windows")
 }
+
+func lockOwnerPID(f *os.File) (int, error) {
+	return 0, fmt.Errorf("inspecting pid-file lock ownership is not supported on windows")
+}
+
+func lockReleased(f *os.File) (bool, error) {
+	return false, fmt.Errorf("waiting for a stopped process is not supported on windows")
+}

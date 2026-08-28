@@ -22,6 +22,13 @@ type PIDFile struct {
 	path string
 }
 
+// RunningPID is a validated reference to a running supervisor. The pid is
+// accepted only when it matches the process that owns the pid-file lock.
+type RunningPID struct {
+	file *os.File
+	pid  int
+}
+
 // Acquire opens path, takes a non-blocking ownership lock on it, and writes
 // the current process's pid into it. It returns ErrPIDFileLocked when another
 // supervisor already holds the lock.
@@ -83,6 +90,86 @@ func (p *PIDFile) Close() error {
 		return nil
 	}
 	err := closePIDFile(p.file, p.path)
+	p.file = nil
+	return err
+}
+
+// OpenRunningPID opens path and verifies that its recorded pid owns the
+// supervisor lock. Keeping the returned handle open also lets callers wait on
+// the same file even if the pathname is later replaced.
+func OpenRunningPID(path string) (*RunningPID, error) {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	closeWithError := func(err error) (*RunningPID, error) {
+		_ = f.Close()
+		return nil, err
+	}
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return closeWithError(err)
+	}
+	value := strings.TrimSpace(string(data))
+	pid, err := strconv.Atoi(value)
+	if err != nil || pid <= 0 {
+		return closeWithError(fmt.Errorf("invalid pid file %q", path))
+	}
+
+	ownerPID, err := lockOwnerPID(f)
+	if err != nil {
+		return closeWithError(fmt.Errorf("failed to inspect pid file %q lock: %w", path, err))
+	}
+	if ownerPID == 0 {
+		return closeWithError(fmt.Errorf("pid file %q is not locked by a running supervisor", path))
+	}
+	if ownerPID != pid {
+		return closeWithError(fmt.Errorf("pid file %q records process %d, which does not match lock owner %d", path, pid, ownerPID))
+	}
+
+	openedInfo, err := f.Stat()
+	if err != nil {
+		return closeWithError(err)
+	}
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return closeWithError(err)
+	}
+	if !os.SameFile(openedInfo, pathInfo) {
+		return closeWithError(fmt.Errorf("pid file %q was replaced while being validated", path))
+	}
+
+	return &RunningPID{file: f, pid: pid}, nil
+}
+
+// ReadPID reads a pid only from a live supervisor-owned pid file.
+func ReadPID(path string) (int, error) {
+	running, err := OpenRunningPID(path)
+	if err != nil {
+		return 0, err
+	}
+	defer running.Close()
+	return running.PID(), nil
+}
+
+// PID returns the validated supervisor process id.
+func (p *RunningPID) PID() int {
+	return p.pid
+}
+
+// Exited reports whether the supervisor has released its pid-file lock.
+func (p *RunningPID) Exited() (bool, error) {
+	return lockReleased(p.file)
+}
+
+// Close releases the open pid-file reference.
+func (p *RunningPID) Close() error {
+	if p == nil || p.file == nil {
+		return nil
+	}
+	err := p.file.Close()
 	p.file = nil
 	return err
 }

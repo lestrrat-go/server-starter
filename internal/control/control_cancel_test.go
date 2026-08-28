@@ -3,12 +3,16 @@
 package control
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
-	"strconv"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -16,22 +20,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const controlHelperEnv = "SERVER_STARTER_CONTROL_HELPER"
+
+func TestStopSignalsLockedSupervisor(t *testing.T) {
+	t.Parallel()
+
+	pidPath := filepath.Join(t.TempDir(), "pid")
+	helper := startControlHelper(t, pidPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, Stop(ctx, pidPath))
+	require.NoError(t, helper.wait())
+}
+
 // TestStopCancelledContext verifies that Stop, given a context that is
 // already cancelled, returns promptly instead of waiting out the poll loop.
-// It signals only a process this test itself spawned and has already
-// waited for, so the pid is guaranteed dead and SIGTERM is a harmless
-// ESRCH.
+// The cancelled context is checked before the pid file is opened, so no
+// process can be signalled.
 func TestStopCancelledContext(t *testing.T) {
 	t.Parallel()
 
-	// context.Background(): this child is a short-lived helper the test
-	// owns and waits on directly, not tied to the ctx under test below.
-	cmd := exec.CommandContext(context.Background(), "/bin/true")
-	require.NoError(t, cmd.Run(), "spawn short-lived child")
-	pid := cmd.Process.Pid
-
 	pidPath := filepath.Join(t.TempDir(), "pid")
-	require.NoError(t, os.WriteFile(pidPath, []byte(strconv.Itoa(pid)+"\n"), 0644))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -61,20 +71,10 @@ func TestStopCancelledContext(t *testing.T) {
 func TestRestartCancelledContext(t *testing.T) {
 	t.Parallel()
 
-	// context.Background(): the test kills and reaps this child itself
-	// (see the deferred Kill/Wait below), independent of the ctx under
-	// test that gets cancelled 200ms from now.
-	cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", `trap "" HUP; exec sleep 30`)
-	require.NoError(t, cmd.Start(), "spawn HUP-immune child")
-	pid := cmd.Process.Pid
-	defer func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	}()
-
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "pid")
-	require.NoError(t, os.WriteFile(pidPath, []byte(strconv.Itoa(pid)+"\n"), 0644))
+	helper := startControlHelper(t, pidPath)
+	pid := helper.pid
 
 	statusPath := filepath.Join(dir, "status")
 	// A status file that never advances past generation 1 keeps Restart
@@ -100,4 +100,61 @@ func TestRestartCancelledContext(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.Canceled), "expected context.Canceled, got %v", err)
 	require.Less(t, elapsed, 5*time.Second, "Restart did not return well within the old 30s default")
+}
+
+func TestControlHelperProcess(t *testing.T) {
+	path := os.Getenv(controlHelperEnv)
+	if path == "" {
+		return
+	}
+
+	pidFile, err := statefile.Acquire(path)
+	require.NoError(t, err)
+	defer pidFile.Close()
+
+	signal.Ignore(syscall.SIGHUP)
+	defer signal.Reset(syscall.SIGHUP)
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, syscall.SIGTERM)
+	defer signal.Stop(term)
+
+	_, err = fmt.Fprintln(os.Stdout, "ready")
+	require.NoError(t, err)
+	<-term
+}
+
+type controlHelper struct {
+	cmd     *exec.Cmd
+	pid     int
+	waitErr error
+	waitOne sync.Once
+}
+
+func (h *controlHelper) wait() error {
+	h.waitOne.Do(func() {
+		h.waitErr = h.cmd.Wait()
+	})
+	return h.waitErr
+}
+
+func startControlHelper(t *testing.T, path string) *controlHelper {
+	t.Helper()
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestControlHelperProcess$")
+	cmd.Env = append(os.Environ(), controlHelperEnv+"="+path)
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	cmd.Stderr = os.Stderr
+	require.NoError(t, cmd.Start())
+	helper := &controlHelper{cmd: cmd, pid: cmd.Process.Pid}
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		require.NoError(t, helper.wait())
+	})
+
+	scanner := bufio.NewScanner(stdout)
+	require.True(t, scanner.Scan())
+	require.Equal(t, "ready", scanner.Text())
+	require.NoError(t, scanner.Err())
+	return helper
 }

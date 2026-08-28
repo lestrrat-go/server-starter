@@ -52,7 +52,8 @@ func readPIDText(f *os.File, data []byte) (int, error) {
 }
 
 func lockFile(f *os.File) error {
-	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	lock := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 0}
+	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
 }
 
 func finishPIDFileLock(*os.File) error {
@@ -96,5 +97,28 @@ func closePIDFile(f *os.File, path string) error {
 // starts succeeding. It returns syscall.EWOULDBLOCK while another process
 // holds the lock; any other error means the lock check failed.
 func TryLock(f *os.File) error {
-	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	lock := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 0}
+	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
+}
+
+func lockOwnerPID(f *os.File) (int, error) {
+	lock := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 0}
+	if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &lock); err != nil {
+		return 0, err
+	}
+	if lock.Type == syscall.F_UNLCK {
+		return 0, nil
+	}
+	return int(lock.Pid), nil
+}
+
+func lockReleased(f *os.File) (bool, error) {
+	err := TryLock(f)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EAGAIN) {
+		return false, nil
+	}
+	return false, err
 }

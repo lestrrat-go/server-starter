@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"syscall"
 	"time"
 
@@ -19,10 +18,15 @@ const pollInterval = 20 * time.Millisecond
 // to exit. The caller controls how long to wait via ctx; a typical caller
 // wraps ctx with a timeout.
 func Stop(ctx context.Context, pidPath string) error {
-	pid, err := statefile.ReadPID(ctx, pidPath)
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("stop cancelled before signalling supervisor: %w", err)
+	}
+	running, err := statefile.OpenRunningPID(pidPath)
 	if err != nil {
 		return err
 	}
+	defer running.Close()
+	pid := running.PID()
 	if err := signalProcess(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
 	}
@@ -39,11 +43,11 @@ func Stop(ctx context.Context, pidPath string) error {
 			return fmt.Errorf("timed out waiting for process %d to stop: %w", pid, ctx.Err())
 		case <-ticker.C:
 		}
-		stopped, err := processStopped(pidPath, statefile.TryLock)
+		exited, err := running.Exited()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to check process %d: %w", pid, err)
 		}
-		if stopped {
+		if exited {
 			return nil
 		}
 	}
@@ -77,10 +81,12 @@ func Restart(ctx context.Context, pidPath, statusPath string) error {
 	if statusPath == "" {
 		return fmt.Errorf("--status-file is required with --restart")
 	}
-	pid, err := statefile.ReadPID(ctx, pidPath)
+	running, err := statefile.OpenRunningPID(pidPath)
 	if err != nil {
 		return err
 	}
+	defer running.Close()
+	pid := running.PID()
 	previous, err := statefile.ReadStatus(ctx, statusPath)
 	if err != nil {
 		return fmt.Errorf("failed to read status file %q before restart: %w", statusPath, err)
