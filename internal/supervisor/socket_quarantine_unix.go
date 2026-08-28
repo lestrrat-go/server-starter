@@ -44,7 +44,7 @@ func pathIsSocketAt(dir *os.File, name string) (bool, error) {
 	if err := unix.Fstatat(int(dir.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return false, err
 	}
-	return uint32(stat.Mode)&unix.S_IFMT == unix.S_IFSOCK, nil
+	return stat.Mode&unix.S_IFMT == unix.S_IFSOCK, nil
 }
 
 func removeAt(dir *os.File, name string) error {
@@ -99,7 +99,7 @@ func verifyPrivateDir(dir *os.File) error {
 	if stat.Uid != uint32(os.Geteuid()) {
 		return fmt.Errorf("quarantine directory is owned by uid %d, want %d", stat.Uid, os.Geteuid())
 	}
-	if permissions := uint32(stat.Mode) & 0777; permissions != 0700 {
+	if permissions := stat.Mode & 0777; permissions != 0700 {
 		return fmt.Errorf("quarantine directory permissions are %#o, want 0700", permissions)
 	}
 	return nil
