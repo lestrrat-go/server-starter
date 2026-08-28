@@ -270,7 +270,7 @@ func TestHUPCoalescesEntireDrain(t *testing.T) {
 	waitForDiagnostic(t, &stderr.syncBuffer, "coalescing hangup request until old workers exit")
 	require.Equal(t, []string{"1", "2"}, generations(t, statusFile))
 
-	status, err := statefile.ReadStatus(statusFile)
+	status, err := statefile.ReadStatus(ctx, statusFile)
 	require.NoError(t, err)
 	oldWorker, err := os.FindProcess(status[1])
 	require.NoError(t, err)
@@ -287,7 +287,7 @@ func TestHUPCoalescesEntireDrain(t *testing.T) {
 	released = true
 
 	waitForGenerationList(t, statusFile, []string{"2", "3"})
-	status, err = statefile.ReadStatus(statusFile)
+	status, err = statefile.ReadStatus(ctx, statusFile)
 	require.NoError(t, err)
 	oldWorker, err = os.FindProcess(status[2])
 	require.NoError(t, err)
@@ -347,7 +347,7 @@ func TestHUPDuringAutomaticRestartJoinsThatRestart(t *testing.T) {
 	released = true
 	waitForGenerationList(t, statusFile, []string{"1", "2"})
 
-	status, err := statefile.ReadStatus(statusFile)
+	status, err := statefile.ReadStatus(ctx, statusFile)
 	require.NoError(t, err)
 	oldWorker, err := os.FindProcess(status[1])
 	require.NoError(t, err)
@@ -393,7 +393,7 @@ func TestHUPDuringUnexpectedExitRestartJoinsThatRestart(t *testing.T) {
 	}()
 
 	waitForGenerationList(t, statusFile, []string{"1"})
-	status, err := statefile.ReadStatus(statusFile)
+	status, err := statefile.ReadStatus(ctx, statusFile)
 	require.NoError(t, err)
 	worker, err := os.FindProcess(status[1])
 	require.NoError(t, err)
