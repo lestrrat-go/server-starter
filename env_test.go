@@ -2,19 +2,13 @@ package starter
 
 import (
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestEnvdir(t *testing.T) {
-	dir, err := ioutil.TempDir("", "starter_test")
-	if err != nil {
-		t.Errorf("Failed to create tempdir: %s", err)
-		return
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	files := []string{"FOO", "BAR", "BAZ"}
 	for _, fn := range files {

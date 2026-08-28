@@ -1,12 +1,12 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
-SSDIR=$(cd $(dirname $0)/..; pwd -P)
-id=$(echo $(date) $$| shasum | awk '{print $1}')
+SSDIR=$(cd "$(dirname "$0")/.."; pwd -P)
+id=$(printf '%s %s' "$(date)" "$$" | shasum | awk '{print $1}')
 docker run --rm \
     --name server_starter-build-$id \
-    -v $SSDIR:/work/src/github.com/lestrrat-go/server-starter/ \
+    -v "$SSDIR:/work/src/github.com/lestrrat-go/server-starter/" \
     -e RESULTSDIR=/work/artifacts \
     server_starter-docker \
     ./build-server_starter.sh

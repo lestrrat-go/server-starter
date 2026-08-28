@@ -1,3 +1,4 @@
+//go:build !windows
 // +build !windows
 
 package starter
@@ -40,4 +41,8 @@ func findWorker(pid int) *os.Process {
 		return p
 	}
 	return nil
+}
+
+func lockFile(f *os.File) error {
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
 }

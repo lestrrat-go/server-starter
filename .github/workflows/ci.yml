@@ -5,31 +5,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        go: [ '1.15', '1.14' ]
+        go: ["1.26.x", "1.27.x"]
     name: Go ${{ matrix.go }} test
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
-      - name: Install Go stable version
-        if: matrix.go != 'tip'
-        uses: actions/setup-go@v2
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
-      - name: Install Go tip
-        if: matrix.go == 'tip'
-        run: |
-          git clone --depth=1 https://go.googlesource.com/go $HOME/gotip
-          cd $HOME/gotip/src
-          ./make.bash
-          echo "::set-env name=GOROOT::$HOME/gotip"
-          echo "::add-path::$HOME/gotip/bin"
-          echo "::add-path::$(go env GOPATH)/bin"
+          cache: true
       - name: Test
-        run: go test -v -race ./...
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
       - name: Upload code coverage to codecov
-        if: matrix.go == '1.15'
-        uses: codecov/codecov-action@v1
+        if: matrix.go == '1.27.x'
+        uses: codecov/codecov-action@v7
         with:
-          file: ./coverage.out
-
+          files: ./coverage.out
+          fail_ci_if_error: true

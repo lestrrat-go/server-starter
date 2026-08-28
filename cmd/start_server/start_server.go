@@ -13,7 +13,6 @@ import (
 
 const version = "0.0.2"
 
-// nolint:maligned
 type options struct {
 	OptArgs                []string
 	OptCommand             string

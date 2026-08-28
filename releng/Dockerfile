@@ -1,8 +1,9 @@
-FROM lestrrat-goxc:go1.4
+FROM golang:1.27-bookworm
 
-COPY build-server_starter.sh /
-COPY release-server_starter.sh /
+RUN go install github.com/tcnksm/ghr@latest
 
-VOLUME ["/work/src/github.com/lestrrat-go/server-starter"]
+COPY build-server_starter.sh release-server_starter.sh /
 
-CMD echo "server_starter-docker built for go version 1.4"
+VOLUME ["/work/src/github.com/lestrrat-go/server-starter", "/work/artifacts"]
+
+CMD ["go", "version"]

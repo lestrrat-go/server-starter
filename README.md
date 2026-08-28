@@ -3,9 +3,9 @@ server-starter
 
 Go port of ```start_server``` utility (a.k.a. [Server::Starter](https://metacpan.org/pod/Server::Starter)).
 
-[![Build Status](https://travis-ci.org/lestrrat-go/server-starter.png?branch=master)](https://travis-ci.org/lestrrat-go/server-starter)
+[![CI](https://github.com/lestrrat-go/server-starter/actions/workflows/ci.yml/badge.svg)](https://github.com/lestrrat-go/server-starter/actions/workflows/ci.yml)
 
-[![GoDoc](https://godoc.org/github.com/lestrrat-go/server-starter?status.svg)](https://godoc.org/github.com/lestrrat-go/server-starter)
+[![Go Reference](https://pkg.go.dev/badge/github.com/lestrrat-go/server-starter.svg)](https://pkg.go.dev/github.com/lestrrat-go/server-starter)
 
 ## DESCRIPTION
 
@@ -25,6 +25,6 @@ Many PSGI servers support this. If you want your Go program to support it, you c
 
 ## INSTALLATION
 
-```
-go get github.com/lestrrat-go/server-starter/cmd/start_server
+```console
+go install github.com/lestrrat-go/server-starter/cmd/start_server@latest
 ```

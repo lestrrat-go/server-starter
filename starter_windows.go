@@ -17,7 +17,11 @@ func addPlatformDependentNiceSigNames(v map[syscall.Signal]string) map[syscall.S
 func findWorker(pid int) *os.Process {
 	p, err := os.FindProcess(pid)
 	if err != nil {
-		return p
+		return nil
 	}
+	return p
+}
+
+func lockFile(_ *os.File) error {
 	return nil
 }

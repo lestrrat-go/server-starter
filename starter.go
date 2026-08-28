@@ -221,7 +221,7 @@ func (s *Starter) Run() error {
 			return err
 		}
 
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		if err := lockFile(f); err != nil {
 			return err
 		}
 		fmt.Fprintf(f, "%d", os.Getpid())

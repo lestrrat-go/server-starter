@@ -3,7 +3,6 @@ package starter
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -82,12 +81,7 @@ func (c config) SignalOnTERM() os.Signal { return SigFromName(c.sigonterm) }
 func (c config) StatusFile() string      { return c.statusfile }
 
 func TestRun(t *testing.T) {
-	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%d", os.Getpid()))
-	if err != nil {
-		t.Errorf("Failed to create temp directory: %s", err)
-		return
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	srcFile := filepath.Join(dir, "echod.go")
 	f, err := os.OpenFile(srcFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
@@ -104,6 +98,22 @@ func TestRun(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Logf("%s", output)
 		t.Errorf("failed to run go mod init: %s", err)
+		return
+	}
+
+	projectDir, err := os.Getwd()
+	if err != nil {
+		t.Errorf("Failed to determine project directory: %s", err)
+		return
+	}
+	cmd = exec.Command(
+		"go", "mod", "edit",
+		"-require=github.com/lestrrat-go/server-starter@v0.0.0",
+		"-replace=github.com/lestrrat-go/server-starter="+projectDir,
+	)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Errorf("Failed to configure local module: %s\n%s", err, output)
 		return
 	}
 
