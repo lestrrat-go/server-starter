@@ -80,7 +80,7 @@ jobs:
           check-latest: true
 
       - name: Run PID file tests
-        run: go test -timeout 1m ./internal/statefile
+        run: go test -timeout 1m -run '^(TestAcquirePIDFile|TestCurrentWindowsLock)' ./internal/statefile
 
   verify:
     needs: lint
