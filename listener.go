@@ -11,8 +11,8 @@ import (
 
 const wildcardIPv4 = "0.0.0.0"
 
-// ErrNoListeningTarget is returned when there is nothing to listen on, for
-// example when SERVER_STARTER_PORT is empty or unset.
+// ErrNoListeningTarget is returned by Ports when SERVER_STARTER_PORT is empty
+// or unset.
 var ErrNoListeningTarget = errors.New("starter: no listening target")
 
 // Listener is the interface for things that listen on file descriptors

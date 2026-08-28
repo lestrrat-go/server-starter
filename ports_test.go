@@ -107,8 +107,8 @@ func TestParsePorts(t *testing.T) {
 
 	t.Run("empty string", func(t *testing.T) {
 		got, err := starter.ParsePorts("")
-		require.ErrorIs(t, err, starter.ErrNoListeningTarget)
-		require.Nil(t, got)
+		require.NoError(t, err)
+		require.Equal(t, starter.List{}, got)
 	})
 
 	t.Run("relative unix path starting with u is not stripped", func(t *testing.T) {

@@ -94,14 +94,18 @@ func TestListString(t *testing.T) {
 // actually emit: a bare TCP port, "host:port", "[ipv6]:port" (each with and
 // without the UDP "u" prefix), and an absolute unix socket path.
 //
-// Two shapes are deliberately excluded, because they do not round-trip
-// today and fixing that is out of scope here:
-//   - an empty List: String() gives "", which ParsePorts rejects with
-//     ErrNoListeningTarget instead of returning an empty List.
-//   - a relative unix socket path with no "/" that happens to parse as a
-//     port or "host:port" (e.g. "8080" or "db:5432"): ParsePorts reads it
-//     back as TCP/UDP, per the documented ambiguity on ParsePorts.
+// A relative unix socket path with no "/" that happens to parse as a port or
+// "host:port" (e.g. "8080" or "db:5432") is deliberately excluded because
+// ParsePorts reads it back as TCP/UDP, per the documented ambiguity on
+// ParsePorts.
 func TestListStringParsePortsRoundTrip(t *testing.T) {
+	t.Run("empty list", func(t *testing.T) {
+		list := starter.List{}
+		got, err := starter.ParsePorts(list.String())
+		require.NoError(t, err)
+		require.Equal(t, list, got)
+	})
+
 	t.Run("bare TCP port", func(t *testing.T) {
 		list := starter.List{starter.NewTCPListener("", 8080, 3)}
 		got, err := starter.ParsePorts(list.String())

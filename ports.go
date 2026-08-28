@@ -80,9 +80,11 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 // that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")
 // is read as TCP, not as a unix socket. Pass such sockets as absolute
 // paths, or prefix them with "./" to disambiguate.
+//
+// An empty spec represents an empty List.
 func ParsePorts(spec string) (List, error) {
 	if spec == "" {
-		return nil, ErrNoListeningTarget
+		return List{}, nil
 	}
 
 	rawspec := strings.Split(spec, ";")
@@ -149,8 +151,13 @@ func ParsePorts(spec string) (List, error) {
 }
 
 // Ports parses environment variable SERVER_STARTER_PORT (see PortEnvName).
+// It returns ErrNoListeningTarget when the variable is empty or unset.
 func Ports() (List, error) {
-	return ParsePorts(os.Getenv(PortEnvName))
+	spec := os.Getenv(PortEnvName)
+	if spec == "" {
+		return nil, ErrNoListeningTarget
+	}
+	return ParsePorts(spec)
 }
 
 // ListenAll parses environment variable SERVER_STARTER_PORT, and creates
