@@ -366,7 +366,11 @@ func (s *Starter) Run() error {
 			for pid, gen := range oldWorkers {
 				status[gen] = pid
 			}
-			status[s.generation] = p.Pid
+			// StartWorker can return nil when a signal arrives after a replacement
+			// exits but before the next retry succeeds.
+			if p != nil {
+				status[s.generation] = p.Pid
+			}
 			statusCh <- status
 			// restart == 2: respawn unconditionally
 			// restart == 1: respawn only if no old workers are still alive
@@ -381,7 +385,7 @@ func (s *Starter) Run() error {
 			select {
 			case st := <-workerCh:
 				// oops, the worker exited? check for its pid
-				if p.Pid == st.Pid() { // current worker
+				if p != nil && p.Pid == st.Pid() { // current worker
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
 					p = s.StartWorker(sigCh, workerCh)
@@ -417,7 +421,9 @@ func (s *Starter) Run() error {
 
 			if restart > 1 || restart > 0 && len(oldWorkers) == 0 {
 				fmt.Fprintf(os.Stderr, "spawning a new worker (num_old_workers=TODO)\n")
-				oldWorkers[p.Pid] = s.generation
+				if p != nil {
+					oldWorkers[p.Pid] = s.generation
+				}
 				p = s.StartWorker(sigCh, workerCh)
 				fmt.Fprintf(os.Stderr, "new worker is now running, sending %s to old workers:", signame(sigToSend))
 				size := len(oldWorkers)
