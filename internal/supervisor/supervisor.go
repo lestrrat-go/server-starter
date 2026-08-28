@@ -12,6 +12,8 @@ import (
 	"github.com/lestrrat-go/server-starter/v2/internal/statefile"
 )
 
+const defaultShutdownGracePeriod = 5 * time.Second
+
 // runState holds everything that is specific to a single Run invocation:
 // the listeners it opened, the worker generation counter, the map of old
 // (still-draining) worker pids, and the auto-restart timer. cfg points back
@@ -166,7 +168,8 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 	}
 
 	workerCh := make(chan processState)
-	p := rs.startWorker(ctx, workerCh)
+	workerStateDone := make(chan struct{})
+	p := rs.startWorker(ctx, workerCh, workerStateDone)
 	rs.oldWorkers = make(map[int]int)
 	var sigToSend os.Signal
 	if rs.cfg.enableAutoRestart {
@@ -183,36 +186,8 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 		if p != nil {
 			rs.oldWorkers[p.Pid] = rs.generation
 		}
-
-		fmt.Fprintf(rs.cfg.stderr, "sending %s to all workers:", signame(sigToSend))
-		size := len(rs.oldWorkers)
-		i := 0
-		for pid := range rs.oldWorkers {
-			i++
-			fmt.Fprintf(rs.cfg.stderr, "%d", pid)
-			if i < size {
-				fmt.Fprintf(rs.cfg.stderr, ",")
-			}
-		}
-		fmt.Fprintf(rs.cfg.stderr, "\n")
-
-		for pid := range rs.oldWorkers {
-			worker, err := os.FindProcess(pid)
-			if err != nil {
-				continue
-			}
-			_ = worker.Signal(sigToSend)
-		}
-
-		for len(rs.oldWorkers) > 0 {
-			st := <-workerCh
-			fmt.Fprintf(rs.cfg.stderr, "worker %d died, status:%d\n", st.Pid(), grabExitStatus(rs.cfg.stderr, st))
-			delete(rs.oldWorkers, st.Pid())
-			if err := statefile.WriteStatus(rs.cfg.statusFile, statefile.StatusMap(rs.oldWorkers, 0, rs.generation)); err != nil {
-				fmt.Fprintf(rs.cfg.stderr, "failed to write status file: %s\n", err)
-			}
-		}
-		fmt.Fprintf(rs.cfg.stderr, "exiting\n")
+		rs.shutdownWorkers(sigToSend, workerCh)
+		close(workerStateDone)
 	}()
 
 	rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
@@ -246,7 +221,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 				exitSt := grabExitStatus(rs.cfg.stderr, st)
 				fmt.Fprintf(rs.cfg.stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
 				rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
-				p = rs.startWorker(ctx, workerCh)
+				p = rs.startWorker(ctx, workerCh, workerStateDone)
 				if rs.restartTimer != nil {
 					rs.autoRestartForced = false
 					rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
@@ -294,7 +269,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 				rs.oldWorkers[p.Pid] = rs.generation
 			}
 			rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
-			p = rs.startWorker(ctx, workerCh)
+			p = rs.startWorker(ctx, workerCh, workerStateDone)
 			if rs.restartTimer != nil {
 				rs.autoRestartForced = false
 				rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
@@ -339,6 +314,91 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			}
 		}
 	}
+}
+
+// shutdownWorkers first gives every worker a bounded period to exit after
+// the configured graceful signal, then force-stops survivors and waits for
+// their exit status for one more bounded period. Returning after the second
+// deadline lets the loop release its listeners and pid file even if the OS
+// cannot reap a worker promptly.
+func (rs *runState) shutdownWorkers(sig os.Signal, workerCh <-chan processState) {
+	fmt.Fprintf(rs.cfg.stderr, "sending %s to all workers:", signame(sig))
+	rs.printWorkerPIDs()
+
+	for pid := range rs.oldWorkers {
+		worker, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		if err := worker.Signal(sig); err != nil {
+			fmt.Fprintf(rs.cfg.stderr, "failed to signal worker %d: %s\n", pid, err)
+		}
+	}
+
+	if rs.waitForWorkers(workerCh, rs.cfg.shutdownGracePeriod) {
+		fmt.Fprintf(rs.cfg.stderr, "exiting\n")
+		return
+	}
+
+	fmt.Fprintf(rs.cfg.stderr, "forcing remaining workers to exit:")
+	rs.printWorkerPIDs()
+	for pid := range rs.oldWorkers {
+		worker, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		if err := worker.Kill(); err != nil {
+			fmt.Fprintf(rs.cfg.stderr, "failed to force worker %d to exit: %s\n", pid, err)
+		}
+	}
+
+	if !rs.waitForWorkers(workerCh, rs.cfg.shutdownGracePeriod) {
+		fmt.Fprintf(rs.cfg.stderr, "timed out waiting to reap workers:")
+		rs.printWorkerPIDs()
+	}
+	fmt.Fprintf(rs.cfg.stderr, "exiting\n")
+}
+
+func (rs *runState) waitForWorkers(workerCh <-chan processState, timeout time.Duration) bool {
+	if len(rs.oldWorkers) == 0 {
+		return true
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for len(rs.oldWorkers) > 0 {
+		select {
+		case st := <-workerCh:
+			fmt.Fprintf(rs.cfg.stderr, "worker %d died, status:%d\n", st.Pid(), grabExitStatus(rs.cfg.stderr, st))
+			delete(rs.oldWorkers, st.Pid())
+			if err := statefile.WriteStatus(
+				rs.cfg.statusFile,
+				statefile.StatusMap(rs.oldWorkers, 0, rs.generation),
+			); err != nil {
+				fmt.Fprintf(rs.cfg.stderr, "failed to write status file: %s\n", err)
+			}
+		case <-timer.C:
+			return false
+		}
+	}
+	return true
+}
+
+func (rs *runState) printWorkerPIDs() {
+	if len(rs.oldWorkers) == 0 {
+		fmt.Fprintf(rs.cfg.stderr, "none\n")
+		return
+	}
+
+	i := 0
+	for pid := range rs.oldWorkers {
+		i++
+		fmt.Fprintf(rs.cfg.stderr, "%d", pid)
+		if i < len(rs.oldWorkers) {
+			fmt.Fprintf(rs.cfg.stderr, ",")
+		}
+	}
+	fmt.Fprintf(rs.cfg.stderr, "\n")
 }
 
 func (rs *runState) teardown() {
