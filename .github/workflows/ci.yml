@@ -65,6 +65,23 @@ jobs:
       - name: Run tests
         run: go test -race -timeout 5m ./...
 
+  test-windows-pidfile:
+    needs: lint
+    runs-on: windows-latest
+    name: Test Windows PID file
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Run PID file tests
+        run: go test -timeout 1m -run '^(TestAcquirePIDFile|TestCurrentWindowsLock)' ./internal/statefile
+
   verify:
     needs: lint
     runs-on: ubuntu-latest
@@ -101,9 +118,8 @@ jobs:
           go build ./cmd/start_server
           rm start_server
 
-      # Compile-only checks: there is no Windows or macOS test runner here, so
-      # these just guard against the package silently losing the ability to
-      # build on either platform (e.g. an unguarded syscall.* reference).
+      # These compile-only checks cover the whole module on Windows and macOS.
+      # The focused Windows PID file test above executes its platform lock path.
       - name: Cross-compile check (windows)
         run: GOOS=windows go build ./...
 

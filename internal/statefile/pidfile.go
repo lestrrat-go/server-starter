@@ -2,8 +2,13 @@ package statefile
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"strconv"
+	"strings"
 )
+
+const pidTextSize = 64
 
 // PIDFile is a pid file that has been acquired via Acquire. Closing it
 // releases the lock and, if this process still owns the file on disk,
@@ -13,8 +18,8 @@ type PIDFile struct {
 	path string
 }
 
-// Acquire opens path, takes a blocking exclusive lock on it, and writes the
-// current process's pid into it.
+// Acquire opens path, takes a non-blocking ownership lock on it, and writes
+// the current process's pid into it.
 func Acquire(path string) (*PIDFile, error) {
 	return acquire(path, lockFile)
 }
@@ -25,8 +30,15 @@ func acquire(path string, lock func(*os.File) error) (*PIDFile, error) {
 		return nil, err
 	}
 	if err := lock(f); err != nil {
+		ownerPID, ownerKnown := readOwnerPID(f)
 		f.Close()
-		return nil, err
+		if lockUnavailable(err) {
+			if ownerKnown {
+				return nil, fmt.Errorf("pid file %s is locked by process %d", path, ownerPID)
+			}
+			return nil, fmt.Errorf("pid file %s is already locked (owner pid unavailable)", path)
+		}
+		return nil, fmt.Errorf("failed to lock pid file %s: %w", path, err)
 	}
 	if err := validatePIDFileLinkCount(f, path); err != nil {
 		f.Close()
@@ -44,19 +56,28 @@ func acquire(path string, lock func(*os.File) error) (*PIDFile, error) {
 		f.Close()
 		return nil, err
 	}
+	if err := finishPIDFileLock(f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to finish pid file lock %s: %w", path, err)
+	}
 	return &PIDFile{file: f, path: path}, nil
+}
+
+func readOwnerPID(f *os.File) (int, bool) {
+	var data [pidTextSize]byte
+	n, err := readPIDText(f, data[:])
+	if err != nil && err != io.EOF {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data[:n])))
+	return pid, err == nil && pid > 0
 }
 
 func (p *PIDFile) Close() error {
 	if p == nil || p.file == nil {
 		return nil
 	}
-	if pathInfo, err := os.Stat(p.path); err == nil {
-		if fileInfo, statErr := p.file.Stat(); statErr == nil && os.SameFile(pathInfo, fileInfo) {
-			_ = os.Remove(p.path)
-		}
-	}
-	err := p.file.Close()
+	err := closePIDFile(p.file, p.path)
 	p.file = nil
 	return err
 }

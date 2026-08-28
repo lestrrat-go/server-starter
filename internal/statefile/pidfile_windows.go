@@ -3,6 +3,7 @@ package statefile
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -66,15 +67,62 @@ func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
 	)
 }
 
+func readPIDText(f *os.File, data []byte) (int, error) {
+	n, err := f.ReadAt(data, 0)
+	if !errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+		return n, err
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := min(int64(len(data)), info.Size())
+	if size == 0 {
+		return 0, io.EOF
+	}
+
+	// Windows byte-range locks do not apply to mapped views. A read-only
+	// mapping can therefore inspect PID text protected by a legacy lock.
+	mapping, err := windows.CreateFileMapping(
+		windows.Handle(f.Fd()),
+		nil,
+		windows.PAGE_READONLY,
+		0,
+		0,
+		nil,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(mapping)
+
+	address, err := windows.MapViewOfFile(mapping, windows.FILE_MAP_READ, 0, 0, uintptr(size))
+	if err != nil {
+		return 0, err
+	}
+	defer windows.UnmapViewOfFile(address)
+
+	var bytesRead uintptr
+	if err := windows.ReadProcessMemory(
+		windows.CurrentProcess(),
+		address,
+		&data[0],
+		uintptr(size),
+		&bytesRead,
+	); err != nil {
+		return 0, err
+	}
+	return int(bytesRead), nil
+}
+
 func lockFile(f *os.File) error {
-	// The file is truncated and rewritten after the lock is taken, so its
-	// length at lock time may not cover the eventual content. Lock a
-	// one-byte range instead of the whole file so the lock stays valid
-	// regardless of how the content shrinks or grows afterward.
+	// Start with the legacy exclusive byte-zero lock so old and current
+	// supervisors cannot both acquire the PID file.
 	var overlapped windows.Overlapped
 	return windows.LockFileEx(
 		windows.Handle(f.Fd()),
-		windows.LOCKFILE_EXCLUSIVE_LOCK,
+		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
 		0,
 		1,
 		0,
@@ -91,6 +139,45 @@ func validatePIDFileLinkCount(f *os.File, path string) error {
 		return fmt.Errorf("pid file %q has %d hard links, expected one", path, handleInfo.NumberOfLinks)
 	}
 	return nil
+}
+
+func closePIDFile(f *os.File, path string) error {
+	owned := false
+	if pathInfo, err := os.Stat(path); err == nil {
+		if fileInfo, statErr := f.Stat(); statErr == nil {
+			owned = os.SameFile(pathInfo, fileInfo)
+		}
+	}
+	closeErr := f.Close()
+	var removeErr error
+	if owned {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			removeErr = err
+		}
+	}
+	return errors.Join(removeErr, closeErr)
+}
+
+func finishPIDFileLock(f *os.File) error {
+	// Overlay a shared lock on the same handle, then release the exclusive
+	// lock. The shared lock still rejects every contender's exclusive lock,
+	// including the legacy lock, while allowing the PID text to be read.
+	var overlapped windows.Overlapped
+	if err := windows.LockFileEx(
+		windows.Handle(f.Fd()),
+		windows.LOCKFILE_FAIL_IMMEDIATELY,
+		0,
+		1,
+		0,
+		&overlapped,
+	); err != nil {
+		return err
+	}
+	return windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, &overlapped)
+}
+
+func lockUnavailable(err error) bool {
+	return errors.Is(err, windows.ERROR_LOCK_VIOLATION)
 }
 
 // TryLock is used by control.Stop to poll for the supervisor having
