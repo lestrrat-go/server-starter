@@ -170,7 +170,7 @@ func pathRecordLock(path string) (syscall.Flock_t, error) {
 		return syscall.Flock_t{}, err
 	}
 	digest := sha256.Sum256([]byte(filepath.Clean(absPath)))
-	start := int64(binary.BigEndian.Uint64(digest[:8]) & uint64(^uint64(0)>>1))
+	start := int64(binary.BigEndian.Uint64(digest[:8]) & (^uint64(0) >> 1))
 	if start == 0 {
 		start = 1
 	}

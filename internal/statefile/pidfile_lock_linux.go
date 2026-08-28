@@ -30,8 +30,8 @@ func inspectInodeLocks(f *os.File) (int, bool, error) {
 	}
 	defer locks.Close()
 
-	major := uint64(unix.Major(uint64(stat.Dev)))
-	minor := uint64(unix.Minor(uint64(stat.Dev)))
+	major := uint64(unix.Major(stat.Dev))
+	minor := uint64(unix.Minor(stat.Dev))
 	inode := stat.Ino
 	flockPID := 0
 	hasRecordLock := false
