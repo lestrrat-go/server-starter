@@ -249,9 +249,9 @@ func listenConfig(network string) net.ListenConfig {
 	return net.ListenConfig{Control: func(_, _ string, conn syscall.RawConn) error {
 		var controlErr error
 		if err := conn.Control(func(fd uintptr) {
-			controlErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+			controlErr = setSockOptReuseAddr(fd)
 			if controlErr == nil && strings.HasSuffix(network, "6") {
-				controlErr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_V6ONLY, 1)
+				controlErr = setSockOptIPv6Only(fd)
 			}
 		}); err != nil {
 			return err
