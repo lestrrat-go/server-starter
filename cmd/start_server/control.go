@@ -30,7 +30,7 @@ func stopServer(pidPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+	if err := signalProcess(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
 	}
 	deadline := time.Now().Add(controlTimeout)
@@ -40,7 +40,7 @@ func stopServer(pidPath string) error {
 			return nil
 		}
 		if err == nil {
-			err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+			err = tryLockPIDFile(f)
 			f.Close()
 			if err == nil {
 				return nil
@@ -90,7 +90,7 @@ func restartServer(pidPath, statusPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
+	if err := signalProcess(pid, syscall.SIGHUP); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(controlTimeout)

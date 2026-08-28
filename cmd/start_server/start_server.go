@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/jessevdk/go-flags"
@@ -218,9 +217,13 @@ func _main() (st int) {
 }
 
 func daemonize() error {
+	attr, err := daemonSysProcAttr()
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(os.Args[0], os.Args[1:]...)
 	cmd.Env = append(os.Environ(), "SERVER_STARTER_DAEMONIZED=1")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = attr
 	cmd.Stdin = nil
 	if err := cmd.Start(); err != nil {
 		return err
