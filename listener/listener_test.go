@@ -6,11 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const loopbackAddr = "127.0.0.1"
-
 func TestPort(t *testing.T) {
 	expect := List{
-		TCPListener{Addr: loopbackAddr, Port: 9090, fd: 4},
+		TCPListener{Addr: "127.0.0.1", Port: 9090, fd: 4},
 		TCPListener{Addr: wildcardIPv4, Port: 8080, fd: 5},
 		UnixListener{Path: "/foo/bar/baz.sock", fd: 6},
 	}
@@ -47,7 +45,7 @@ func TestParseListenTargets(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		require.IsType(t, TCPListener{}, got[0])
-		require.Equal(t, TCPListener{Addr: loopbackAddr, Port: 9090, fd: 4}, got[0])
+		require.Equal(t, TCPListener{Addr: "127.0.0.1", Port: 9090, fd: 4}, got[0])
 	})
 
 	t.Run("IPv6 host and port", func(t *testing.T) {
@@ -60,13 +58,13 @@ func TestParseListenTargets(t *testing.T) {
 	t.Run("UDP host and port", func(t *testing.T) {
 		got, err := parseListenTargets("u127.0.0.1:9090=4")
 		require.NoError(t, err)
-		require.Equal(t, UDPListener{Addr: loopbackAddr, Port: 9090, fd: 4}, got[0])
+		require.Equal(t, UDPListener{Addr: "127.0.0.1", Port: 9090, fd: 4}, got[0])
 	})
 
 	t.Run("UDP port suffix", func(t *testing.T) {
 		got, err := parseListenTargets("127.0.0.1:u9090=4")
 		require.NoError(t, err)
-		require.Equal(t, UDPListener{Addr: loopbackAddr, Port: 9090, fd: 4}, got[0])
+		require.Equal(t, UDPListener{Addr: "127.0.0.1", Port: 9090, fd: 4}, got[0])
 	})
 
 	t.Run("UDP IPv6 host and port", func(t *testing.T) {
@@ -127,12 +125,12 @@ func TestParseListenTargets(t *testing.T) {
 	})
 
 	t.Run("mixed multi-target spec", func(t *testing.T) {
-		got, err := parseListenTargets("unix.sock=5;u8080=3;127.0.0.1:9090=4;/foo/bar.sock=6")
+		got, err := parseListenTargets("unix.sock=5;u8080=3;10.0.0.5:9090=4;/foo/bar.sock=6")
 		require.NoError(t, err)
 		require.Len(t, got, 4)
 		require.Equal(t, UnixListener{Path: "unix.sock", fd: 5}, got[0])
 		require.Equal(t, UDPListener{Addr: wildcardIPv4, Port: 8080, fd: 3}, got[1])
-		require.Equal(t, TCPListener{Addr: loopbackAddr, Port: 9090, fd: 4}, got[2])
+		require.Equal(t, TCPListener{Addr: "10.0.0.5", Port: 9090, fd: 4}, got[2])
 		require.Equal(t, UnixListener{Path: "/foo/bar.sock", fd: 6}, got[3])
 	})
 }
