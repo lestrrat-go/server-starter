@@ -1,16 +1,18 @@
-package starter
+package statefile
 
 import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 )
 
-// statusMap builds the generation-to-pid map that mirrors the current
+// StatusMap builds the generation-to-pid map that mirrors the current
 // status-file contents: one entry for each old worker still draining
 // (oldWorkers is keyed pid -> generation), plus one more for the current
 // worker's pid if currentPID is non-zero.
-func statusMap(oldWorkers map[int]int, currentPID int, generation int) map[int]int {
+func StatusMap(oldWorkers map[int]int, currentPID int, generation int) map[int]int {
 	m := make(map[int]int, len(oldWorkers)+1)
 	for pid, gen := range oldWorkers {
 		m[gen] = pid
@@ -21,14 +23,14 @@ func statusMap(oldWorkers map[int]int, currentPID int, generation int) map[int]i
 	return m
 }
 
-// writeStatusFile writes fn to list each generation's worker pid, one
+// WriteStatus writes fn to list each generation's worker pid, one
 // "generation:pid" line per entry, sorted ascending by generation. An empty
 // fn means "write nothing" and is a no-op.
 //
 // The file is written to a temporary path alongside fn and then renamed into
 // place, so a concurrent reader of fn never observes a partially written
 // file.
-func writeStatusFile(fn string, generations map[int]int) error {
+func WriteStatus(fn string, generations map[int]int) error {
 	if fn == "" {
 		return nil
 	}
@@ -64,4 +66,47 @@ func writeStatusFile(fn string, generations map[int]int) error {
 	}
 
 	return nil
+}
+
+// ReadPID reads and parses the pid stored in the pid file at path.
+func ReadPID(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	value := strings.TrimSpace(string(data))
+	pid, err := strconv.Atoi(value)
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("invalid pid file %q", path)
+	}
+	return pid, nil
+}
+
+// ReadStatus reads and parses the status file at path into a
+// generation-to-pid map, one entry per "generation:pid" line.
+func ReadStatus(path string) (map[int]int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	status := make(map[int]int)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, ":")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid status line %q", line)
+		}
+		generation, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return nil, err
+		}
+		pid, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return nil, err
+		}
+		status[generation] = pid
+	}
+	return status, nil
 }

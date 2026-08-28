@@ -1,4 +1,4 @@
-package starter
+package statefile
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 
 func TestAcquirePIDFileWritesNewlineAndRemovesOwnedFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.pid")
-	pid, err := acquirePIDFile(path)
+	pid, err := Acquire(path)
 	if err != nil {
 		t.Fatal(err)
 	}
