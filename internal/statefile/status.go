@@ -83,18 +83,19 @@ func WriteStatus(fn string, generations map[int]int) error {
 }
 
 // ReadPID reads and parses the pid stored in the pid file at path. It rejects
-// non-regular files and payloads larger than the PID format requires.
+// non-regular files, payloads larger than the PID format requires, and values
+// outside the positive signed 32-bit range accepted by process signalling.
 func ReadPID(ctx context.Context, path string) (int, error) {
 	data, err := readStateFile(ctx, path, maxPIDFileSize)
 	if err != nil {
 		return 0, err
 	}
 	value := strings.TrimSpace(string(data))
-	pid, err := strconv.Atoi(value)
-	if err != nil || pid <= 0 {
+	parsedPID, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || parsedPID <= 0 {
 		return 0, fmt.Errorf("invalid pid file %q", path)
 	}
-	return pid, nil
+	return int(parsedPID), nil
 }
 
 // ReadStatus reads and parses the status file at path into a

@@ -19,6 +19,27 @@ func TestReadPIDRejectsOversizedFile(t *testing.T) {
 	require.ErrorContains(t, err, "too large")
 }
 
+func TestReadPIDEnforcesSigned32BitRange(t *testing.T) {
+	t.Run("accepts largest safe pid", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "pid")
+		require.NoError(t, os.WriteFile(path, []byte("2147483647\n"), 0600))
+
+		pid, err := statefile.ReadPID(t.Context(), path)
+		require.NoError(t, err)
+		require.Equal(t, 2147483647, pid)
+	})
+
+	for _, value := range []string{"2147483648", "4294967295"} {
+		t.Run(value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "pid")
+			require.NoError(t, os.WriteFile(path, []byte(value+"\n"), 0600))
+
+			_, err := statefile.ReadPID(t.Context(), path)
+			require.ErrorContains(t, err, "invalid pid file")
+		})
+	}
+}
+
 func TestReadStatusRejectsOversizedFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status")
 	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat("1:2\n", 32*1024)), 0600))
