@@ -37,3 +37,23 @@ func TestRemoveExistingUnixSocketAllowsAbstractAddress(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, contents, got)
 }
+
+func TestRemoveExistingUnixSocketAllowsSpecialAbstractAddresses(t *testing.T) {
+	uniqueName := fmt.Sprintf("server-starter-%d", os.Getpid())
+	tests := map[string]string{
+		"empty autobind address": "",
+		"NUL-prefixed address":   "\x00" + uniqueName,
+	}
+
+	for name, path := range tests {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, removeExistingUnixSocket(path))
+
+			l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", path)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, l.Close())
+			})
+		})
+	}
+}

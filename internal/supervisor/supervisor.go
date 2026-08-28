@@ -198,7 +198,8 @@ func removeExistingUnixSocketWithRename(
 	path string,
 	renamePath func(*os.File, string, *os.File, string) error,
 ) error {
-	if runtime.GOOS == "linux" && strings.HasPrefix(path, "@") {
+	if runtime.GOOS == "linux" &&
+		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
 		return nil
 	}
 
