@@ -25,11 +25,11 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	"github.com/lestrrat-go/server-starter/v2/listener"
+	starter "github.com/lestrrat-go/server-starter/v2"
 )
 
 func main() {
-	listeners, err := listener.ListenAll()
+	listeners, err := starter.ListenAll()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to listen: %s\n", err)
 		os.Exit(1)
