@@ -8,12 +8,7 @@ import (
 )
 
 func renameNoReplaceAt(dir *os.File, oldName, newName string) error {
-	oldpath := filepath.Join(dir.Name(), oldName)
-	newpath := filepath.Join(dir.Name(), newName)
-	if err := os.Link(oldpath, newpath); err != nil {
-		return err
-	}
-	return os.Remove(oldpath)
+	return unsupportedRenameNoReplaceAt(dir, oldName, newName)
 }
 
 func pathIsSocketAt(dir *os.File, name string) (bool, error) {
