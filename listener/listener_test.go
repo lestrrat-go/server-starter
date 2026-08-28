@@ -21,6 +21,11 @@ func TestPort(t *testing.T) {
 		if port.Fd() != expect[i].Fd() {
 			t.Errorf("parsed fd is not what we expected (expected %d, got %d)", expect[i].Fd(), port.Fd())
 		}
+		_, gotTCP := port.(TCPListener)
+		_, expectTCP := expect[i].(TCPListener)
+		if gotTCP != expectTCP {
+			t.Errorf("parsed listener is the wrong type")
+		}
 	}
 }
 
