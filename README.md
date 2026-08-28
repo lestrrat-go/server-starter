@@ -23,7 +23,11 @@ By using ```start_server``` it is much easier to write a hot-deployable server. 
 - receive file descriptors to listen to through an environment variable
 - perform a graceful shutdown when receiving the configured termination signal (`SIGTERM` by default)
 
-Many PSGI servers support this. If you want your Go program to support it, import the root of this module (`github.com/lestrrat-go/server-starter/v2`, see the [package docs](https://github.com/lestrrat-go/server-starter/tree/develop/v2)) for the worker-side implementation, which also fills the ```net.Listener``` interface.
+Many PSGI servers support this. If you want your Go program to support it,
+import the root of this module (`github.com/lestrrat-go/server-starter/v2`, see
+the [package docs](https://github.com/lestrrat-go/server-starter/tree/develop/v2))
+for the worker-side implementation, which turns inherited descriptors into
+`net.Listener` and `net.PacketConn` values.
 
 ## INSTALLATION
 
@@ -71,7 +75,13 @@ for _, listener := range listeners {
 wg.Wait()
 ```
 
-See the `examples/` directory for complete, runnable programs.
+`ListenAll` expects every inherited endpoint to be TCP or unix.
+`ListenPacketAll` expects every endpoint to be UDP. For a mixed list, call
+`Ports` and type-switch on `UDPListener`: use `ListenPacket` for UDP and
+`Listen` for the other built-in listener types.
+
+See the `examples/` directory for verified examples, including the mixed-list
+workflow.
 
 ## SUPERVISOR PORT DESCRIPTORS
 

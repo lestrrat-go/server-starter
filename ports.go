@@ -249,12 +249,16 @@ func FormatPorts(ls ...Listener) (string, error) {
 }
 
 // Ports parses environment variable SERVER_STARTER_PORT (see PortEnvName).
+// The returned List can contain TCPListener, UnixListener, and UDPListener
+// values. For a mixed list, type-switch on UDPListener and call ListenPacket;
+// call Listen on the other built-in Listener values.
 func Ports() (List, error) {
 	return ParsePorts(os.Getenv(PortEnvName))
 }
 
-// ListenAll parses environment variable SERVER_STARTER_PORT, and creates
-// net.Listener objects
+// ListenAll parses SERVER_STARTER_PORT and creates net.Listener objects. It is
+// for lists containing only TCP and unix endpoints and returns an error when a
+// UDPListener is present. Use Ports and a type switch for mixed lists.
 func ListenAll() ([]net.Listener, error) {
 	targets, err := Ports()
 	if err != nil {
@@ -275,7 +279,10 @@ func ListenAll() ([]net.Listener, error) {
 	return ret, nil
 }
 
-// ListenPacketAll creates UDP connections from SERVER_STARTER_PORT.
+// ListenPacketAll creates UDP connections from SERVER_STARTER_PORT. It is for
+// lists containing only UDP endpoints and returns an error when a TCPListener,
+// UnixListener, or custom Listener is present. Use Ports and a type switch for
+// mixed lists.
 func ListenPacketAll() ([]net.PacketConn, error) {
 	targets, err := Ports()
 	if err != nil {

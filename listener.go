@@ -15,8 +15,10 @@ const wildcardIPv4 = "0.0.0.0"
 // example when SERVER_STARTER_PORT is empty or unset.
 var ErrNoListeningTarget = errors.New("starter: no listening target")
 
-// Listener is the interface for things that listen on file descriptors
-// specified by Start::Server / server_starter
+// Listener describes an endpoint inherited from Start::Server or
+// server_starter. TCPListener and UnixListener create stream listeners with
+// Listen. UDPListener implements Listen to satisfy this interface, but that
+// method returns an error; use UDPListener.ListenPacket for UDP endpoints.
 type Listener interface {
 	Fd() uintptr
 	Listen() (net.Listener, error)
@@ -59,7 +61,8 @@ func NewTCPListener(addr string, port int, fd uintptr) TCPListener {
 	return TCPListener{Addr: addr, Port: port, fd: fd}
 }
 
-// UDPListener is a UDP endpoint passed through SERVER_STARTER_PORT.
+// UDPListener is a UDP endpoint passed through SERVER_STARTER_PORT. Create its
+// packet connection with ListenPacket rather than Listen.
 type UDPListener struct {
 	Addr string
 	Port int
