@@ -27,11 +27,23 @@ func looksLikeTCPGrammar(s string) bool {
 	return err == nil && host != "" && reLooksLikePort.MatchString(port)
 }
 
-// stripLeadingUDPMarker strips a leading "u" from s, reporting whether s
-// had one.
+// stripLeadingUDPMarker accepts the leading "u" marker only when the
+// remainder is a bare port or an IP literal with a port. Restricting the
+// marker this way keeps ordinary TCP hostnames such as "upstream" from
+// being consumed as UDP.
 func stripLeadingUDPMarker(s string) (string, bool) {
-	stripped := strings.TrimPrefix(s, "u")
-	return stripped, stripped != s
+	stripped, ok := strings.CutPrefix(s, "u")
+	if !ok {
+		return s, false
+	}
+	if reLooksLikePort.MatchString(stripped) {
+		return stripped, true
+	}
+	matches := reLooksLikeHostPort.FindStringSubmatch(stripped)
+	if matches == nil || net.ParseIP(strings.Trim(matches[1], "[]")) == nil {
+		return s, false
+	}
+	return stripped, true
 }
 
 // stripTrailingUDPMarker strips a "u" immediately after the last ":" in s,

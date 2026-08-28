@@ -71,6 +71,14 @@ func TestParsePorts(t *testing.T) {
 		require.Equal(t, starter.NewTCPListener("127.0.0.1", 9090, 4), got[0])
 	})
 
+	t.Run("hostname beginning with u remains TCP", func(t *testing.T) {
+		got, err := starter.ParsePorts("upstream:8080=3")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, starter.TCPListener{}, got[0])
+		require.Equal(t, starter.NewTCPListener("upstream", 8080, 3), got[0])
+	})
+
 	t.Run("IPv6 host and port", func(t *testing.T) {
 		got, err := starter.ParsePorts("[::1]:9090=4")
 		require.NoError(t, err)
@@ -343,7 +351,7 @@ func TestFormatPorts(t *testing.T) {
 		require.ErrorContains(t, err, "TCPListener")
 	})
 
-	t.Run("accepts a TCP address beginning with u", func(t *testing.T) {
+	t.Run("formats a TCP hostname beginning with u", func(t *testing.T) {
 		spec, err := starter.FormatPorts(starter.NewTCPListener("upstream", 8080, 3))
 		require.NoError(t, err)
 		require.Equal(t, "upstream:8080=3", spec)
