@@ -10,8 +10,10 @@ import (
 //
 // Each spec is either a TCP/UDP target (a bare port, "host:port", or
 // "[ipv6]:port", optionally prefixed with "u" for UDP) or a unix socket
-// path. A path containing "/" is always read as a unix socket. A relative
-// unix socket path with no "/" that happens to parse as a port or
+// path. Because ";" separates entries and "=" separates each target from
+// its descriptor, unix socket paths cannot contain either delimiter. A path
+// containing "/" is always read as a unix socket. A relative unix socket
+// path with no "/" that happens to parse as a port or
 // "host:port" (e.g. "8080" or "db:5432") is indistinguishable from a TCP/UDP
 // spec in this wire format and is interpreted as TCP/UDP; pass such sockets
 // as absolute paths, or prefix them with "./" (which contains "/" and so is

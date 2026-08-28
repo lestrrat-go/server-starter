@@ -15,6 +15,8 @@ Changes
    - Added worker-facing helpers: ParsePorts, NewTCPListener, NewUDPListener,
      NewUnixListener, Generation, IsUnderStartServer, and a new UDPListener
      type with ListenPacketAll for UDP support
+   - start_server rejects --path values containing ';' or '=' before
+     binding because SERVER_STARTER_PORT reserves those wire delimiters
    - Three deliberate behavior changes, introduced in v2, relative to the
      original Perl Server::Starter:
      * On receiving INT or QUIT, the supervisor now sends the worker the

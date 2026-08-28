@@ -75,6 +75,8 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 // whose remainder parses as a port/host:port is a UDP target on that
 // remainder; otherwise a spec that itself parses as a port/host:port is a
 // TCP target; otherwise the spec is a unix socket path, taken verbatim.
+// Unix socket paths cannot contain ";" or "=" because those characters
+// delimit entries and file descriptors in the wire format.
 //
 // This leaves one shape ambiguous: a relative unix socket path with no "/"
 // that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")

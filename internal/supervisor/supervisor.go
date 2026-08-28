@@ -52,6 +52,16 @@ type runState struct {
 // Cancelling ctx is the only way to stop the run; the returned Controller's
 // Hangup method requests a graceful worker restart.
 func (s *Starter) Run(ctx context.Context) (*Controller, error) {
+	// Validate every Unix path before acquiring the pid file or binding any
+	// listener. SERVER_STARTER_PORT has no escaping mechanism for its pair
+	// delimiters, so accepting either delimiter here would produce a worker
+	// environment that ParsePorts cannot decode.
+	for _, path := range s.paths {
+		if err := validateUnixSocketPath(path); err != nil {
+			return nil, err
+		}
+	}
+
 	rs := &runState{
 		cfg:       s,
 		listeners: make([]listener, 0, len(s.ports)+len(s.paths)),

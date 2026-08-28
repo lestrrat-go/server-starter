@@ -86,7 +86,9 @@ type UnixListener struct {
 }
 
 // NewUnixListener creates a UnixListener for path and the inherited file
-// descriptor fd. path is taken verbatim, with no normalisation.
+// descriptor fd. path is taken verbatim, with no normalisation. Callers that
+// serialize the listener for SERVER_STARTER_PORT must not include ";" or "="
+// in path because the wire format reserves those delimiters.
 func NewUnixListener(path string, fd uintptr) UnixListener {
 	return UnixListener{Path: path, fd: fd}
 }

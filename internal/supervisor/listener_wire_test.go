@@ -5,7 +5,11 @@ package supervisor
 // parsePortTarget.
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	starter "github.com/lestrrat-go/server-starter/v2"
@@ -68,6 +72,39 @@ func TestPortSpecWireFormatUnchanged(t *testing.T) {
 			require.NoError(t, err)
 
 			require.Equal(t, want, got)
+		})
+	}
+}
+
+func TestRunRejectsUnixPathsReservedByWireFormatBeforeBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		fileName  string
+		delimiter string
+	}{
+		{name: "list delimiter", fileName: "app;next.sock", delimiter: ";"},
+		{name: "pair delimiter", fileName: "app=next.sock", delimiter: "="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			validPath := filepath.Join(dir, "valid.sock")
+			invalidPath := filepath.Join(dir, tc.fileName)
+			s := &Starter{
+				paths:  []string{validPath, invalidPath},
+				stderr: io.Discard,
+			}
+
+			ctrl, err := s.Run(context.Background())
+			require.Nil(t, ctrl)
+			require.EqualError(t, err, fmt.Sprintf(
+				"unix socket path %q contains %q, which is reserved by SERVER_STARTER_PORT",
+				invalidPath,
+				tc.delimiter,
+			))
+			_, statErr := os.Lstat(validPath)
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+			_, statErr = os.Lstat(invalidPath)
+			require.ErrorIs(t, statErr, os.ErrNotExist)
 		})
 	}
 }

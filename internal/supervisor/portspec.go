@@ -61,6 +61,17 @@ type portTarget struct {
 	fd      int
 }
 
+func validateUnixSocketPath(path string) error {
+	if i := strings.IndexAny(path, ";="); i >= 0 {
+		return fmt.Errorf(
+			"unix socket path %q contains %q, which is reserved by SERVER_STARTER_PORT",
+			path,
+			path[i:i+1],
+		)
+	}
+	return nil
+}
+
 func parsePortTarget(raw string) (portTarget, error) {
 	target := strings.TrimSpace(raw)
 	fd := -1
