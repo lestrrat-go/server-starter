@@ -462,12 +462,20 @@ func (s *Starter) Run() error {
 }
 
 func getKillOldDelay() time.Duration {
-	// Ignore errors.
-	delay, _ := strconv.ParseInt(os.Getenv("KILL_OLD_DELAY"), 10, 0)
 	autoRestart, _ := strconv.ParseBool(os.Getenv("ENABLE_AUTO_RESTART"))
-	if autoRestart && delay == 0 {
-		delay = 5
+
+	v, ok := os.LookupEnv("KILL_OLD_DELAY")
+	if !ok {
+		if autoRestart {
+			return 5 * time.Second
+		}
+		return 0
 	}
+
+	// KILL_OLD_DELAY is set: honour it, including an explicit 0, even when
+	// auto-restart is enabled. An unparseable value is treated as 0,
+	// consistent with this function's existing tolerance for bad input.
+	delay, _ := strconv.ParseInt(v, 10, 0)
 
 	return time.Duration(delay) * time.Second
 }
