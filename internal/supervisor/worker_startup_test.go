@@ -3,10 +3,11 @@
 package supervisor
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -83,35 +84,33 @@ func TestSIGTERMDuringFailedReplacementDoesNotPanic(t *testing.T) {
 		t.Fatalf("failed to create starter: %s", err)
 	}
 
-	doneCh := make(chan struct{})
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(doneCh)
-		errCh <- sd.Run()
-	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	if err != nil {
+		t.Fatalf("sd.Run() failed: %s", err)
+	}
 	defer func() {
+		cancel()
 		select {
-		case <-doneCh:
+		case <-ctrl.Done():
 		case <-time.After(10 * time.Second):
-			sd.stop()
-			select {
-			case <-doneCh:
-			case <-time.After(10 * time.Second):
-				t.Errorf("timed out waiting for Run() to return")
-			}
+			t.Errorf("timed out waiting for Run() to return")
 		}
 	}()
 
 	waitForGenerations(t, statusFile, 1)
-	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
-		t.Fatalf("failed to send HUP: %s", err)
-	}
+	ctrl.Hangup()
 	waitForFile(t, marker)
-	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
-		t.Fatalf("failed to send TERM: %s", err)
-	}
+	cancel()
 
-	if err := <-errCh; err != nil {
+	select {
+	case <-ctrl.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for Run() to return")
+	}
+	if err := ctrl.Err(); err != nil && !errors.Is(err, ErrServerClosed) {
 		t.Errorf("sd.Run() failed: %s", err)
 	}
 }

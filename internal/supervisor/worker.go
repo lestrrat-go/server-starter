@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -43,7 +44,7 @@ func (d dummyProcessState) Sys() any {
 }
 
 // startWorker starts the actual command.
-func (rs *runState) startWorker(sigCh chan os.Signal, ch chan processState) *os.Process {
+func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.Process {
 	// Don't give up until we're running.
 	for {
 		pid := -1
@@ -148,38 +149,21 @@ func (rs *runState) startWorker(sigCh chan os.Signal, ch chan processState) *os.
 			pid = cmd.Process.Pid
 			fmt.Fprintf(os.Stderr, "starting new worker %d\n", pid)
 
-			// Wait for interval before checking if the process is alive
+			// Wait for interval before checking if the process is alive. A
+			// cancelled ctx bails out early too: it means a shutdown was
+			// requested, so there is no point waiting out the rest of the
+			// interval before deciding the worker "started".
 			tch := time.After(rs.cfg.interval)
-			sigs := []os.Signal{}
-			for loop := true; loop; {
-				select {
-				case <-tch:
-					// bail out
-					loop = false
-				case sig := <-sigCh:
-					sigs = append(sigs, sig)
-				}
-			}
-			// if received any signals, during the wait, we bail out
-			gotSig := false
-			if len(sigs) > 0 {
-				for _, sig := range sigs {
-					// we need to resend these signals so it can be caught in the
-					// main routine...
-					go func(sig os.Signal) {
-						sigCh <- sig
-					}(sig)
-					if sysSig, ok := sig.(syscall.Signal); ok {
-						if sysSig != syscall.SIGHUP {
-							gotSig = true
-						}
-					}
-				}
+			ctxDone := false
+			select {
+			case <-tch:
+			case <-ctx.Done():
+				ctxDone = true
 			}
 
 			// Check if we can find a process by its pid
 			p := findWorker(pid)
-			if gotSig || p != nil {
+			if ctxDone || p != nil {
 				// No error? We were successful! Make sure we capture
 				// the program exiting
 				go func() {

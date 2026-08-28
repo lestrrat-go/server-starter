@@ -3,20 +3,20 @@
 package supervisor
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
 
 // stubbornWorkerTxt ignores the signal start_server sends on HUP, so it stays
 // in the old-workers set instead of exiting. That is what gives a second HUP
-// something to re-signal. It still dies on TERM, which is what Stop() sends,
-// so the run can be torn down normally.
+// something to re-signal. It still dies on TERM, which is what the run sends
+// its workers on shutdown, so the run can be torn down normally.
 var stubbornWorkerTxt = `package main
 
 import (
@@ -117,17 +117,17 @@ func TestHUPWithLiveOldWorkers(t *testing.T) {
 		t.Fatalf("failed to create starter: %s", err)
 	}
 
-	doneCh := make(chan struct{})
-	go func() {
-		defer close(doneCh)
-		if err := sd.Run(); err != nil {
-			t.Errorf("sd.Run() failed: %s", err)
-		}
-	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	if err != nil {
+		t.Fatalf("sd.Run() failed: %s", err)
+	}
 	defer func() {
-		sd.stop()
+		cancel()
 		select {
-		case <-doneCh:
+		case <-ctrl.Done():
 		case <-time.After(10 * time.Second):
 			t.Errorf("timed out waiting for Run() to return")
 		}
@@ -136,19 +136,15 @@ func TestHUPWithLiveOldWorkers(t *testing.T) {
 	// Generation 0, no old workers yet.
 	waitForGenerations(t, statusFile, 1)
 
-	// First HUP: this worked even before the fix, because the old-worker set
-	// was still empty at this point.
-	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
-		t.Fatalf("failed to send first HUP: %s", err)
-	}
+	// First hangup: this worked even before the fix, because the old-worker
+	// set was still empty at this point.
+	ctrl.Hangup()
 	waitForGenerations(t, statusFile, 2)
 
-	// Second HUP, now with generation 0 still alive and ignoring its signal.
-	// Before the fix the starter treated this as a no-op and the status file
-	// never grew a third entry.
-	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
-		t.Fatalf("failed to send second HUP: %s", err)
-	}
+	// Second hangup, now with generation 0 still alive and ignoring its
+	// signal. Before the fix the starter treated this as a no-op and the
+	// status file never grew a third entry.
+	ctrl.Hangup()
 	waitForGenerations(t, statusFile, 3)
 
 	// Generations are 1-based: startWorker increments before spawning. All

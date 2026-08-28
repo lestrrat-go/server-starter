@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/lestrrat-go/server-starter/v2/internal/statefile"
@@ -19,12 +17,15 @@ import (
 // (still-draining) worker pids, and the auto-restart timer. cfg points back
 // at the immutable Starter configuration shared across runs. Because a
 // runState is allocated fresh inside Run and never shared with any other
-// goroutine, its fields need no lock: only the goroutine executing Run (and
-// the synchronous calls it makes into startWorker/teardown) ever touch them.
+// goroutine, its fields need no lock: only the goroutine executing the loop
+// (and the synchronous calls it makes into startWorker/teardown) ever touch
+// them.
 type runState struct {
 	cfg *Starter
 
-	listeners  []listener
+	pidFile   *statefile.PIDFile
+	listeners []listener
+
 	generation int
 
 	oldWorkers map[int]int
@@ -34,24 +35,40 @@ type runState struct {
 	autoRestartForced bool
 }
 
-func (s *Starter) stop() {
-	p, _ := os.FindProcess(os.Getpid())
-	_ = p.Signal(syscall.SIGTERM)
-}
-
-func (s *Starter) Run() error {
+// Run acquires the pid file, binds every listener, and performs the initial
+// setEnv() synchronously; any failure here is returned directly. Once setup
+// succeeds, Run spawns the supervisor loop in a background goroutine and
+// returns immediately. Runtime errors are never returned from Run: they are
+// recorded on the returned Controller and observed via Wait/Err.
+//
+// Cancelling ctx is the only way to stop the run; the returned Controller's
+// Hangup method requests a graceful worker restart.
+func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 	rs := &runState{
 		cfg:       s,
 		listeners: make([]listener, 0, len(s.ports)+len(s.paths)),
 	}
-	defer rs.teardown()
+
+	// Setup can fail partway through (e.g. the second of three listeners
+	// refuses to bind). Until the loop goroutine takes ownership, this
+	// defer is responsible for releasing whatever was already acquired.
+	ok := false
+	defer func() {
+		if ok {
+			return
+		}
+		if rs.pidFile != nil {
+			rs.pidFile.Close()
+		}
+		rs.teardown()
+	}()
 
 	if s.pidFile != "" {
 		f, err := statefile.Acquire(s.pidFile)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		defer f.Close()
+		rs.pidFile = f
 	}
 
 	requestedFDs := make(map[int]struct{})
@@ -59,14 +76,14 @@ func (s *Starter) Run() error {
 		target, err := parsePortTarget(addr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to parse addr spec '%s': %s", addr, err)
-			return err
+			return nil, err
 		}
 		if target.fd >= 0 {
 			if target.fd < 3 {
-				return fmt.Errorf("listener descriptor %d conflicts with standard streams", target.fd)
+				return nil, fmt.Errorf("listener descriptor %d conflicts with standard streams", target.fd)
 			}
 			if _, ok := requestedFDs[target.fd]; ok {
-				return fmt.Errorf("listener descriptor %d is specified more than once", target.fd)
+				return nil, fmt.Errorf("listener descriptor %d is specified more than once", target.fd)
 			}
 			requestedFDs[target.fd] = struct{}{}
 		}
@@ -75,14 +92,14 @@ func (s *Starter) Run() error {
 		var pc net.PacketConn
 		if strings.HasPrefix(target.network, "udp") {
 			lc := listenConfig(target.network)
-			pc, err = lc.ListenPacket(context.Background(), target.network, net.JoinHostPort(target.host, strconv.Itoa(target.port)))
+			pc, err = lc.ListenPacket(ctx, target.network, net.JoinHostPort(target.host, strconv.Itoa(target.port)))
 		} else {
 			lc := listenConfig(target.network)
-			l, err = lc.Listen(context.Background(), target.network, net.JoinHostPort(target.host, strconv.Itoa(target.port)))
+			l, err = lc.Listen(ctx, target.network, net.JoinHostPort(target.host, strconv.Itoa(target.port)))
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", target.spec, err)
-			return err
+			return nil, err
 		}
 		rs.listeners = append(rs.listeners, listener{listener: l, packet: pc, fd: target.fd, spec: target.spec})
 	}
@@ -94,14 +111,14 @@ func (s *Starter) Run() error {
 			err = os.Remove(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "failed to remove existing socket file:%s:%s\n", path, err)
-				return err
+				return nil, err
 			}
 		}
 		_ = os.Remove(path)
 		l, err := net.Listen("unix", path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
-			return err
+			return nil, err
 		}
 		rs.listeners = append(rs.listeners, listener{listener: l, spec: path})
 	}
@@ -109,21 +126,32 @@ func (s *Starter) Run() error {
 	rs.generation = 0
 	os.Setenv("SERVER_STARTER_GENERATION", fmt.Sprintf("%d", rs.generation))
 
-	// XXX Not portable
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh,
-		syscall.SIGHUP,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-		syscall.SIGQUIT,
-	)
-
 	// Okay, ready to launch the program now...
 	setEnv()
+
+	ctrl := newController()
+	go rs.loop(ctx, ctrl)
+	ok = true
+
+	return ctrl, nil
+}
+
+// loop runs the supervisor's main lifecycle: it starts the initial worker,
+// then waits for the worker to exit, for a hangup request (graceful
+// restart), for the auto-restart timer, or for ctx to be cancelled. It owns
+// teardown of everything Run acquired: listeners, the pid file, and the
+// controller's done channel are all released here, not in Run, so they stay
+// alive for as long as the loop is actually running.
+func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
+	defer close(ctrl.done)
+	defer rs.teardown()
+	if rs.pidFile != nil {
+		defer rs.pidFile.Close()
+	}
+
 	workerCh := make(chan processState)
-	p := rs.startWorker(sigCh, workerCh)
+	p := rs.startWorker(ctx, workerCh)
 	rs.oldWorkers = make(map[int]int)
-	var sigReceived os.Signal
 	var sigToSend os.Signal
 	if autoRestartEnabled() {
 		rs.restartTimer = time.NewTimer(autoRestartInterval())
@@ -140,10 +168,7 @@ func (s *Starter) Run() error {
 			rs.oldWorkers[p.Pid] = rs.generation
 		}
 
-		fmt.Fprintf(os.Stderr, "received %s, sending %s to all workers:",
-			signame(sigReceived),
-			signame(sigToSend),
-		)
+		fmt.Fprintf(os.Stderr, "sending %s to all workers:", signame(sigToSend))
 		size := len(rs.oldWorkers)
 		i := 0
 		for pid := range rs.oldWorkers {
@@ -167,7 +192,7 @@ func (s *Starter) Run() error {
 			st := <-workerCh
 			fmt.Fprintf(os.Stderr, "worker %d died, status:%d\n", st.Pid(), grabExitStatus(st))
 			delete(rs.oldWorkers, st.Pid())
-			if err := statefile.WriteStatus(s.statusFile, statefile.StatusMap(rs.oldWorkers, 0, rs.generation)); err != nil {
+			if err := statefile.WriteStatus(rs.cfg.statusFile, statefile.StatusMap(rs.oldWorkers, 0, rs.generation)); err != nil {
 				fmt.Fprintf(os.Stderr, "failed to write status file: %s\n", err)
 			}
 		}
@@ -176,15 +201,16 @@ func (s *Starter) Run() error {
 
 	setEnv()
 
-	// Just wait for the worker to exit, or for us to receive a signal
+	// Just wait for the worker to exit, for a restart request, or for ctx
+	// to be cancelled.
 	for {
-		// startWorker can return nil when a signal arrives after a replacement
-		// exits but before the next retry succeeds.
+		// startWorker can return nil when a shutdown/restart request arrives
+		// after a replacement exits but before the next retry succeeds.
 		currentPID := 0
 		if p != nil {
 			currentPID = p.Pid
 		}
-		if err := statefile.WriteStatus(s.statusFile, statefile.StatusMap(rs.oldWorkers, currentPID, rs.generation)); err != nil {
+		if err := statefile.WriteStatus(rs.cfg.statusFile, statefile.StatusMap(rs.oldWorkers, currentPID, rs.generation)); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to write status file: %s\n", err)
 		}
 		// restart == 2: respawn unconditionally
@@ -204,7 +230,7 @@ func (s *Starter) Run() error {
 				exitSt := grabExitStatus(st)
 				fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
 				setEnv()
-				p = rs.startWorker(sigCh, workerCh)
+				p = rs.startWorker(ctx, workerCh)
 				if rs.restartTimer != nil {
 					rs.autoRestartForced = false
 					rs.restartTimer.Reset(autoRestartInterval())
@@ -214,28 +240,23 @@ func (s *Starter) Run() error {
 				fmt.Fprintf(os.Stderr, "old worker %d died, status:%d\n", st.Pid(), exitSt)
 				delete(rs.oldWorkers, st.Pid())
 			}
-		case sigReceived = <-sigCh:
-			// Temporary fix
-			switch sigReceived {
-			case syscall.SIGHUP:
-				// When we receive a HUP signal, we need to spawn a new worker.
-				//
-				// This is level 2, not 1, on purpose. Server::Starter runs its
-				// HUP path unconditionally (Starter.pm's `if ($restart)`), while
-				// level 1 below is gated on there being no live old workers.
-				// Using level 1 here made a HUP a no-op whenever an earlier
-				// worker was still shutting down, so repeated HUPs never
-				// re-signalled it. See #9.
-				fmt.Fprintf(os.Stderr, "received HUP (num_old_workers=TODO)\n")
-				restart = 2
-				sigToSend = s.signalOnHUP
-			case syscall.SIGTERM:
-				sigToSend = s.signalOnTERM
-				return nil
-			default:
-				sigToSend = syscall.SIGTERM
-				return nil
-			}
+		case <-ctx.Done():
+			sigToSend = rs.cfg.signalOnTERM
+			ctrl.setErr(ErrServerClosed)
+			return
+		case <-ctrl.hangup:
+			// When we receive a hangup request, we need to spawn a new
+			// worker.
+			//
+			// This is level 2, not 1, on purpose. Server::Starter runs its
+			// HUP path unconditionally (Starter.pm's `if ($restart)`), while
+			// level 1 below is gated on there being no live old workers.
+			// Using level 1 here made a HUP a no-op whenever an earlier
+			// worker was still shutting down, so repeated HUPs never
+			// re-signalled it. See #9.
+			fmt.Fprintf(os.Stderr, "received hangup request (num_old_workers=TODO)\n")
+			restart = 2
+			sigToSend = rs.cfg.signalOnHUP
 		case <-rs.restartC:
 			if len(rs.oldWorkers) == 0 {
 				restart = 1
@@ -257,7 +278,7 @@ func (s *Starter) Run() error {
 				rs.oldWorkers[p.Pid] = rs.generation
 			}
 			setEnv()
-			p = rs.startWorker(sigCh, workerCh)
+			p = rs.startWorker(ctx, workerCh)
 			if rs.restartTimer != nil {
 				rs.autoRestartForced = false
 				rs.restartTimer.Reset(autoRestartInterval())
@@ -280,7 +301,14 @@ func (s *Starter) Run() error {
 				killOldDelay := getKillOldDelay()
 				fmt.Fprintf(os.Stderr, "sleep %d secs\n", int(killOldDelay/time.Second))
 				if killOldDelay > 0 {
-					time.Sleep(killOldDelay)
+					timer := time.NewTimer(killOldDelay)
+					select {
+					case <-timer.C:
+					case <-ctx.Done():
+						if !timer.Stop() {
+							<-timer.C
+						}
+					}
 				}
 
 				fmt.Fprintf(os.Stderr, "killing old workers\n")
@@ -290,7 +318,7 @@ func (s *Starter) Run() error {
 					if err != nil {
 						continue
 					}
-					_ = worker.Signal(s.signalOnHUP)
+					_ = worker.Signal(rs.cfg.signalOnHUP)
 				}
 			}
 		}

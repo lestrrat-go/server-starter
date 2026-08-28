@@ -1,6 +1,8 @@
 package supervisor
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -141,20 +143,15 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 		return
 	}
 
-	doneCh := make(chan struct{})
-	readyCh := make(chan struct{})
-	go func() {
-		defer func() { doneCh <- struct{}{} }()
-		time.AfterFunc(500*time.Millisecond, func() {
-			readyCh <- struct{}{}
-		})
-		if err := sd.Run(); err != nil {
-			t.Errorf("sd.Run() failed: %s", err)
-		}
-		t.Logf("Exiting...")
-	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	<-readyCh
+	// Run's setup (binding every listener) is synchronous, so the ports are
+	// already live by the time Run returns; no readiness handshake needed.
+	ctrl, err := sd.Run(ctx)
+	if err != nil {
+		t.Fatalf("sd.Run() failed: %s", err)
+	}
 
 	for _, port := range ports {
 		_, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", port))
@@ -163,8 +160,11 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 		}
 	}
 
-	time.AfterFunc(time.Second, sd.stop)
-	<-doneCh
+	time.AfterFunc(time.Second, cancel)
+	if err := ctrl.Wait(); err != nil && !errors.Is(err, ErrServerClosed) {
+		t.Errorf("ctrl.Wait() failed: %s", err)
+	}
+	t.Logf("Exiting...")
 
 	log.Printf("Checking ports...")
 

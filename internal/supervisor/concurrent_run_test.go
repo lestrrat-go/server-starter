@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,10 +12,11 @@ import (
 )
 
 // TestRunConcurrentOnSharedStarter proves that Run is safe to invoke as
-// `go sd.Run()`: the same *Starter, sharing one command and one port spec
+// `go sd.Run(ctx)`: the same *Starter, sharing one command and one port spec
 // (port 0, so each run binds its own ephemeral port instead of colliding),
-// is run twice concurrently. Both runs must complete without error, and
-// each must have spawned its own live worker process.
+// is run twice concurrently, each with its own context. Both runs must
+// complete cleanly when their own context is cancelled, independently of
+// each other, and each must have spawned its own live worker process.
 //
 // statusFile and pidFile are left empty on purpose: WriteStatus is a no-op
 // for an empty path, and the temp filename statefile.Acquire would derive
@@ -28,7 +30,7 @@ func TestRunConcurrentOnSharedStarter(t *testing.T) {
 	// Using a shell command keeps this file buildable on Windows (it only
 	// needs to compile there) without needing a companion worker binary.
 	// "exec sleep" replaces the shell with sleep in place (same pid), so
-	// the SIGTERM the supervisor sends terminates it directly instead of
+	// the TERM the supervisor sends terminates it directly instead of
 	// leaving an orphaned grandchild holding the test's stdout pipe open.
 	sd, err := NewStarter(&config{
 		command: "/bin/sh",
@@ -38,22 +40,33 @@ func TestRunConcurrentOnSharedStarter(t *testing.T) {
 	require.NoError(t, err)
 
 	const numRuns = 2
-	errCh := make(chan error, numRuns)
-	doneCh := make(chan struct{}, numRuns)
-	for range numRuns {
-		go func() {
-			defer func() { doneCh <- struct{}{} }()
-			errCh <- sd.Run()
-		}()
+	ctrls := make([]*Controller, numRuns)
+	cancels := make([]context.CancelFunc, numRuns)
+	for i := range numRuns {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancels[i] = cancel
+		defer cancel()
+
+		ctrl, err := sd.Run(ctx)
+		require.NoError(t, err)
+		ctrls[i] = ctrl
 	}
 
 	pids := waitForWorkerPids(t, markerFile, numRuns, 20*time.Second)
 	require.GreaterOrEqual(t, len(pids), numRuns, "expected at least %d distinct worker pids in %s, got %v", numRuns, markerFile, pids)
 
-	// A single SIGTERM to this process is delivered to both runs: each Run
-	// registers its own channel with signal.Notify, so one call to stop()
-	// shuts both down.
-	sd.stop()
+	// Cancel each run's own context independently: this is what proves the
+	// two runs are truly independent, rather than sharing one process-wide
+	// shutdown signal as before.
+	errs := make([]error, numRuns)
+	doneCh := make(chan struct{}, numRuns)
+	for i := range numRuns {
+		go func(i int) {
+			defer func() { doneCh <- struct{}{} }()
+			cancels[i]()
+			errs[i] = ctrls[i].Wait()
+		}(i)
+	}
 
 	for i := range numRuns {
 		select {
@@ -62,9 +75,8 @@ func TestRunConcurrentOnSharedStarter(t *testing.T) {
 			t.Fatalf("timed out waiting for Run() #%d to return", i)
 		}
 	}
-	close(errCh)
-	for err := range errCh {
-		require.NoError(t, err)
+	for i := range numRuns {
+		require.ErrorIs(t, errs[i], ErrServerClosed)
 	}
 }
 
