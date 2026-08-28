@@ -98,6 +98,9 @@ func parseListenTargets(str string) ([]Listener, error) {
 
 	for i, pairString := range rawspec {
 		pair := strings.Split(pairString, "=")
+		if len(pair) != 2 {
+			return nil, fmt.Errorf("failed to parse '%s' as listen target: expected exactly one '='", pairString)
+		}
 		hostPort := strings.TrimSpace(pair[0])
 		fdString := strings.TrimSpace(pair[1])
 		fd, err := strconv.ParseUint(fdString, 10, 0)

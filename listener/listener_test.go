@@ -2,6 +2,8 @@ package listener
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestPort(t *testing.T) {
@@ -27,6 +29,50 @@ func TestPort(t *testing.T) {
 			t.Errorf("parsed listener is the wrong type")
 		}
 	}
+}
+
+func TestParseListenTargets(t *testing.T) {
+	t.Run("bare port", func(t *testing.T) {
+		got, err := parseListenTargets("8080=3")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, TCPListener{}, got[0])
+		require.Equal(t, TCPListener{Addr: "0.0.0.0", Port: 8080, fd: 3}, got[0])
+	})
+
+	t.Run("host and port", func(t *testing.T) {
+		got, err := parseListenTargets("127.0.0.1:9090=4")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, TCPListener{}, got[0])
+		require.Equal(t, TCPListener{Addr: "127.0.0.1", Port: 9090, fd: 4}, got[0])
+	})
+
+	t.Run("unix socket path", func(t *testing.T) {
+		got, err := parseListenTargets("/foo/bar.sock=5")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, UnixListener{}, got[0])
+		require.Equal(t, UnixListener{Path: "/foo/bar.sock", fd: 5}, got[0])
+	})
+
+	t.Run("missing equals sign", func(t *testing.T) {
+		got, err := parseListenTargets("8080")
+		require.Error(t, err)
+		require.Nil(t, got)
+	})
+
+	t.Run("multiple equals signs", func(t *testing.T) {
+		got, err := parseListenTargets("8080=3=extra")
+		require.Error(t, err)
+		require.Nil(t, got)
+	})
+
+	t.Run("empty string", func(t *testing.T) {
+		got, err := parseListenTargets("")
+		require.ErrorIs(t, err, ErrNoListeningTarget)
+		require.Nil(t, got)
+	})
 }
 
 func TestPortNoEnv(t *testing.T) {
