@@ -26,7 +26,9 @@ type Listener interface {
 
 // List holds a list of Listeners. This is here just for convenience
 // so that you can do
+//
 //	list.String()
+//
 // to get a string compatible with SERVER_STARTER_PORT
 type List []Listener
 
@@ -160,7 +162,7 @@ func ListenAll() ([]net.Listener, error) {
 		ret[i], err = target.Listen()
 		if err != nil {
 			// Close everything up to this listener
-			for x := 0; x < i; x++ {
+			for x := range i {
 				ret[x].Close()
 			}
 			return nil, err

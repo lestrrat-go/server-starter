@@ -2,19 +2,13 @@ package starter
 
 import (
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestEnvdir(t *testing.T) {
-	dir, err := ioutil.TempDir("", "starter_test")
-	if err != nil {
-		t.Errorf("Failed to create tempdir: %s", err)
-		return
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	files := []string{"FOO", "BAR", "BAZ"}
 	for _, fn := range files {
@@ -38,16 +32,11 @@ func TestEnvdir(t *testing.T) {
 
 		// save old values and restore later, if any
 		if old := os.Getenv(fn); old != "" {
-			os.Setenv(fn, "")
-			defer os.Setenv(fn, old)
+			t.Setenv(fn, "")
 		}
 	}
 
-	if old := os.Getenv("ENVDIR"); old != "" {
-		defer os.Setenv("ENVDIR", old)
-	}
-
-	os.Setenv("ENVDIR", dir)
+	t.Setenv("ENVDIR", dir)
 	m, err := reloadEnv()
 	if err != nil {
 		t.Errorf("reloadEnv failed: %s", err)
