@@ -1,6 +1,36 @@
 Changes
 =======
 
+2.0.0 UNRELEASED
+   * v2 is not tagged yet; this entry documents work in progress on the
+     develop/v2 branch, not a shipped release.
+   - Module path moved to github.com/lestrrat-go/server-starter/v2
+   - The listener subpackage is folded into the module root (package
+     starter); import the module root instead of a listener subpackage
+   - The supervisor is no longer importable as a Go library. It ships only
+     as the start_server command; programs that embedded the supervisor
+     should run the compiled binary as a subprocess instead
+   - Added worker-facing helpers: ParsePorts, NewTCPListener, NewUDPListener,
+     NewUnixListener, Generation, IsUnderStartServer, and a new UDPListener
+     type with ListenPacketAll for UDP support
+   - Three deliberate behavior changes, introduced in v2, relative to the
+     original Perl Server::Starter:
+     * On receiving INT or QUIT, the supervisor now sends the worker the
+       same signal configured via --signal-on-term that it already sends on
+       TERM, instead of a hardcoded TERM. Only observable when
+       --signal-on-term is set to something other than TERM and the
+       supervisor is stopped with INT or QUIT rather than TERM.
+     * When a file is deleted from the envdir, the corresponding
+       environment variable no longer keeps the last value the supervisor
+       applied from it; it falls back to the value inherited from the real
+       environment, since the worker's environment is now built fresh on
+       every spawn.
+     * KILL_OLD_DELAY, ENABLE_AUTO_RESTART, and AUTO_RESTART_INTERVAL are no
+       longer exported into the supervisor's own process environment. They
+       are passed as configuration instead, so the worker environment they
+       produce is unchanged.
+   - See MIGRATION.md for a full symbol-by-symbol migration guide
+
 0.0.2 Jan 06 2015
    - Check if given command is executable before starting start_server
    - Add support for unix domain sockets (kazeburo)
