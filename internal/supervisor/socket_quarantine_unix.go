@@ -69,7 +69,7 @@ func renameNoReplaceEntryAt(
 // quarantine. Non-directories use an anchored hard link for the no-replace
 // step. Directories use an anchored rename after checking that the destination
 // is absent because filesystems do not permit hard links to directories.
-func renameNoReplaceByLinkAt( //nolint:unparam // Platform implementations preserve the generic *at helper contract.
+func renameNoReplaceByLinkAt(
 	oldDir *os.File,
 	oldName string,
 	newDir *os.File,

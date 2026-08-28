@@ -15,9 +15,9 @@ import (
 func TestRemoveExistingUnixSocketProtectsQuarantineFromNameExchange(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "server.sock")
-	addr, err := net.ResolveUnixAddr("unix", path)
+	addr, err := net.ResolveUnixAddr(unixNetwork, path)
 	require.NoError(t, err)
-	listener, err := net.ListenUnix("unix", addr)
+	listener, err := net.ListenUnix(unixNetwork, addr)
 	require.NoError(t, err)
 	listener.SetUnlinkOnClose(false)
 	require.NoError(t, listener.Close())

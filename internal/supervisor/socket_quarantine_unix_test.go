@@ -111,7 +111,7 @@ func TestRemoveExistingUnixSocketRejectsSocketReplacement(t *testing.T) {
 
 func createStaleUnixSocket(t *testing.T, path string) {
 	t.Helper()
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	listener, err := net.ListenUnix(unixNetwork, &net.UnixAddr{Name: path, Net: unixNetwork})
 	require.NoError(t, err)
 	listener.SetUnlinkOnClose(false)
 	require.NoError(t, listener.Close())
@@ -164,9 +164,11 @@ func TestRenameNoReplaceByLinkAtRestoresDirectory(t *testing.T) {
 	root := t.TempDir()
 	quarantinePath := filepath.Join(root, "quarantine")
 	destinationPath := filepath.Join(root, "destination")
+	const sourceName = "quarantined-directory"
+	const destinationName = "restored-directory"
 	require.NoError(t, os.Mkdir(quarantinePath, 0700))
 	require.NoError(t, os.Mkdir(destinationPath, 0700))
-	require.NoError(t, os.Mkdir(filepath.Join(quarantinePath, "socket"), 0700))
+	require.NoError(t, os.Mkdir(filepath.Join(quarantinePath, sourceName), 0700))
 
 	quarantine, err := os.Open(quarantinePath)
 	require.NoError(t, err)
@@ -175,11 +177,11 @@ func TestRenameNoReplaceByLinkAtRestoresDirectory(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, destination.Close()) })
 
-	require.NoError(t, renameNoReplaceByLinkAt(quarantine, "socket", destination, "server.sock"))
-	info, err := os.Stat(filepath.Join(destinationPath, "server.sock"))
+	require.NoError(t, renameNoReplaceByLinkAt(quarantine, sourceName, destination, destinationName))
+	info, err := os.Stat(filepath.Join(destinationPath, destinationName))
 	require.NoError(t, err)
 	require.True(t, info.IsDir())
-	_, err = os.Lstat(filepath.Join(quarantinePath, "socket"))
+	_, err = os.Lstat(filepath.Join(quarantinePath, sourceName))
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 

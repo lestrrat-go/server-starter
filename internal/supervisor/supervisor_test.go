@@ -109,9 +109,9 @@ func TestRunRejectsExistingNonSocketPath(t *testing.T) {
 
 func TestRemoveExistingUnixSocketRemovesSocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.sock")
-	addr, err := net.ResolveUnixAddr("unix", path)
+	addr, err := net.ResolveUnixAddr(unixNetwork, path)
 	require.NoError(t, err)
-	l, err := net.ListenUnix("unix", addr)
+	l, err := net.ListenUnix(unixNetwork, addr)
 	require.NoError(t, err)
 	l.SetUnlinkOnClose(false)
 	require.NoError(t, l.Close())
@@ -125,9 +125,9 @@ func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
 	t.Run("replacement before move", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "server.sock")
-		addr, err := net.ResolveUnixAddr("unix", path)
+		addr, err := net.ResolveUnixAddr(unixNetwork, path)
 		require.NoError(t, err)
-		l, err := net.ListenUnix("unix", addr)
+		l, err := net.ListenUnix(unixNetwork, addr)
 		require.NoError(t, err)
 		l.SetUnlinkOnClose(false)
 		require.NoError(t, l.Close())
@@ -173,9 +173,9 @@ func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
 	t.Run("replacement after move", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "server.sock")
-		addr, err := net.ResolveUnixAddr("unix", path)
+		addr, err := net.ResolveUnixAddr(unixNetwork, path)
 		require.NoError(t, err)
-		l, err := net.ListenUnix("unix", addr)
+		l, err := net.ListenUnix(unixNetwork, addr)
 		require.NoError(t, err)
 		l.SetUnlinkOnClose(false)
 		require.NoError(t, l.Close())
@@ -228,9 +228,9 @@ func TestRemoveExistingUnixSocketAnchorsParentDirectory(t *testing.T) {
 	require.NoError(t, os.Mkdir(parentPath, 0700))
 
 	path := filepath.Join(parentPath, "server.sock")
-	addr, err := net.ResolveUnixAddr("unix", path)
+	addr, err := net.ResolveUnixAddr(unixNetwork, path)
 	require.NoError(t, err)
-	l, err := net.ListenUnix("unix", addr)
+	l, err := net.ListenUnix(unixNetwork, addr)
 	require.NoError(t, err)
 	l.SetUnlinkOnClose(false)
 	require.NoError(t, l.Close())

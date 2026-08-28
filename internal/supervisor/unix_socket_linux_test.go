@@ -27,7 +27,7 @@ func TestRemoveExistingUnixSocketAllowsAbstractAddress(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, contents, 0600))
 	require.NoError(t, removeExistingUnixSocket(path))
 
-	l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", path)
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, l.Close())
@@ -49,7 +49,7 @@ func TestRemoveExistingUnixSocketAllowsSpecialAbstractAddresses(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			require.NoError(t, removeExistingUnixSocket(path))
 
-			l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", path)
+			l, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				require.NoError(t, l.Close())
