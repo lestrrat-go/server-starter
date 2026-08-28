@@ -61,7 +61,7 @@ func TestRemoveExistingUnixSocketRejectsNonSocketEntries(t *testing.T) {
 		require.NoError(t, os.Mkdir(path, 0700))
 
 		renameCalled := false
-		err := removeExistingUnixSocketWithRename(path, func(string, string) error {
+		err := removeExistingUnixSocketWithRename(path, func(*os.File, string, string) error {
 			renameCalled = true
 			return nil
 		})
@@ -143,10 +143,10 @@ func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
 		})
 
 		go func() {
-			result <- removeExistingUnixSocketWithRename(path, func(oldpath, newpath string) error {
+			result <- removeExistingUnixSocketWithRename(path, func(dir *os.File, oldName, newName string) error {
 				close(renameReached)
 				<-continueRename
-				return os.Rename(oldpath, newpath)
+				return renameNoReplaceAt(dir, oldName, newName)
 			})
 		}()
 
@@ -186,8 +186,8 @@ func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
 		})
 
 		go func() {
-			result <- removeExistingUnixSocketWithRename(path, func(oldpath, newpath string) error {
-				if err := os.Rename(oldpath, newpath); err != nil {
+			result <- removeExistingUnixSocketWithRename(path, func(dir *os.File, oldName, newName string) error {
+				if err := renameNoReplaceAt(dir, oldName, newName); err != nil {
 					return err
 				}
 				close(renameFinished)
@@ -209,6 +209,37 @@ func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, entries, 1)
 	})
+}
+
+func TestRemoveExistingUnixSocketAnchorsParentDirectory(t *testing.T) {
+	root := t.TempDir()
+	parentPath := filepath.Join(root, "parent")
+	movedParentPath := filepath.Join(root, "moved-parent")
+	require.NoError(t, os.Mkdir(parentPath, 0700))
+
+	path := filepath.Join(parentPath, "server.sock")
+	addr, err := net.ResolveUnixAddr("unix", path)
+	require.NoError(t, err)
+	l, err := net.ListenUnix("unix", addr)
+	require.NoError(t, err)
+	l.SetUnlinkOnClose(false)
+	require.NoError(t, l.Close())
+
+	contents := []byte("replacement")
+	err = removeExistingUnixSocketWithRename(path, func(dir *os.File, oldName, newName string) error {
+		require.NoError(t, os.Rename(parentPath, movedParentPath))
+		require.NoError(t, os.Mkdir(parentPath, 0700))
+		require.NoError(t, os.WriteFile(path, contents, 0600))
+		return renameNoReplaceAt(dir, oldName, newName)
+	})
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, contents, got)
+	entries, err := os.ReadDir(movedParentPath)
+	require.NoError(t, err)
+	require.Empty(t, entries)
 }
 
 func TestRemoveExistingUnixSocketAllowsMissingPath(t *testing.T) {
