@@ -338,7 +338,7 @@ func TestSignalNamesRoundTrip(t *testing.T) {
 
 	got, err := SigFromName("")
 	require.NoError(t, err)
-	require.Nil(t, got)
+	require.Equal(t, os.Signal(syscall.SIGTERM), got)
 
 	got, err = SigFromName("TERMM")
 	require.EqualError(t, err, `invalid signal name "TERMM"`)

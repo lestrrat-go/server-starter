@@ -54,10 +54,10 @@ func signame(s os.Signal) string {
 }
 
 // SigFromName returns the signal corresponding to the given signal name.
-// An empty name means no signal was specified.
+// An empty name selects the default SIGTERM signal.
 func SigFromName(n string) (os.Signal, error) {
 	if n == "" {
-		return nil, nil
+		return syscall.SIGTERM, nil
 	}
 
 	name := strings.TrimPrefix(strings.ToUpper(n), "SIG")
