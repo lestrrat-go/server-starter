@@ -140,15 +140,10 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 
 	for _, path := range s.paths {
 		var l net.Listener
-		if fl, err := os.Lstat(path); err == nil && fl.Mode()&os.ModeSocket == os.ModeSocket {
-			fmt.Fprintf(s.stderr, "removing existing socket file:%s\n", path)
-			err = os.Remove(path)
-			if err != nil {
-				fmt.Fprintf(s.stderr, "failed to remove existing socket file:%s:%s\n", path, err)
-				return nil, err
-			}
+		if err := removeExistingUnixSocket(path); err != nil {
+			fmt.Fprintf(s.stderr, "failed to prepare socket file:%s:%s\n", path, err)
+			return nil, err
 		}
-		_ = os.Remove(path)
 		lc := listenConfig(unixNetwork)
 		l, err := lc.Listen(ctx, unixNetwork, path)
 		if err != nil {
@@ -188,6 +183,23 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 func workerStartCanceled(ctx context.Context, err error) bool {
 	ctxErr := ctx.Err()
 	return ctxErr != nil && errors.Is(err, ctxErr)
+}
+
+func removeExistingUnixSocket(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect unix socket path %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("unix socket path %q already exists and is not a socket", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove existing unix socket path %q: %w", path, err)
+	}
+	return nil
 }
 
 // loop runs the supervisor's main lifecycle: it starts the initial worker,

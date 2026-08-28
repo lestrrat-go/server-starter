@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -40,6 +41,84 @@ func TestTeardownRemovesUnixSocket(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("unix socket path remains, stat error = %v", err)
 	}
+}
+
+func TestRemoveExistingUnixSocketRejectsNonSocketEntries(t *testing.T) {
+	t.Run("regular file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "server.sock")
+		contents := []byte("keep me")
+		require.NoError(t, os.WriteFile(path, contents, 0600))
+
+		err := removeExistingUnixSocket(path)
+		require.ErrorContains(t, err, "is not a socket")
+		got, readErr := os.ReadFile(path)
+		require.NoError(t, readErr)
+		require.Equal(t, contents, got)
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "server.sock")
+		require.NoError(t, os.Mkdir(path, 0700))
+
+		err := removeExistingUnixSocket(path)
+		require.ErrorContains(t, err, "is not a socket")
+		info, statErr := os.Stat(path)
+		require.NoError(t, statErr)
+		require.True(t, info.IsDir())
+	})
+
+	t.Run("symbolic link", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "target")
+		path := filepath.Join(dir, "server.sock")
+		contents := []byte("keep me")
+		require.NoError(t, os.WriteFile(target, contents, 0600))
+		if err := os.Symlink(target, path); err != nil {
+			t.Skipf("symbolic links are unavailable: %s", err)
+		}
+
+		err := removeExistingUnixSocket(path)
+		require.ErrorContains(t, err, "is not a socket")
+		info, statErr := os.Lstat(path)
+		require.NoError(t, statErr)
+		require.NotZero(t, info.Mode()&os.ModeSymlink)
+		got, readErr := os.ReadFile(target)
+		require.NoError(t, readErr)
+		require.Equal(t, contents, got)
+	})
+}
+
+func TestRunRejectsExistingNonSocketPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.sock")
+	contents := []byte("keep me")
+	require.NoError(t, os.WriteFile(path, contents, 0600))
+	starter := &Starter{paths: []string{path}, stderr: io.Discard}
+
+	ctrl, err := starter.Run(context.Background())
+	require.Nil(t, ctrl)
+	require.ErrorContains(t, err, "is not a socket")
+	got, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, contents, got)
+}
+
+func TestRemoveExistingUnixSocketRemovesSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.sock")
+	addr, err := net.ResolveUnixAddr("unix", path)
+	require.NoError(t, err)
+	l, err := net.ListenUnix("unix", addr)
+	require.NoError(t, err)
+	l.SetUnlinkOnClose(false)
+	require.NoError(t, l.Close())
+
+	require.NoError(t, removeExistingUnixSocket(path))
+	_, err = os.Lstat(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestRemoveExistingUnixSocketAllowsMissingPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.sock")
+	require.NoError(t, removeExistingUnixSocket(path))
 }
 
 // TestRunErrServerClosed proves that cancelling the context passed to Run
