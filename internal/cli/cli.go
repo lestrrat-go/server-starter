@@ -89,7 +89,7 @@ func Run() int {
 	// it stays the process's real stderr.
 	stderr := io.Writer(os.Stderr)
 	if opts.OptLogFile != "" {
-		f, err := os.OpenFile(opts.OptLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		f, err := openLogFile(opts.OptLogFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)
 			return 1
@@ -151,4 +151,8 @@ func Run() int {
 		return 1
 	}
 	return 0
+}
+
+func openLogFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 }
