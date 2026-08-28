@@ -56,6 +56,7 @@ func (s workerStartupState) waitForProbe(ctx context.Context, interval time.Dura
 
 func terminalWorkerStartError(err error) bool {
 	return errors.Is(err, exec.ErrNotFound) ||
+		errors.Is(err, exec.ErrDot) ||
 		errors.Is(err, os.ErrNotExist) ||
 		errors.Is(err, os.ErrPermission) ||
 		errors.Is(err, syscall.EINVAL) ||

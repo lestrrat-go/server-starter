@@ -73,6 +73,30 @@ func TestDeterministicLaunchErrorsStopWorkerStartRetries(t *testing.T) {
 			},
 			want: exec.ErrNotFound,
 		},
+		"executable found relative to PATH": {
+			setup: func(t *testing.T) (config, func()) {
+				preferredDir := t.TempDir()
+				fallbackDir := t.TempDir()
+				preferredPath := filepath.Join(preferredDir, "worker")
+				fallbackPath := filepath.Join(fallbackDir, "worker")
+				worker := []byte("#!/bin/sh\nexit 0\n")
+				require.NoError(t, os.WriteFile(preferredPath, worker, 0o700))
+				require.NoError(t, os.WriteFile(fallbackPath, worker, 0o700))
+
+				previousDir, err := os.Getwd()
+				require.NoError(t, err)
+				require.NoError(t, os.Chdir(fallbackDir))
+				t.Cleanup(func() {
+					require.NoError(t, os.Chdir(previousDir))
+				})
+
+				t.Setenv("PATH", preferredDir+string(os.PathListSeparator)+".")
+				return config{command: "worker"}, func() {
+					require.NoError(t, os.Remove(preferredPath))
+				}
+			},
+			want: exec.ErrDot,
+		},
 	}
 
 	for name, test := range tests {
