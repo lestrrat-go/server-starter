@@ -217,19 +217,11 @@ func (s *Starter) Run() error {
 	defer s.Teardown()
 
 	if s.pidFile != "" {
-		f, err := os.OpenFile(s.pidFile, os.O_EXCL|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		f, err := acquirePIDFile(s.pidFile)
 		if err != nil {
 			return err
 		}
-
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-			return err
-		}
-		fmt.Fprintf(f, "%d", os.Getpid())
-		defer func() {
-			os.Remove(f.Name())
-			f.Close()
-		}()
+		defer f.Close()
 	}
 
 	for _, addr := range s.ports {
