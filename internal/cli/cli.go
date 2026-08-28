@@ -28,6 +28,17 @@ func Run() int {
 }
 
 func run(daemonizeFn func() error) int {
+	readiness, err := childDaemonReadiness()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		return 1
+	}
+	failStartup := func(stderr io.Writer, err error) int {
+		readiness.failed(err)
+		fmt.Fprintf(stderr, "error: %s\n", err)
+		return 1
+	}
+
 	opts := &options{OptInterval: -1}
 	p := flags.NewParser(opts, flags.PrintErrors|flags.PassDoubleDash)
 	args, err := p.Parse()
@@ -85,12 +96,11 @@ func run(daemonizeFn func() error) int {
 		return p.FindOptionByLongName(long).IsSet()
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		return 1
+		return failStartup(os.Stderr, err)
 	}
 	opts.resolved = resolved
 
-	if opts.OptDaemonize && os.Getenv("SERVER_STARTER_DAEMONIZED") != "1" {
+	if opts.OptDaemonize && os.Getenv(daemonizedEnv) != "1" {
 		if err := daemonizeFn(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)
 			return 1
@@ -99,7 +109,9 @@ func run(daemonizeFn func() error) int {
 	}
 
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "server program not specified\n")
+		err := fmt.Errorf("server program not specified")
+		readiness.failed(err)
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 
@@ -116,8 +128,7 @@ func run(daemonizeFn func() error) int {
 	if opts.OptLogFile != "" {
 		f, err := openLogFile(opts.OptLogFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
-			return 1
+			return failStartup(os.Stderr, err)
 		}
 		opts.logWriter = f
 		stderr = f
@@ -125,8 +136,7 @@ func run(daemonizeFn func() error) int {
 
 	s, err := supervisor.NewStarter(opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %s\n", err)
-		return 1
+		return failStartup(stderr, err)
 	}
 
 	// internal/supervisor no longer touches os/signal: it is a library and
@@ -137,8 +147,7 @@ func run(daemonizeFn func() error) int {
 
 	ctrl, err := s.Run(ctx)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %s\n", err)
-		return 1
+		return failStartup(stderr, err)
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -157,6 +166,11 @@ func run(daemonizeFn func() error) int {
 			return
 		}
 	}()
+
+	if err := readiness.ready(); err != nil {
+		fmt.Fprintf(stderr, "error: report daemon readiness: %s\n", err)
+		return 1
+	}
 
 	// A clean, ctx-driven shutdown is success, not failure: report only a
 	// genuine runtime error.
