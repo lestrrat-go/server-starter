@@ -5,8 +5,6 @@ Go port of ```start_server``` utility (a.k.a. [Server::Starter](https://metacpan
 
 [![CI](https://github.com/lestrrat-go/server-starter/actions/workflows/ci.yml/badge.svg?branch=develop/v2)](https://github.com/lestrrat-go/server-starter/actions/workflows/ci.yml)
 
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/lestrrat-go/server-starter/v2)](https://pkg.go.dev/github.com/lestrrat-go/server-starter/v2)
-
 ## DESCRIPTION
 
 *note: this description is almost entirely taken from the original Server::Starter module*
@@ -25,6 +23,10 @@ Many PSGI servers support this. If you want your Go program to support it, you c
 
 ## INSTALLATION
 
+The v2 module is not tagged yet. Install the current v2 revision explicitly:
+
 ```
-go install github.com/lestrrat-go/server-starter/v2/cmd/start_server@latest
+go install github.com/lestrrat-go/server-starter/v2/cmd/start_server@v2.0.0-20260828032310-12627c1634fe
 ```
+
+Replace the pinned version with `@latest` after v2 is tagged.
