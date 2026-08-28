@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -145,6 +146,19 @@ func _main() (st int) {
 
 	if opts.OptEnvdir != "" {
 		os.Setenv("ENVDIR", opts.OptEnvdir)
+	}
+
+	// Export these into the environment the same way Perl's start_server
+	// does (Starter.pm:50-55), and only when the flag was actually passed
+	// so an unset flag does not clobber an inherited environment value.
+	if p.FindOptionByLongName("kill-old-delay").IsSet() {
+		os.Setenv("KILL_OLD_DELAY", strconv.Itoa(opts.OptKillOldDelay))
+	}
+	if p.FindOptionByLongName("enable-auto-restart").IsSet() {
+		os.Setenv("ENABLE_AUTO_RESTART", "1")
+	}
+	if p.FindOptionByLongName("auto-restart-interval").IsSet() {
+		os.Setenv("AUTO_RESTART_INTERVAL", strconv.Itoa(opts.OptAutoRestartInterval))
 	}
 
 	s, err := starter.NewStarter(opts)
