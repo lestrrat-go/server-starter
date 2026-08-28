@@ -93,6 +93,14 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 		require.ErrorContains(t, err, "record lock owner")
 	})
 
+	t.Run("rejects a record lock without a BSD flock", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "server.pid")
+		startRecordPIDLockHelper(t, path)
+
+		_, err := statefile.ReadPID(path)
+		require.ErrorContains(t, err, "could not be verified as the BSD flock owner")
+	})
+
 	t.Run("rejects a locked pid file moved from another path", func(t *testing.T) {
 		dir := t.TempDir()
 		firstPath := filepath.Join(dir, "first.pid")
@@ -104,6 +112,34 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 		_, err := statefile.ReadPID(firstPath)
 		require.ErrorContains(t, err, "different path")
 	})
+}
+
+func TestReadPIDAllowsDifferentPIDFileOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("changing pid-file ownership requires root")
+	}
+
+	path := filepath.Join(t.TempDir(), "server.pid")
+	pid := startPIDLockHelper(t, path)
+	require.NoError(t, os.Chown(path, 1, -1))
+
+	got, err := statefile.ReadPID(path)
+	require.NoError(t, err)
+	require.Equal(t, pid, got)
+}
+
+func TestAcquireRejectsDifferentPIDFileOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("changing pid-file ownership requires root")
+	}
+
+	path := filepath.Join(t.TempDir(), "server.pid")
+	require.NoError(t, os.WriteFile(path, nil, 0644))
+	require.NoError(t, os.Chown(path, 1, -1))
+
+	pidFile, err := statefile.Acquire(path)
+	require.ErrorContains(t, err, "is owned by uid 1, expected uid 0")
+	require.Nil(t, pidFile)
 }
 
 func TestPIDLockHelper(t *testing.T) {

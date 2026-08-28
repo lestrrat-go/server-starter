@@ -12,21 +12,21 @@ import (
 )
 
 // inspectInodeLocks finds legacy BSD flock ownership and reports whether the
-// inode also has a record lock. A record lock outside the expected path-bound
-// byte means the file was locked under another pathname.
-func inspectInodeLocks(f *os.File, _ int) (int, bool, error) {
+// inode has a record lock and a BSD flock. A record lock outside the expected
+// path-bound byte means the file was locked under another pathname.
+func inspectInodeLocks(f *os.File, _ int) (int, bool, bool, error) {
 	info, err := f.Stat()
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return 0, false, fmt.Errorf("pid file has unsupported stat data")
+		return 0, false, false, fmt.Errorf("pid file has unsupported stat data")
 	}
 
 	locks, err := os.Open("/proc/locks")
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
 	defer locks.Close()
 
@@ -35,6 +35,7 @@ func inspectInodeLocks(f *os.File, _ int) (int, bool, error) {
 	inode := stat.Ino
 	flockPID := 0
 	hasRecordLock := false
+	hasFlock := false
 	scanner := bufio.NewScanner(locks)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -47,9 +48,10 @@ func inspectInodeLocks(f *os.File, _ int) (int, bool, error) {
 		}
 		switch fields[1] {
 		case "FLOCK":
+			hasFlock = true
 			pid, parseErr := strconv.Atoi(fields[4])
 			if parseErr != nil || pid <= 0 {
-				return 0, false, fmt.Errorf("invalid flock owner pid %q", fields[4])
+				return 0, false, false, fmt.Errorf("invalid flock owner pid %q", fields[4])
 			}
 			flockPID = pid
 		case "POSIX":
@@ -57,9 +59,9 @@ func inspectInodeLocks(f *os.File, _ int) (int, bool, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
-	return flockPID, hasRecordLock, nil
+	return flockPID, hasRecordLock, hasFlock, nil
 }
 
 func parseProcLockIdentity(value string) (uint64, uint64, uint64, bool) {

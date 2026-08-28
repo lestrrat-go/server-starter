@@ -22,7 +22,7 @@ func openPIDFile(path string) (*os.File, error) {
 		return nil, fmt.Errorf("failed to open pid file %q: %w", path, err)
 	}
 
-	if err := validateOpenedPIDFile(f, path); err != nil {
+	if err := validateOwnedPIDFile(f, path); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -43,6 +43,14 @@ func openRunningPIDFile(path string) (*os.File, error) {
 }
 
 func validateOpenedPIDFile(f *os.File, path string) error {
+	return validatePIDFile(f, path, false)
+}
+
+func validateOwnedPIDFile(f *os.File, path string) error {
+	return validatePIDFile(f, path, true)
+}
+
+func validatePIDFile(f *os.File, path string, requireOwner bool) error {
 	info, err := f.Stat()
 	if err != nil {
 		return fmt.Errorf("failed to inspect pid file %q: %w", path, err)
@@ -53,11 +61,13 @@ func validateOpenedPIDFile(f *os.File, path string) error {
 
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return fmt.Errorf("failed to verify ownership of pid file %q", path)
+		return fmt.Errorf("failed to inspect pid file %q metadata", path)
 	}
-	expectedUID := uint32(os.Geteuid())
-	if stat.Uid != expectedUID {
-		return fmt.Errorf("pid file %q is owned by uid %d, expected uid %d", path, stat.Uid, expectedUID)
+	if requireOwner {
+		expectedUID := uint32(os.Geteuid())
+		if stat.Uid != expectedUID {
+			return fmt.Errorf("pid file %q is owned by uid %d, expected uid %d", path, stat.Uid, expectedUID)
+		}
 	}
 	if stat.Nlink != 1 {
 		return fmt.Errorf("pid file %q has %d hard links, expected one", path, stat.Nlink)
@@ -140,15 +150,15 @@ func lockOwnerPID(f *os.File, path string, recordedPID int) (int, pidLockKind, e
 		recordLockPID = int(lock.Pid)
 	}
 
-	flockPID, hasRecordLock, err := inspectInodeLocks(f, recordedPID)
+	flockPID, hasRecordLock, hasFlock, err := inspectInodeLocks(f, recordedPID)
 	if err != nil {
 		return 0, pidLockUnknown, err
 	}
 	if recordLockPID > 0 {
-		if flockPID == 0 {
+		if !hasFlock {
 			return 0, pidLockUnknown, fmt.Errorf("record lock owner %d could not be verified as the BSD flock owner", recordLockPID)
 		}
-		if flockPID != recordLockPID {
+		if flockPID > 0 && flockPID != recordLockPID {
 			return 0, pidLockUnknown, fmt.Errorf("record lock owner %d does not match BSD flock owner %d", recordLockPID, flockPID)
 		}
 		return recordLockPID, pidLockRecord, nil
@@ -158,6 +168,9 @@ func lockOwnerPID(f *os.File, path string, recordedPID int) (int, pidLockKind, e
 	}
 	if flockPID > 0 {
 		return flockPID, pidLockFlock, nil
+	}
+	if hasFlock {
+		return 0, pidLockUnknown, fmt.Errorf("legacy BSD flock ownership cannot be attributed to a process on this platform")
 	}
 	return 0, pidLockUnknown, nil
 }
