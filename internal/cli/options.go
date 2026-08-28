@@ -47,16 +47,16 @@ type options struct {
 	logWriter io.Writer
 }
 
-func (o options) Args() []string          { return o.OptArgs }
-func (o options) Command() string         { return o.OptCommand }
-func (o options) Dir() string             { return o.OptDir }
-func (o options) Interval() time.Duration { return time.Duration(o.OptInterval) * time.Second }
-func (o options) PidFile() string         { return o.OptPidFile }
-func (o options) Ports() []string         { return o.OptPorts }
-func (o options) Paths() []string         { return o.OptPaths }
-func (o options) SignalOnHUP() os.Signal  { return supervisor.SigFromName(o.OptSignalOnHUP) }
-func (o options) SignalOnTERM() os.Signal { return supervisor.SigFromName(o.OptSignalOnTERM) }
-func (o options) StatusFile() string      { return o.OptStatusFile }
+func (o options) Args() []string                   { return o.OptArgs }
+func (o options) Command() string                  { return o.OptCommand }
+func (o options) Dir() string                      { return o.OptDir }
+func (o options) Interval() time.Duration          { return time.Duration(o.OptInterval) * time.Second }
+func (o options) PidFile() string                  { return o.OptPidFile }
+func (o options) Ports() []string                  { return o.OptPorts }
+func (o options) Paths() []string                  { return o.OptPaths }
+func (o options) SignalOnHUP() (os.Signal, error)  { return supervisor.SigFromName(o.OptSignalOnHUP) }
+func (o options) SignalOnTERM() (os.Signal, error) { return supervisor.SigFromName(o.OptSignalOnTERM) }
+func (o options) StatusFile() string               { return o.OptStatusFile }
 
 func (o options) Envdir() string                     { return o.resolved.envdir }
 func (o options) EnableAutoRestart() bool            { return o.resolved.enableAutoRestart }

@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 var echoServerTxt = `package main
@@ -100,16 +102,16 @@ type config struct {
 	stderr io.Writer
 }
 
-func (c config) Args() []string          { return c.args }
-func (c config) Command() string         { return c.command }
-func (c config) Dir() string             { return c.dir }
-func (c config) Interval() time.Duration { return time.Duration(c.interval) * time.Second }
-func (c config) PidFile() string         { return c.pidfile }
-func (c config) Ports() []string         { return c.ports }
-func (c config) Paths() []string         { return c.paths }
-func (c config) SignalOnHUP() os.Signal  { return SigFromName(c.sigonhup) }
-func (c config) SignalOnTERM() os.Signal { return SigFromName(c.sigonterm) }
-func (c config) StatusFile() string      { return c.statusfile }
+func (c config) Args() []string                   { return c.args }
+func (c config) Command() string                  { return c.command }
+func (c config) Dir() string                      { return c.dir }
+func (c config) Interval() time.Duration          { return time.Duration(c.interval) * time.Second }
+func (c config) PidFile() string                  { return c.pidfile }
+func (c config) Ports() []string                  { return c.ports }
+func (c config) Paths() []string                  { return c.paths }
+func (c config) SignalOnHUP() (os.Signal, error)  { return SigFromName(c.sigonhup) }
+func (c config) SignalOnTERM() (os.Signal, error) { return SigFromName(c.sigonterm) }
+func (c config) StatusFile() string               { return c.statusfile }
 
 func (c config) Envdir() string                     { return c.envdir }
 func (c config) EnableAutoRestart() bool            { return c.enableAutoRestart }
@@ -318,9 +320,9 @@ func TestSignalNamesRoundTrip(t *testing.T) {
 		if got := signame(sig); name != got {
 			t.Errorf("%v: wants '%v' but got '%v'", sig, name, got)
 		}
-		if got := SigFromName(name); sig != got {
-			t.Errorf("%v: wants '%v' but got '%v'", name, sig, got)
-		}
+		got, err := SigFromName(name)
+		require.NoError(t, err)
+		require.Equal(t, os.Signal(sig), got, name)
 	}
 
 	variants := map[string]syscall.Signal{
@@ -329,8 +331,16 @@ func TestSignalNamesRoundTrip(t *testing.T) {
 		"Hup":     syscall.SIGHUP,
 	}
 	for name, sig := range variants {
-		if got := SigFromName(name); sig != got {
-			t.Errorf("%v: wants '%v' but got '%v'", name, sig, got)
-		}
+		got, err := SigFromName(name)
+		require.NoError(t, err)
+		require.Equal(t, os.Signal(sig), got, name)
 	}
+
+	got, err := SigFromName("")
+	require.NoError(t, err)
+	require.Nil(t, got)
+
+	got, err = SigFromName("TERMM")
+	require.EqualError(t, err, `invalid signal name "TERMM"`)
+	require.Nil(t, got)
 }

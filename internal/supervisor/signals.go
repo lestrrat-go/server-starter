@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -52,12 +53,16 @@ func signame(s os.Signal) string {
 	return "UNKNOWN"
 }
 
-// SigFromName returns the signal corresponding to the given signal name string.
-// If the given name string is not defined, it returns nil.
-func SigFromName(n string) os.Signal {
-	n = strings.TrimPrefix(strings.ToUpper(n), "SIG")
-	if sig, ok := niceNameToSigs[n]; ok {
-		return sig
+// SigFromName returns the signal corresponding to the given signal name.
+// An empty name means no signal was specified.
+func SigFromName(n string) (os.Signal, error) {
+	if n == "" {
+		return nil, nil
 	}
-	return nil
+
+	name := strings.TrimPrefix(strings.ToUpper(n), "SIG")
+	if sig, ok := niceNameToSigs[name]; ok {
+		return sig, nil
+	}
+	return nil, fmt.Errorf("invalid signal name %q", n)
 }
