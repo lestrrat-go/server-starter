@@ -300,26 +300,6 @@ func (s *Starter) Run() error {
 	var sigReceived os.Signal
 	var sigToSend os.Signal
 
-	statusCh := make(chan map[int]int)
-	go func(fn string, ch chan map[int]int) {
-		for wmap := range ch {
-			if fn == "" {
-				continue
-			}
-
-			f, err := os.OpenFile(fn, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
-			if err != nil {
-				continue
-			}
-
-			for gen, pid := range wmap {
-				fmt.Fprintf(f, "%d:%d\n", gen, pid)
-			}
-
-			f.Close()
-		}
-	}(s.statusFile, statusCh)
-
 	defer func() {
 		if p != nil {
 			oldWorkers[p.Pid] = s.generation
@@ -352,6 +332,9 @@ func (s *Starter) Run() error {
 			st := <-workerCh
 			fmt.Fprintf(os.Stderr, "worker %d died, status:%d\n", st.Pid(), grabExitStatus(st))
 			delete(oldWorkers, st.Pid())
+			if err := writeStatusFile(s.statusFile, statusMap(oldWorkers, 0, s.generation)); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to write status file: %s\n", err)
+			}
 		}
 		fmt.Fprintf(os.Stderr, "exiting\n")
 	}()
@@ -362,16 +345,15 @@ func (s *Starter) Run() error {
 
 		// Just wait for the worker to exit, or for us to receive a signal
 		for {
-			status := make(map[int]int)
-			for pid, gen := range oldWorkers {
-				status[gen] = pid
-			}
 			// StartWorker can return nil when a signal arrives after a replacement
 			// exits but before the next retry succeeds.
+			currentPID := 0
 			if p != nil {
-				status[s.generation] = p.Pid
+				currentPID = p.Pid
 			}
-			statusCh <- status
+			if err := writeStatusFile(s.statusFile, statusMap(oldWorkers, currentPID, s.generation)); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to write status file: %s\n", err)
+			}
 			// restart == 2: respawn unconditionally
 			// restart == 1: respawn only if no old workers are still alive
 			// restart == 0: leave the worker alone

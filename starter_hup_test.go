@@ -59,8 +59,10 @@ func buildStubbornWorker(t *testing.T, dir string) string {
 }
 
 // generations reports the generation numbers currently listed in the status
-// file. The file is rewritten in place on every loop iteration, so a read can
-// land mid-write; callers poll until the count settles.
+// file. The file is replaced via temp-file-plus-rename on every update, so a
+// read always sees either the previous complete file or the new one, never a
+// torn write; callers still poll because the file's *contents* change
+// asynchronously as the supervisor processes each signal.
 func generations(t *testing.T, statusFile string) []string {
 	t.Helper()
 
@@ -69,15 +71,14 @@ func generations(t *testing.T, statusFile string) []string {
 		return nil
 	}
 
+	trimmed := strings.TrimSpace(string(buf))
+	if trimmed == "" {
+		return nil
+	}
+
 	var gens []string
-	for _, line := range strings.Split(strings.TrimSpace(string(buf)), "\n") {
-		if line == "" {
-			continue
-		}
-		gen, _, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
+	for _, line := range strings.Split(trimmed, "\n") {
+		gen, _, _ := strings.Cut(line, ":")
 		gens = append(gens, gen)
 	}
 	return gens
