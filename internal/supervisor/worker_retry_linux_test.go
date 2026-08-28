@@ -1,0 +1,56 @@
+//go:build linux
+
+package supervisor
+
+import (
+	"debug/elf"
+	"os"
+	"path/filepath"
+	"syscall"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestInvalidELFInterpreterStopsWorkerStartRetries(t *testing.T) {
+	dir := t.TempDir()
+	const interpreterName = "bad-loader"
+
+	interpreter := filepath.Join(dir, interpreterName)
+	require.NoError(t, os.WriteFile(interpreter, nil, 0o700))
+
+	worker := filepath.Join(dir, "worker")
+	rewriteELFInterpreter(t, "/bin/sh", worker, interpreterName)
+	requireSingleTerminalStartAttempt(t, config{command: worker, dir: dir}, nil, syscall.EIO)
+}
+
+func TestUnrelatedEIODoesNotStopWorkerStartRetries(t *testing.T) {
+	require.False(t, terminalWorkerStartError(syscall.EIO))
+}
+
+func rewriteELFInterpreter(t *testing.T, source, destination, interpreter string) {
+	t.Helper()
+
+	file, err := elf.Open(source)
+	require.NoError(t, err)
+	defer file.Close()
+
+	var segment *elf.Prog
+	for _, program := range file.Progs {
+		if program.Type == elf.PT_INTERP {
+			segment = program
+			break
+		}
+	}
+	require.NotNil(t, segment, "%s has no ELF interpreter", source)
+	require.LessOrEqual(t, uint64(len(interpreter)+1), segment.Filesz)
+
+	data, err := os.ReadFile(source)
+	require.NoError(t, err)
+	start := int(segment.Off)
+	end := start + int(segment.Filesz)
+	require.LessOrEqual(t, end, len(data))
+	clear(data[start:end])
+	copy(data[start:end], interpreter)
+	require.NoError(t, os.WriteFile(destination, data, 0o700))
+}
