@@ -164,6 +164,26 @@ func (b *exitDiagnosticGate) Write(p []byte) (int, error) {
 	return b.syncBuffer.Write(p)
 }
 
+// restartDiagnosticGate blocks a restart after it wins the loop's select but
+// before the replacement worker starts. Tests can then place a HUP in the
+// controller buffer while that restart is still in progress.
+type restartDiagnosticGate struct {
+	syncBuffer
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *restartDiagnosticGate) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "spawning a new worker") {
+		b.once.Do(func() {
+			close(b.reached)
+			<-b.release
+		})
+	}
+	return b.syncBuffer.Write(p)
+}
+
 func waitForGenerationRemoval(t *testing.T, statusFile, removed string) []string {
 	t.Helper()
 
@@ -254,4 +274,63 @@ func TestHUPCoalescesEntireDrain(t *testing.T) {
 
 	waitForDiagnostic(t, &stderr.syncBuffer, fmt.Sprintf("old worker %d died", status[2]))
 	require.Equal(t, []string{"3"}, waitForGenerationRemoval(t, statusFile, "2"))
+}
+
+func TestHUPDuringAutomaticRestartJoinsThatRestart(t *testing.T) {
+	dir := t.TempDir()
+	statusFile := filepath.Join(dir, "status")
+	stderr := restartDiagnosticGate{
+		reached: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(stderr.release)
+		}
+	}()
+
+	sd, err := NewStarter(&config{
+		command:             buildStubbornWorker(t, dir),
+		statusfile:          statusFile,
+		sigonhup:            "USR1",
+		enableAutoRestart:   true,
+		autoRestartInterval: 2 * time.Second,
+		stderr:              &stderr,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+	defer func() {
+		cancel()
+		select {
+		case <-ctrl.Done():
+		case <-time.After(10 * time.Second):
+			t.Error("timed out waiting for Run() to return")
+		}
+	}()
+
+	waitForGenerationList(t, statusFile, []string{"1"})
+	select {
+	case <-stderr.reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the automatic restart interleaving")
+	}
+
+	ctrl.Hangup()
+	close(stderr.release)
+	released = true
+	waitForGenerationList(t, statusFile, []string{"1", "2"})
+
+	status, err := statefile.ReadStatus(statusFile)
+	require.NoError(t, err)
+	oldWorker, err := os.FindProcess(status[1])
+	require.NoError(t, err)
+	require.NoError(t, oldWorker.Signal(syscall.SIGTERM))
+
+	require.Equal(t, []string{"2"}, waitForGenerationRemoval(t, statusFile, "1"))
 }

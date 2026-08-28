@@ -53,7 +53,8 @@ func (c *Controller) Wait() error {
 // Hangup requests a graceful worker restart, equivalent to the historical
 // SIGHUP behaviour: a new worker is spawned and the old one is signalled
 // once the new one is up. Hangup never blocks. Requests are coalesced while
-// another request is pending or an old worker is still draining.
+// another request is pending or a restart is in progress. Requests received
+// while old workers are draining are coalesced into one later restart.
 func (c *Controller) Hangup() {
 	select {
 	case c.hangup <- struct{}{}:

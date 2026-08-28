@@ -305,6 +305,15 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 					_ = worker.Signal(rs.cfg.signalOnHUP)
 				}
 			}
+
+			// A HUP that arrived after another restart source won the select
+			// belongs to the restart that just completed. Consume it before the
+			// next loop iteration can mistake it for a request for another
+			// generation.
+			select {
+			case <-ctrl.hangup:
+			default:
+			}
 		}
 	}
 }
