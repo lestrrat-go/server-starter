@@ -3,6 +3,7 @@ package statefile
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,6 +34,10 @@ func TestAcquirePIDFileWritesNewlineAndRemovesOwnedFile(t *testing.T) {
 }
 
 func TestAcquirePIDFileReportsExistingOwnerWithoutBlocking(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("POSIX record locks are shared by file descriptors in one process")
+	}
+
 	path := filepath.Join(t.TempDir(), "server.pid")
 	owner, err := Acquire(path)
 	require.NoError(t, err)

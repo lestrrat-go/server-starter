@@ -65,17 +65,6 @@ func readPIDText(f *os.File, data []byte) (int, error) {
 	return f.ReadAt(data, 0)
 }
 
-func lockFile(f *os.File, path string) error {
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return err
-	}
-	lock, err := pathRecordLock(path)
-	if err != nil {
-		return err
-	}
-	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
-}
-
 func finishPIDFileLock(*os.File) error {
 	return nil
 }
@@ -180,9 +169,9 @@ func lockReleased(f *os.File) (bool, error) {
 }
 
 // pathRecordLock binds a supervisor lock to the absolute pid-file path
-// without changing the traditional one-line pid-file format. The BSD flock
-// remains the lifetime lock; this record lock supplies an inspectable owner
-// pid and makes a locked file moved from another path fail validation.
+// without changing the traditional one-line pid-file format. The record lock
+// supplies an inspectable owner pid and makes a locked file moved from another
+// path fail validation.
 func pathRecordLock(path string) (syscall.Flock_t, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {

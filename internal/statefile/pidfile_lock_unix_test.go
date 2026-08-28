@@ -94,6 +94,10 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 	})
 
 	t.Run("rejects a record lock without a BSD flock", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("Linux uses independent record and BSD flock locks")
+		}
+
 		path := filepath.Join(t.TempDir(), "server.pid")
 		startRecordPIDLockHelper(t, path)
 

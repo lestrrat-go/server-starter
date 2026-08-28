@@ -11,6 +11,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func lockFile(f *os.File, path string) error {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return err
+	}
+	lock, err := pathRecordLock(path)
+	if err != nil {
+		return err
+	}
+	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
+}
+
 // inspectInodeLocks finds legacy BSD flock ownership and reports whether the
 // inode has a record lock and a BSD flock. A record lock outside the expected
 // path-bound byte means the file was locked under another pathname.

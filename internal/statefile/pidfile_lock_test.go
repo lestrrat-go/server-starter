@@ -2,6 +2,7 @@ package statefile_test
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,10 @@ import (
 )
 
 func TestAcquirePIDFileRejectsHeldLockWithoutWaiting(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("POSIX record locks are shared by file descriptors in one process")
+	}
+
 	path := filepath.Join(t.TempDir(), "server.pid")
 	owner, err := statefile.Acquire(path)
 	require.NoError(t, err)

@@ -8,6 +8,14 @@ import (
 	"syscall"
 )
 
+func lockFile(f *os.File, path string) error {
+	lock, err := pathRecordLock(path)
+	if err != nil {
+		return err
+	}
+	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
+}
+
 func inspectInodeLocks(f *os.File) (int, bool, bool, error) {
 	recordLock := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 0}
 	if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &recordLock); err != nil {
