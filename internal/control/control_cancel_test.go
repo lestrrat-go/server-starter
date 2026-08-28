@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const controlHelperEnv = "SERVER_STARTER_CONTROL_HELPER"
-const controlHelperModeEnv = "SERVER_STARTER_CONTROL_HELPER_MODE"
+const verifiedControlHelperEnv = "SERVER_STARTER_VERIFIED_CONTROL_HELPER"
+const verifiedControlHelperModeEnv = "SERVER_STARTER_VERIFIED_CONTROL_HELPER_MODE"
 
 func TestStopSignalsLockedSupervisor(t *testing.T) {
 	t.Parallel()
@@ -114,12 +114,12 @@ func TestRestartCancelledContext(t *testing.T) {
 }
 
 func TestControlHelperProcess(t *testing.T) {
-	path := os.Getenv(controlHelperEnv)
+	path := os.Getenv(verifiedControlHelperEnv)
 	if path == "" {
 		return
 	}
 
-	if os.Getenv(controlHelperModeEnv) == "legacy" {
+	if os.Getenv(verifiedControlHelperModeEnv) == "legacy" {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 		require.NoError(t, err)
 		defer file.Close()
@@ -166,9 +166,9 @@ func startControlHelperWithMode(t *testing.T, path, mode string) *controlHelper 
 	t.Helper()
 
 	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestControlHelperProcess$")
-	cmd.Env = append(os.Environ(), controlHelperEnv+"="+path)
+	cmd.Env = append(os.Environ(), verifiedControlHelperEnv+"="+path)
 	if mode != "" {
-		cmd.Env = append(cmd.Env, controlHelperModeEnv+"="+mode)
+		cmd.Env = append(cmd.Env, verifiedControlHelperModeEnv+"="+mode)
 	}
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
