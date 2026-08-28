@@ -82,6 +82,17 @@ func lockFile(f *os.File) error {
 	)
 }
 
+func validatePIDFileLinkCount(f *os.File, path string) error {
+	var handleInfo windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &handleInfo); err != nil {
+		return fmt.Errorf("failed to inspect pid file %q: %w", path, err)
+	}
+	if handleInfo.NumberOfLinks != 1 {
+		return fmt.Errorf("pid file %q has %d hard links, expected one", path, handleInfo.NumberOfLinks)
+	}
+	return nil
+}
+
 // TryLock is used by control.Stop to poll for the supervisor having
 // exited. --stop itself is unsupported on Windows (see signal_windows.go),
 // so this is unreachable in practice; it exists to keep the platform seam

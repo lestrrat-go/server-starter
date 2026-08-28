@@ -50,6 +50,21 @@ func lockFile(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
 }
 
+func validatePIDFileLinkCount(f *os.File, path string) error {
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to inspect pid file %q: %w", path, err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("failed to verify link count of pid file %q", path)
+	}
+	if stat.Nlink != 1 {
+		return fmt.Errorf("pid file %q has %d hard links, expected one", path, stat.Nlink)
+	}
+	return nil
+}
+
 // TryLock attempts to take an exclusive, non-blocking lock on f. It is used
 // by control.Stop to poll for the supervisor having exited: once the
 // supervisor process dies, its blocking lock on the pid file (see Acquire)
