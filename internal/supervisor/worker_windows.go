@@ -10,6 +10,7 @@ import (
 
 func platformTerminalWorkerStartError(err error) bool {
 	return errors.Is(err, windows.ERROR_BAD_EXE_FORMAT) ||
+		errors.Is(err, windows.ERROR_DIRECTORY) ||
 		errors.Is(err, windows.ERROR_INVALID_PARAMETER) ||
 		errors.Is(err, windows.ERROR_FILENAME_EXCED_RANGE) ||
 		errors.Is(err, windows.ERROR_EXE_MACHINE_TYPE_MISMATCH) ||

@@ -7,10 +7,6 @@ import (
 	"syscall"
 )
 
-func platformTerminalWorkerStartError(error) bool {
-	return false
-}
-
 func init() {
 	failureStatus = syscall.WaitStatus(255)
 	successStatus = syscall.WaitStatus(0)

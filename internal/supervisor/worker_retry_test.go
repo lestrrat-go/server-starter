@@ -80,3 +80,24 @@ func TestMissingWorkingDirectoryStopsWorkerStartRetries(t *testing.T) {
 
 	require.Equal(t, 1, strings.Count(stderr.String(), "failed to exec"))
 }
+
+func requireSingleTerminalStartAttempt(t *testing.T, cfg config, afterNew func(), want error) {
+	t.Helper()
+
+	var stderr bytes.Buffer
+	cfg.stderr = &stderr
+	sd, err := NewStarter(&cfg)
+	require.NoError(t, err)
+	if afterNew != nil {
+		afterNew()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+
+	err = ctrl.Wait()
+	require.ErrorIs(t, err, want, "stderr:\n%s", stderr.String())
+	require.Equal(t, 1, strings.Count(stderr.String(), "failed to exec"), stderr.String())
+}
