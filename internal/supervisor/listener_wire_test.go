@@ -21,7 +21,8 @@ import (
 // between the supervisor's parser and FormatPorts. TCP and Unix formatting
 // must remain compatible with v0 workers, while v2-only UDP formatting must
 // remain stable for v2 workers, including canonicalising legacy UDP spellings
-// to the explicit udp:// marker.
+// to the explicit udp:// marker. Ambiguous relative Unix paths are deliberately
+// canonicalised so workers keep their listener type.
 func TestPortSpecWireFormat(t *testing.T) {
 	const fd = 3
 
@@ -76,6 +77,19 @@ func TestPortSpecWireFormat(t *testing.T) {
 			require.Equal(t, want, got)
 		})
 	}
+}
+
+func TestPortSpecWireFormatCanonicalizesAmbiguousUnixPath(t *testing.T) {
+	const fd = 5
+
+	l := listener{network: unixNetwork, path: "8080"}
+	got, err := starter.FormatPorts(l.starterListener(fd))
+	require.NoError(t, err)
+	require.Equal(t, "./8080=5", got)
+
+	parsed, err := starter.ParsePorts(got)
+	require.NoError(t, err)
+	require.Equal(t, starter.List{starter.NewUnixListener("8080", fd)}, parsed)
 }
 
 func TestRunRejectsUnixPathsReservedByWireFormatBeforeBinding(t *testing.T) {

@@ -31,3 +31,18 @@ func Example_starter_parseports() {
 	// udp://127.0.0.1:8081=4 (fd=4)
 	// /tmp/app.sock=5 (fd=5)
 }
+
+// Example_starter_newUnixListener shows how the constructor makes a relative
+// Unix path safe for a String and ParsePorts round trip. The "./" prefix names
+// the same socket in the current directory while disambiguating it from a
+// transport target in the wire format.
+func Example_starter_newUnixListener() {
+	listener := starter.NewUnixListener("8082", 5)
+
+	fmt.Printf("stored path: %s\n", listener.Path)
+	fmt.Printf("wire value: %s\n", listener.String())
+
+	// Output:
+	// stored path: ./8082
+	// wire value: ./8082=5
+}

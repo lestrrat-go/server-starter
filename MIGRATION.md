@@ -42,6 +42,12 @@ Two things to check when you move code over:
   It breaks two narrower usages: storing the result in a variable of a
   *different* named slice type, and taking `Ports` as a function value typed
   `func() ([]Listener, error)`.
+- `NewUnixListener` stores relative paths that overlap a TCP or UDP wire
+  spelling in a canonical `./path` form. For example,
+  `NewUnixListener("8080", fd)` stores `Path` as `"./8080"`, so `String` and
+  `ParsePorts` keep it as a Unix listener. The prefix names the same socket in
+  the current directory. Paths that already parse as Unix sockets are
+  unchanged.
 
 ## The supervisor is gone from the API
 
@@ -87,8 +93,8 @@ V0 joined each listener's `String()` result and passed it to the worker as
 `SERVER_STARTER_PORT` without validation. The public `FormatPorts` function
 now rejects values that cannot be encoded as one environment variable and
 read back as the same listener. This includes NUL bytes, TCP/UDP addresses or
-Unix socket paths containing `;` or `=`, ambiguous relative Unix socket paths,
-and malformed listener values built directly as struct literals.
+Unix socket paths containing `;` or `=`, ambiguous Unix paths stored by
+bypassing or modifying `NewUnixListener`, and other malformed listener values.
 
 The supervisor's `Config` accepts only string port and path metadata, so
 struct-literal listeners do not enter that API. Before acquiring its pid file

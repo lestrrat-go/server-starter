@@ -36,6 +36,24 @@ func isIPLiteral(host string) bool {
 	return err == nil
 }
 
+// needsUnixPathPrefix reports whether ParsePorts would not preserve s as a
+// Unix socket path. The explicit UDP prefix is reserved even when its target
+// is invalid, while any other path containing "/" is unambiguously Unix.
+func needsUnixPathPrefix(s string) bool {
+	if strings.HasPrefix(s, udpTransportMarker) {
+		return true
+	}
+	if strings.ContainsRune(s, '/') {
+		return false
+	}
+	for _, candidate := range classifyUDPMarker(s) {
+		if looksLikeTCPGrammar(candidate.target) {
+			return true
+		}
+	}
+	return false
+}
+
 // stripLeadingUDPMarker accepts the leading "u" marker only when the
 // remainder is a bare port or an IP literal with a port. Restricting the
 // marker this way keeps ordinary TCP hostnames such as "upstream" from
@@ -107,10 +125,10 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 // socket paths cannot contain ";" or "=" because those characters delimit
 // entries and file descriptors in the wire format.
 //
-// This leaves one shape ambiguous: a relative unix socket path with no "/"
-// that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")
-// is read as TCP, not as a unix socket. Pass such sockets as absolute
-// paths, or prefix them with "./" to disambiguate.
+// Raw relative unix socket paths that match a TCP or UDP spelling, such as
+// "8080", "db:5432", "u8080", or "udp://8080", are read as that transport.
+// Prefix them with "./" to disambiguate them. NewUnixListener adds the prefix
+// automatically and stores the canonical path.
 //
 // TCP and UDP ports must be between 0 and 65535. Inherited file descriptors
 // must be at least 3 so they do not overlap the standard streams.

@@ -357,8 +357,16 @@ func TestFormatPorts(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("rejects an ambiguous relative unix socket path", func(t *testing.T) {
-		_, err := starter.FormatPorts(starter.NewUnixListener("8080", 3))
+	t.Run("formats a canonicalized relative unix socket path", func(t *testing.T) {
+		spec, err := starter.FormatPorts(starter.NewUnixListener("8080", 3))
+		require.NoError(t, err)
+		require.Equal(t, "./8080=3", spec)
+	})
+
+	t.Run("rejects a mutated ambiguous relative unix socket path", func(t *testing.T) {
+		listener := starter.NewUnixListener("relative.sock", 3)
+		listener.Path = "8080"
+		_, err := starter.FormatPorts(listener)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "UnixListener")
 		require.ErrorContains(t, err, "TCPListener")
