@@ -5,6 +5,7 @@ package supervisor
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,36 @@ import (
 	"github.com/lestrrat-go/server-starter/v2/internal/statefile"
 	"github.com/stretchr/testify/require"
 )
+
+func TestHangupFailsWhenEnvdirReloadFails(t *testing.T) {
+	envdir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(envdir, "VALUE"), []byte("first\n"), 0600))
+
+	sd, err := NewStarter(&config{
+		command: "/bin/sh",
+		args:    []string{"-c", "exec sleep 30"},
+		envdir:  envdir,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Remove(filepath.Join(envdir, "VALUE")))
+	require.NoError(t, os.Remove(envdir))
+	ctrl.Hangup()
+
+	select {
+	case <-ctrl.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for failed envdir reload")
+	}
+	require.ErrorIs(t, ctrl.Err(), fs.ErrNotExist)
+	require.Contains(t, ctrl.Err().Error(), envdir)
+}
 
 // stubbornWorkerTxt ignores the signal start_server sends on HUP, so it stays
 // in the old-workers set instead of exiting. That is what gives a second HUP

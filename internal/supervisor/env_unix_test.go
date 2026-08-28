@@ -23,7 +23,7 @@ func TestReloadEnvdirSkipsNamedPipeWithoutBlocking(t *testing.T) {
 
 	select {
 	case err := <-done:
-		require.ErrorIs(t, err, errNoEnv)
+		require.NoError(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("reloadEnv blocked on a named pipe")
 	}
