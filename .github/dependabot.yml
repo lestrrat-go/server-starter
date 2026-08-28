@@ -2,7 +2,7 @@ version: 2
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
-    target-branch: "develop/v1"
+    target-branch: "develop/v2"
     schedule:
       interval: "daily"
     labels:
@@ -12,7 +12,7 @@ updates:
 
   - package-ecosystem: "github-actions"
     directory: "/"
-    target-branch: "develop/v1"
+    target-branch: "develop/v2"
     schedule:
       interval: "daily"
     labels:
