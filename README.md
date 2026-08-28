@@ -17,7 +17,8 @@ To gracefully restart the server program, send SIGHUP to the superdaemon. The su
 
 By using ```start_server``` it is much easier to write a hot-deployable server. Following are the only requirements a server program to be run under ```start_server``` should conform to:
 
-- receive file descriptors to listen to through an environment variable - perform a graceful shutdown when receiving SIGTERM
+- receive file descriptors to listen to through an environment variable
+- perform a graceful shutdown when receiving the configured termination signal (`SIGTERM` by default)
 
 Many PSGI servers support this. If you want your Go program to support it, import the root of this module (`github.com/lestrrat-go/server-starter/v2`, see the [package docs](https://github.com/lestrrat-go/server-starter/tree/develop/v2)) for the worker-side implementation, which also fills the ```net.Listener``` interface.
 
