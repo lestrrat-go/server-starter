@@ -1,7 +1,6 @@
 package listener
 
 import (
-	"os"
 	"testing"
 )
 
@@ -12,7 +11,7 @@ func TestPort(t *testing.T) {
 		UnixListener{Path: "/foo/bar/baz.sock", fd: 6},
 	}
 
-	os.Setenv("SERVER_STARTER_PORT", expect.String())
+	t.Setenv("SERVER_STARTER_PORT", expect.String())
 	ports, err := Ports()
 	if err != nil {
 		t.Errorf("Failed to parse ports from env: %s", err)
@@ -26,7 +25,7 @@ func TestPort(t *testing.T) {
 }
 
 func TestPortNoEnv(t *testing.T) {
-	os.Setenv("SERVER_STARTER_PORT", "")
+	t.Setenv("SERVER_STARTER_PORT", "")
 
 	ports, err := Ports()
 	if err != ErrNoListeningTarget {

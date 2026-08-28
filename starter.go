@@ -1,6 +1,7 @@
 package starter
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -144,7 +145,7 @@ func grabExitStatus(st processState) syscall.WaitStatus {
 
 type processState interface {
 	Pid() int
-	Sys() interface{}
+	Sys() any
 }
 type dummyProcessState struct {
 	pid    int
@@ -155,7 +156,7 @@ func (d dummyProcessState) Pid() int {
 	return d.pid
 }
 
-func (d dummyProcessState) Sys() interface{} {
+func (d dummyProcessState) Sys() any {
 	return d.status
 }
 
@@ -212,7 +213,7 @@ func parsePortSpec(addr string) (string, int, error) {
 }
 
 func (s *Starter) Run() error {
-	// nolint:errcheck
+	//nolint:errcheck
 	defer s.Teardown()
 
 	if s.pidFile != "" {
@@ -367,9 +368,9 @@ func (s *Starter) Run() error {
 			}
 			status[s.generation] = p.Pid
 			statusCh <- status
-			// restart = 2: force restart
-			// restart = 1 and no workers: force restart
-			// restart = 0: no restart
+			// restart == 2: force a respawn
+			// restart == 1 with no live workers: force a respawn
+			// restart == 0: leave the worker alone
 			restart := 0
 
 			select {
@@ -440,9 +441,6 @@ func (s *Starter) Run() error {
 			}
 		}
 	}
-
-	// nolint:govet
-	return nil
 }
 
 func getKillOldDelay() time.Duration {
@@ -486,11 +484,11 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 			// index + 3, so we can just hard code it
 			var f *os.File
 			var err error
-			switch l.listener.(type) {
+			switch listener := l.listener.(type) {
 			case *net.TCPListener:
-				f, err = l.listener.(*net.TCPListener).File()
+				f, err = listener.File()
 			case *net.UnixListener:
-				f, err = l.listener.(*net.UnixListener).File()
+				f, err = listener.File()
 			default:
 				panic("Unknown listener type")
 			}
@@ -552,8 +550,11 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 				// the program exiting
 				go func() {
 					err := cmd.Wait()
-					if err != nil {
-						ch <- err.(*exec.ExitError).ProcessState
+					var exitErr *exec.ExitError
+					if errors.As(err, &exitErr) {
+						ch <- exitErr.ProcessState
+					} else if err != nil {
+						ch <- &dummyProcessState{pid: pid, status: failureStatus}
 					} else {
 						ch <- &dummyProcessState{pid: pid, status: successStatus}
 					}
@@ -571,10 +572,6 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 
 		fmt.Fprintf(os.Stderr, "new worker %d seems to have failed to start\n", pid)
 	}
-
-	// never reached
-	//nolint:govet
-	return nil
 }
 
 func (s *Starter) Teardown() error {

@@ -3,7 +3,6 @@ package starter
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -82,12 +81,7 @@ func (c config) SignalOnTERM() os.Signal { return SigFromName(c.sigonterm) }
 func (c config) StatusFile() string      { return c.statusfile }
 
 func TestRun(t *testing.T) {
-	dir, err := ioutil.TempDir("", fmt.Sprintf("server-starter-test-%d", os.Getpid()))
-	if err != nil {
-		t.Errorf("Failed to create temp directory: %s", err)
-		return
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	srcFile := filepath.Join(dir, "echod.go")
 	f, err := os.OpenFile(srcFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
@@ -98,17 +92,34 @@ func TestRun(t *testing.T) {
 	io.WriteString(f, echoServerTxt)
 	f.Close()
 
-	_, lastComp := filepath.Split(dir)
-	cmd := exec.Command("go", "mod", "init", "github.com/lestrrat-go/server-starter/"+lastComp)
-	cmd.Dir = dir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Logf("%s", output)
-		t.Errorf("failed to run go mod init: %s", err)
+	// The scratch module resolves the listener package through a replace
+	// directive back to this repository. The path must be absolute: a relative
+	// one would depend on where t.TempDir() happens to sit under $TMPDIR.
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Errorf("Failed to resolve repository root: %s", err)
+		return
+	}
+	goMod := fmt.Sprintf(`module server-starter-echod
+
+go 1.23
+
+require github.com/lestrrat-go/server-starter v0.0.0
+
+replace github.com/lestrrat-go/server-starter => %s
+`, filepath.ToSlash(root))
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0600); err != nil {
+		t.Errorf("Failed to write go.mod: %s", err)
 		return
 	}
 
-	cmd = exec.Command("go", "build", "-o", filepath.Join(dir, "echod"), ".")
+	// -buildvcs=false: the scratch module is not a checkout, and VCS stamping
+	// fails outright when the build walks up into an unrelated repository.
+	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(dir, "echod"), ".")
 	cmd.Dir = dir
+	// GOWORK=off keeps a go.work anywhere above $TMPDIR from pulling the
+	// scratch module into an unrelated workspace.
+	cmd.Env = append(os.Environ(), "GOWORK=off")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("Failed to compile %s: %s\n%s", dir, err, output)
 		return

@@ -13,7 +13,6 @@ import (
 
 const version = "0.0.2"
 
-// nolint:maligned
 type options struct {
 	OptArgs                []string
 	OptCommand             string
@@ -59,7 +58,7 @@ Usage:
 Options:
 `)
 
-	t := reflect.TypeOf(options{})
+	t := reflect.TypeFor[options]()
 
 	// This weird indexing stuff is done purely to keep ourselves
 	// compatible with the original start_server program

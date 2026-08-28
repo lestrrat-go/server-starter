@@ -1,35 +1,110 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  # Tier 1: lint runs first. The heavier tiers below gate on it via needs, so a
+  # lint failure short-circuits the pipeline before any tests run.
+  lint:
+    name: golangci-lint
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go: [ '1.15', '1.14' ]
-    name: Go ${{ matrix.go }} test
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
-      - name: Install Go stable version
-        if: matrix.go != 'tip'
-        uses: actions/setup-go@v2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+
+      - name: Run go vet
+        run: go vet ./...
+
+  # Tier 2: tests, only after lint succeeds.
+  #
+  # go.mod declares an intentionally old floor (1.23) so that importers are not
+  # forced onto a recent toolchain. Testing only that floor would leave the Go
+  # people actually run unverified, so the matrix covers both ends. The "1.23.x"
+  # entry must track the go.mod directive; if the floor is raised past it, this
+  # job fails immediately rather than drifting silently.
+  test:
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.23.x', 'stable']
+    runs-on: ubuntu-latest
+    name: "Test (Go ${{ matrix.go }})"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ matrix.go }}
-      - name: Install Go tip
-        if: matrix.go == 'tip'
-        run: |
-          git clone --depth=1 https://go.googlesource.com/go $HOME/gotip
-          cd $HOME/gotip/src
-          ./make.bash
-          echo "::set-env name=GOROOT::$HOME/gotip"
-          echo "::add-path::$HOME/gotip/bin"
-          echo "::add-path::$(go env GOPATH)/bin"
-      - name: Test
-        run: go test -v -race ./...
-      - name: Upload code coverage to codecov
-        if: matrix.go == '1.15'
-        uses: codecov/codecov-action@v1
-        with:
-          file: ./coverage.out
+          check-latest: true
 
+      - name: Download dependencies
+        run: go mod download
+
+      # TestRun compiles a scratch server that links this module back in through
+      # a replace directive, so the test needs a working toolchain, not just the
+      # already-built package.
+      - name: Run tests
+        run: go test -race -timeout 5m ./...
+
+  verify:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # Tidying under the floor toolchain keeps go.mod/go.sum reproducible.
+          go-version-file: go.mod
+          # Module caching is handled explicitly above so the cache path stays stable.
+          cache: false
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Tidy dependencies
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Build start_server command
+        run: |
+          go build ./cmd/start_server
+          rm start_server
+
+      - name: Check for uncommitted changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Uncommitted changes detected:"
+            git status --porcelain
+            exit 1
+          fi
