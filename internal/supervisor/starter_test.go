@@ -169,7 +169,29 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 		return
 	}
 
-	ports := []string{"9090", "8080"}
+	reservations := make([]net.Listener, 0, 2)
+	defer func() {
+		for _, listener := range reservations {
+			_ = listener.Close()
+		}
+	}()
+
+	ports := make([]string, 0, cap(reservations))
+	for range cap(reservations) {
+		listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to reserve loopback port: %s", err)
+		}
+		reservations = append(reservations, listener)
+		ports = append(ports, listener.Addr().String())
+	}
+	for _, listener := range reservations {
+		if err := listener.Close(); err != nil {
+			t.Fatalf("failed to release loopback port: %s", err)
+		}
+	}
+	reservations = nil
+
 	portFile := filepath.Join(t.TempDir(), "worker-port.txt")
 	sd, err := NewStarter(&config{
 		ports:   ports,
@@ -199,10 +221,12 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 	}
 
 	for _, port := range ports {
-		_, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%s", port))
+		conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", port)
 		if err != nil {
-			t.Errorf("Error connecing to port '%s': %s", port, err)
+			t.Errorf("error connecting to port %q: %s", port, err)
+			continue
 		}
+		_ = conn.Close()
 	}
 
 	time.AfterFunc(time.Second, cancel)
@@ -219,7 +243,7 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 
 	patterns := make([]string, len(ports))
 	for i, port := range ports {
-		patterns[i] = fmt.Sprintf(`%s=\d+`, port)
+		patterns[i] = fmt.Sprintf(`%s=\d+`, regexp.QuoteMeta(port))
 	}
 	pattern := regexp.MustCompile(strings.Join(patterns, ";"))
 
