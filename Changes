@@ -15,7 +15,9 @@ Changes
      instead of silently using TERM; XFSZ is now recognized correctly
    - Added worker-facing helpers: ParsePorts, NewTCPListener, NewUDPListener,
      NewUnixListener, Generation, IsUnderStartServer, and a new UDPListener
-     type with ListenPacketAll for UDP support
+     type with ListenPacketAll for UDP support. ListenAll accepts only TCP and
+     unix targets, while ListenPacketAll accepts only UDP targets; mixed lists
+     are handled through Ports and the exported concrete listener types
    - start_server rejects --port address components and --path values
      containing ';' or '=' before binding because SERVER_STARTER_PORT
      reserves those wire delimiters

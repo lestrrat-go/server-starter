@@ -77,8 +77,11 @@ wg.Wait()
 
 `ListenAll` expects every inherited endpoint to be TCP or unix.
 `ListenPacketAll` expects every endpoint to be UDP. For a mixed list, call
-`Ports` and type-switch on `UDPListener`: use `ListenPacket` for UDP and
-`Listen` for the other built-in listener types.
+`Ports` and switch on the exported `TCPListener`, `UnixListener`, and
+`UDPListener` types: use `ListenPacket` for UDP and `Listen` for the stream
+listener types. The verified
+[`starter_mixedListeners` example](./examples/starter_mixed_listeners_example_test.go)
+shows that workflow.
 
 See the `examples/` directory for tested examples of the worker-side APIs,
 including the mixed-list workflow.
