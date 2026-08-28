@@ -177,22 +177,6 @@ func SigFromName(n string) os.Signal {
 	return nil
 }
 
-func setEnv() {
-	if os.Getenv("ENVDIR") == "" {
-		return
-	}
-
-	m, err := reloadEnv()
-	if err != nil && err != errNoEnv {
-		// do something
-		fmt.Fprintf(os.Stderr, "failed to load from envdir: %s\n", err)
-	}
-
-	for k, v := range m {
-		os.Setenv(k, v)
-	}
-}
-
 func parsePortSpec(addr string) (string, int, error) {
 	i := strings.IndexByte(addr, ':')
 	portPart := ""
@@ -370,6 +354,7 @@ func (s *Starter) Run() error {
 				if p != nil && p.Pid == st.Pid() { // current worker
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
+					setEnv()
 					p = s.StartWorker(sigCh, workerCh)
 					// lastRestartTime = time.Now()
 				} else {
@@ -406,6 +391,7 @@ func (s *Starter) Run() error {
 				if p != nil {
 					oldWorkers[p.Pid] = s.generation
 				}
+				setEnv()
 				p = s.StartWorker(sigCh, workerCh)
 				fmt.Fprintf(os.Stderr, "new worker is now running, sending %s to old workers:", signame(sigToSend))
 				size := len(oldWorkers)
