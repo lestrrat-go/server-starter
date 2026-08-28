@@ -189,14 +189,14 @@ func workerStartCanceled(ctx context.Context, err error) bool {
 }
 
 func removeExistingUnixSocket(path string) error {
-	return removeExistingUnixSocketWithRename(path, renameNoReplaceAt)
+	return removeExistingUnixSocketWithMove(path, moveToQuarantineAt)
 }
 
 const quarantinedSocketName = "socket"
 
-func removeExistingUnixSocketWithRename(
+func removeExistingUnixSocketWithMove(
 	path string,
-	renamePath func(*os.File, string, *os.File, string) error,
+	movePath func(*os.File, string, *os.File, string) error,
 ) error {
 	if runtime.GOOS == "linux" &&
 		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
@@ -236,7 +236,7 @@ func removeExistingUnixSocketWithRename(
 	}
 	defer quarantine.Close()
 
-	if err := renamePath(parent, name, quarantine, quarantinedSocketName); err != nil {
+	if err := movePath(parent, name, quarantine, quarantinedSocketName); err != nil {
 		if cleanupErr := closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName); cleanupErr != nil {
 			return fmt.Errorf("move unix socket path %q: %w; remove quarantine directory: %v", path, err, cleanupErr)
 		}
@@ -260,6 +260,9 @@ func removeExistingUnixSocketWithRename(
 		return nil
 	}
 
+	// Only restoration needs no-replace semantics. The initial move targets an
+	// opened, verified private directory, so moveToQuarantineAt can use the
+	// portable anchored rename available on every supported Unix target.
 	if err := renameNoReplaceAt(quarantine, quarantinedSocketName, parent, name); err != nil {
 		return fmt.Errorf(
 			"unix socket path %q changed to a non-socket and was preserved at %q: %w",

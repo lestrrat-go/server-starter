@@ -23,6 +23,10 @@ func renameNoReplaceAt(oldDir *os.File, oldName string, newDir *os.File, newName
 	return windows.MoveFileEx(oldpathPtr, newpathPtr, 0)
 }
 
+func moveToQuarantineAt(oldDir *os.File, oldName string, newDir *os.File, newName string) error {
+	return renameNoReplaceAt(oldDir, oldName, newDir, newName)
+}
+
 func pathIsSocketAt(dir *os.File, name string) (bool, error) {
 	info, err := os.Lstat(filepath.Join(dir.Name(), name))
 	if err != nil {
@@ -45,6 +49,8 @@ func createPrivateDirAt(dir *os.File, name string) (*os.File, error) {
 		_ = os.Remove(path)
 		return nil, err
 	}
+	// os.Open omits FILE_SHARE_DELETE. Keeping this handle open prevents the
+	// quarantine pathname from being renamed or replaced before cleanup.
 	return privateDir, nil
 }
 

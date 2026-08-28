@@ -61,7 +61,7 @@ func TestRemoveExistingUnixSocketRejectsNonSocketEntries(t *testing.T) {
 		require.NoError(t, os.Mkdir(path, 0700))
 
 		renameCalled := false
-		err := removeExistingUnixSocketWithRename(path, func(*os.File, string, *os.File, string) error {
+		err := removeExistingUnixSocketWithMove(path, func(*os.File, string, *os.File, string) error {
 			renameCalled = true
 			return nil
 		})
@@ -143,7 +143,7 @@ func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
 		})
 
 		go func() {
-			result <- removeExistingUnixSocketWithRename(path, func(
+			result <- removeExistingUnixSocketWithMove(path, func(
 				oldDir *os.File,
 				oldName string,
 				newDir *os.File,
@@ -191,7 +191,7 @@ func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
 		})
 
 		go func() {
-			result <- removeExistingUnixSocketWithRename(path, func(
+			result <- removeExistingUnixSocketWithMove(path, func(
 				oldDir *os.File,
 				oldName string,
 				newDir *os.File,
@@ -236,7 +236,7 @@ func TestRemoveExistingUnixSocketAnchorsParentDirectory(t *testing.T) {
 	require.NoError(t, l.Close())
 
 	contents := []byte("replacement")
-	err = removeExistingUnixSocketWithRename(path, func(
+	err = removeExistingUnixSocketWithMove(path, func(
 		oldDir *os.File,
 		oldName string,
 		newDir *os.File,

@@ -1,4 +1,4 @@
-//go:build !linux && !darwin && !windows
+//go:build !aix && !darwin && !dragonfly && !freebsd && !linux && !netbsd && !openbsd && !solaris && !windows
 
 package supervisor
 
@@ -8,6 +8,10 @@ import (
 )
 
 func renameNoReplaceAt(oldDir *os.File, oldName string, _ *os.File, newName string) error {
+	return unsupportedRenameNoReplaceAt(oldDir, oldName, newName)
+}
+
+func moveToQuarantineAt(oldDir *os.File, oldName string, _ *os.File, newName string) error {
 	return unsupportedRenameNoReplaceAt(oldDir, oldName, newName)
 }
 

@@ -25,7 +25,7 @@ func TestRemoveExistingUnixSocketProtectsQuarantineFromNameExchange(t *testing.T
 	contents := []byte("replacement")
 	var exchangeErr error
 	var replacementPath string
-	err = removeExistingUnixSocketWithRename(path, func(
+	err = removeExistingUnixSocketWithMove(path, func(
 		oldDir *os.File,
 		oldName string,
 		newDir *os.File,
