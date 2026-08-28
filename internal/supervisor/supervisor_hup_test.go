@@ -262,6 +262,7 @@ func TestHUPCoalescesEntireDrain(t *testing.T) {
 		}
 	}()
 
+	// Generation 1, no old workers yet.
 	waitForGenerationList(t, statusFile, []string{"1"})
 	ctrl.Hangup()
 	waitForGenerationList(t, statusFile, []string{"1", "2"})
