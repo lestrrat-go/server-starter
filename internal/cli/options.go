@@ -28,8 +28,8 @@ type options struct {
 	OptEnableAutoRestart   bool     `long:"enable-auto-restart" description:"enables automatic restart by time. This can be overwritten by\nenvironment variable \"ENABLE_AUTO_RESTART\"."`
 	OptAutoRestartInterval int      `long:"auto-restart-interval" arg:"seconds" description:"automatic restart interval (default 360). It is used with\n\"--enable-auto-restart\" option. This can be overwritten by environment\nvariable \"AUTO_RESTART_INTERVAL\"."`
 	OptKillOldDelay        int      `long:"kill-old-delay" arg:"seconds" description:"time to suspend to send a signal to the old worker. The default value is\n5 when \"--enable-auto-restart\" is set, 0 otherwise. This can be\noverwritten by environment variable \"KILL_OLD_DELAY\"."`
-	OptRestart             bool     `long:"restart" description:"this is a wrapper command that reads the pid of the start_server process\nfrom --pid-file, sends SIGHUP to the process and waits until the\nserver(s) of the older generation(s) die by monitoring the contents of\nthe --status-file"`
-	OptStop                bool     `long:"stop" description:"reads the pid from --pid-file, sends SIGTERM, and waits for the process to exit"`
+	OptRestart             bool     `long:"restart" description:"this is a wrapper command that reads the pid of the start_server process\nfrom --pid-file, sends SIGHUP to the process and waits until the\nserver(s) of the older generation(s) die by monitoring the contents of\nthe --status-file. Cannot be used with --stop"`
+	OptStop                bool     `long:"stop" description:"reads the pid from --pid-file, sends SIGTERM, and waits for the process to exit.\nCannot be used with --restart"`
 	OptHelp                bool     `long:"help" description:"prints this help"`
 	OptVersion             bool     `long:"version" description:"prints the version number"`
 
