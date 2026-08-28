@@ -11,6 +11,7 @@ import (
 
 	"github.com/jessevdk/go-flags"
 	starter "github.com/lestrrat-go/server-starter/v2"
+	"github.com/lestrrat-go/server-starter/v2/internal/control"
 )
 
 const version = "0.0.2"
@@ -148,9 +149,9 @@ func _main() (st int) {
 		}
 		var err error
 		if opts.OptStop {
-			err = stopServer(opts.OptPidFile)
+			err = control.Stop(opts.OptPidFile)
 		} else {
-			err = restartServer(opts.OptPidFile, opts.OptStatusFile)
+			err = control.Restart(opts.OptPidFile, opts.OptStatusFile)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)

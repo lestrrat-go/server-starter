@@ -1,6 +1,6 @@
 //go:build !windows
 
-package main
+package control
 
 import (
 	"os"
@@ -8,7 +8,7 @@ import (
 )
 
 // tryLockPIDFile attempts to take an exclusive, non-blocking lock on f. It
-// is used by stopServer to poll for the supervisor having exited: once the
+// is used by Stop to poll for the supervisor having exited: once the
 // supervisor process dies, its blocking lock on the pid file (see
 // pidfile_unix.go in the root package) is released and this call starts
 // succeeding. This is deliberately non-blocking, unlike the blocking lock

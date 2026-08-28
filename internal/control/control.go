@@ -1,4 +1,4 @@
-package main
+package control
 
 import (
 	"errors"
@@ -25,7 +25,9 @@ func readPID(path string) (int, error) {
 	return pid, nil
 }
 
-func stopServer(pidPath string) error {
+// Stop reads the pid from pidPath, sends SIGTERM, and waits for the process
+// to exit.
+func Stop(pidPath string) error {
 	pid, err := readPID(pidPath)
 	if err != nil {
 		return err
@@ -78,7 +80,10 @@ func readStatus(path string) (map[int]int, error) {
 	return status, nil
 }
 
-func restartServer(pidPath, statusPath string) error {
+// Restart reads the pid from pidPath, sends SIGHUP, and waits until the
+// server(s) of the older generation(s) die by monitoring the contents of
+// statusPath.
+func Restart(pidPath, statusPath string) error {
 	if statusPath == "" {
 		return fmt.Errorf("--status-file is required with --restart")
 	}
