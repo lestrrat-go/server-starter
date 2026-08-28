@@ -58,7 +58,7 @@ func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
 	return windows.CreateFile(
 		path,
 		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		disposition,
 		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
@@ -67,9 +67,9 @@ func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
 }
 
 func lockFile(f *os.File) error {
-	// Keep the lock outside the PID text so a contender can read the owner
-	// through a second handle while this exclusive lock is held.
-	overlapped := windows.Overlapped{Offset: pidTextSize}
+	// Keep the lock far beyond the PID text and any buffered read request so a
+	// contender can read the owner through a second handle.
+	overlapped := windows.Overlapped{OffsetHigh: 1}
 	return windows.LockFileEx(
 		windows.Handle(f.Fd()),
 		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,

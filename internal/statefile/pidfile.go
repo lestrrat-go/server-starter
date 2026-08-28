@@ -1,6 +1,7 @@
 package statefile
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -34,11 +35,11 @@ func acquire(path string, lock func(*os.File) error) (*PIDFile, error) {
 		f.Close()
 		if lockUnavailable(err) {
 			if ownerKnown {
-				return nil, fmt.Errorf("pid file %q is locked by process %d: %w", path, ownerPID, err)
+				return nil, fmt.Errorf("pid file %s is locked by process %d", path, ownerPID)
 			}
-			return nil, fmt.Errorf("pid file %q is already locked (owner pid unavailable): %w", path, err)
+			return nil, fmt.Errorf("pid file %s is already locked (owner pid unavailable)", path)
 		}
-		return nil, fmt.Errorf("failed to lock pid file %q: %w", path, err)
+		return nil, fmt.Errorf("failed to lock pid file %s: %w", path, err)
 	}
 	if err := validatePIDFileLinkCount(f, path); err != nil {
 		f.Close()
@@ -73,12 +74,15 @@ func (p *PIDFile) Close() error {
 	if p == nil || p.file == nil {
 		return nil
 	}
+	var removeErr error
 	if pathInfo, err := os.Stat(p.path); err == nil {
 		if fileInfo, statErr := p.file.Stat(); statErr == nil && os.SameFile(pathInfo, fileInfo) {
-			_ = os.Remove(p.path)
+			if err := os.Remove(p.path); err != nil && !os.IsNotExist(err) {
+				removeErr = err
+			}
 		}
 	}
-	err := p.file.Close()
+	closeErr := p.file.Close()
 	p.file = nil
-	return err
+	return errors.Join(removeErr, closeErr)
 }
