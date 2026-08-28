@@ -39,7 +39,7 @@ func TestStopSignalsLegacyFlockSupervisor(t *testing.T) {
 	pidPath := filepath.Join(t.TempDir(), "pid")
 	helper := startControlHelperWithMode(t, pidPath, "legacy")
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.NoError(t, Stop(ctx, pidPath))
 	require.NoError(t, helper.wait())
