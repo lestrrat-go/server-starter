@@ -8,9 +8,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/lestrrat-go/server-starter/v2/internal/statefile"
+	"github.com/stretchr/testify/require"
 )
 
 // stubbornWorkerTxt ignores the signal start_server sends on HUP, so it stays
@@ -110,63 +116,301 @@ func waitForGenerations(t *testing.T, statusFile string, want int) {
 	t.Fatalf("timed out waiting for %d generations in status file, last saw %v", want, last)
 }
 
-// TestHUPWithLiveOldWorkers covers #9. Server::Starter respawns and re-signals
-// on every HUP; this port used to gate that on the old-worker set being empty,
-// so a HUP arriving while a previous worker was still alive did nothing at all.
-func TestHUPWithLiveOldWorkers(t *testing.T) {
+func waitForGenerationList(t *testing.T, statusFile string, want []string) {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	var last []string
+	for time.Now().Before(deadline) {
+		last = generations(t, statusFile)
+		if strings.Join(last, ",") == strings.Join(want, ",") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for generations %v in status file, last saw %v", want, last)
+}
+
+func waitForDiagnostic(t *testing.T, stderr *syncBuffer, want string) {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(stderr.String(), want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for diagnostic %q; output:\n%s", want, stderr.String())
+}
+
+// exitDiagnosticGate blocks the first old-worker exit diagnostic before the
+// supervisor removes that worker from its drain set. Tests can then place a
+// HUP in the controller buffer at the exact point where the drain completes.
+type exitDiagnosticGate struct {
+	syncBuffer
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *exitDiagnosticGate) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "old worker ") && strings.Contains(string(p), " died, status:") {
+		b.once.Do(func() {
+			close(b.reached)
+			<-b.release
+		})
+	}
+	return b.syncBuffer.Write(p)
+}
+
+// restartDiagnosticGate blocks a restart after it wins the loop's select but
+// before the replacement worker starts. Tests can then place a HUP in the
+// controller buffer while that restart is still in progress.
+type restartDiagnosticGate struct {
+	syncBuffer
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *restartDiagnosticGate) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "spawning a new worker") {
+		b.once.Do(func() {
+			close(b.reached)
+			<-b.release
+		})
+	}
+	return b.syncBuffer.Write(p)
+}
+
+// unexpectedRestartDiagnosticGate blocks the replacement spawned after the
+// current worker exits. Tests can then buffer a HUP before that replacement
+// completes its startup check.
+type unexpectedRestartDiagnosticGate struct {
+	syncBuffer
+	reached chan struct{}
+	release chan struct{}
+	starts  int
+}
+
+func (b *unexpectedRestartDiagnosticGate) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "starting new worker") {
+		b.starts++
+		if b.starts == 2 {
+			close(b.reached)
+			<-b.release
+		}
+	}
+	return b.syncBuffer.Write(p)
+}
+
+func waitForGenerationRemoval(t *testing.T, statusFile, removed string) []string {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	var last []string
+	for time.Now().Before(deadline) {
+		last = generations(t, statusFile)
+		if len(last) > 0 && !slices.Contains(last, removed) {
+			return last
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for generation %s to exit, last saw %v", removed, last)
+	return nil
+}
+
+// TestHUPCoalescesEntireDrain verifies that a third request buffered while the
+// first old worker's exit is being processed joins the pending restart instead
+// of starting a fourth generation after the second old worker exits.
+func TestHUPCoalescesEntireDrain(t *testing.T) {
 	dir := t.TempDir()
 	statusFile := filepath.Join(dir, "status")
+	stderr := exitDiagnosticGate{
+		reached: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(stderr.release)
+		}
+	}()
 
 	sd, err := NewStarter(&config{
 		command:    buildStubbornWorker(t, dir),
 		statusfile: statusFile,
-		// The worker ignores USR1, so old workers survive each HUP and pile up.
+		// The worker ignores USR1, so the first old worker stays live while
+		// the second HUP is processed.
 		sigonhup: "USR1",
+		stderr:   &stderr,
 	})
-	if err != nil {
-		t.Fatalf("failed to create starter: %s", err)
-	}
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	ctrl, err := sd.Run(ctx)
-	if err != nil {
-		t.Fatalf("sd.Run() failed: %s", err)
-	}
+	require.NoError(t, err)
 	defer func() {
 		cancel()
 		select {
 		case <-ctrl.Done():
 		case <-time.After(10 * time.Second):
-			t.Errorf("timed out waiting for Run() to return")
+			t.Error("timed out waiting for Run() to return")
 		}
 	}()
 
-	// Generation 0, no old workers yet.
-	waitForGenerations(t, statusFile, 1)
-
-	// First hangup: this worked even before the fix, because the old-worker
-	// set was still empty at this point.
+	waitForGenerationList(t, statusFile, []string{"1"})
 	ctrl.Hangup()
-	waitForGenerations(t, statusFile, 2)
+	waitForGenerationList(t, statusFile, []string{"1", "2"})
 
-	// Second hangup, now with generation 0 still alive and ignoring its
-	// signal. Before the fix the starter treated this as a no-op and the
-	// status file never grew a third entry.
 	ctrl.Hangup()
-	waitForGenerations(t, statusFile, 3)
+	waitForDiagnostic(t, &stderr.syncBuffer, "coalescing hangup request until old workers exit")
+	require.Equal(t, []string{"1", "2"}, generations(t, statusFile))
 
-	// Generations are 1-based: startWorker increments before spawning. All
-	// three must still be listed, which is what proves the older workers were
-	// kept and re-signalled rather than dropped.
-	gens := make(map[string]struct{})
-	for _, gen := range generations(t, statusFile) {
-		gens[gen] = struct{}{}
+	status, err := statefile.ReadStatus(statusFile)
+	require.NoError(t, err)
+	oldWorker, err := os.FindProcess(status[1])
+	require.NoError(t, err)
+	require.NoError(t, oldWorker.Signal(syscall.SIGTERM))
+
+	select {
+	case <-stderr.reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the old-worker exit interleaving")
 	}
-	for want := 1; want <= 3; want++ {
-		if _, ok := gens[fmt.Sprintf("%d", want)]; !ok {
-			t.Errorf("generation %d missing from status file, got %v", want, gens)
+
+	ctrl.Hangup()
+	close(stderr.release)
+	released = true
+
+	waitForGenerationList(t, statusFile, []string{"2", "3"})
+	status, err = statefile.ReadStatus(statusFile)
+	require.NoError(t, err)
+	oldWorker, err = os.FindProcess(status[2])
+	require.NoError(t, err)
+	require.NoError(t, oldWorker.Signal(syscall.SIGTERM))
+
+	waitForDiagnostic(t, &stderr.syncBuffer, fmt.Sprintf("old worker %d died", status[2]))
+	require.Equal(t, []string{"3"}, waitForGenerationRemoval(t, statusFile, "2"))
+}
+
+func TestHUPDuringAutomaticRestartJoinsThatRestart(t *testing.T) {
+	dir := t.TempDir()
+	statusFile := filepath.Join(dir, "status")
+	stderr := restartDiagnosticGate{
+		reached: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(stderr.release)
 		}
+	}()
+
+	sd, err := NewStarter(&config{
+		command:             buildStubbornWorker(t, dir),
+		statusfile:          statusFile,
+		sigonhup:            "USR1",
+		enableAutoRestart:   true,
+		autoRestartInterval: 2 * time.Second,
+		stderr:              &stderr,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+	defer func() {
+		cancel()
+		select {
+		case <-ctrl.Done():
+		case <-time.After(10 * time.Second):
+			t.Error("timed out waiting for Run() to return")
+		}
+	}()
+
+	waitForGenerationList(t, statusFile, []string{"1"})
+	select {
+	case <-stderr.reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the automatic restart interleaving")
 	}
+
+	ctrl.Hangup()
+	close(stderr.release)
+	released = true
+	waitForGenerationList(t, statusFile, []string{"1", "2"})
+
+	status, err := statefile.ReadStatus(statusFile)
+	require.NoError(t, err)
+	oldWorker, err := os.FindProcess(status[1])
+	require.NoError(t, err)
+	require.NoError(t, oldWorker.Signal(syscall.SIGTERM))
+
+	require.Equal(t, []string{"2"}, waitForGenerationRemoval(t, statusFile, "1"))
+}
+
+func TestHUPDuringUnexpectedExitRestartJoinsThatRestart(t *testing.T) {
+	dir := t.TempDir()
+	statusFile := filepath.Join(dir, "status")
+	stderr := unexpectedRestartDiagnosticGate{
+		reached: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(stderr.release)
+		}
+	}()
+
+	sd, err := NewStarter(&config{
+		command:    buildStubbornWorker(t, dir),
+		statusfile: statusFile,
+		interval:   1,
+		stderr:     &stderr,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+	defer func() {
+		cancel()
+		select {
+		case <-ctrl.Done():
+		case <-time.After(10 * time.Second):
+			t.Error("timed out waiting for Run() to return")
+		}
+	}()
+
+	waitForGenerationList(t, statusFile, []string{"1"})
+	status, err := statefile.ReadStatus(statusFile)
+	require.NoError(t, err)
+	worker, err := os.FindProcess(status[1])
+	require.NoError(t, err)
+	require.NoError(t, worker.Signal(syscall.SIGTERM))
+
+	select {
+	case <-stderr.reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the unexpected-exit restart interleaving")
+	}
+
+	ctrl.Hangup()
+	close(stderr.release)
+	released = true
+
+	waitForGenerationList(t, statusFile, []string{"2"})
+	require.Never(t, func() bool {
+		return !slices.Equal(generations(t, statusFile), []string{"2"})
+	}, 2*time.Second, 20*time.Millisecond)
 }
