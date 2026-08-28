@@ -14,7 +14,7 @@ import (
 // inspectInodeLocks finds legacy BSD flock ownership and reports whether the
 // inode also has a record lock. A record lock outside the expected path-bound
 // byte means the file was locked under another pathname.
-func inspectInodeLocks(f *os.File) (int, bool, error) {
+func inspectInodeLocks(f *os.File, _ int) (int, bool, error) {
 	info, err := f.Stat()
 	if err != nil {
 		return 0, false, err

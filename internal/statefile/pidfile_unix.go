@@ -109,7 +109,7 @@ func TryLock(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 }
 
-func lockOwnerPID(f *os.File, path string) (int, pidLockKind, error) {
+func lockOwnerPID(f *os.File, path string, recordedPID int) (int, pidLockKind, error) {
 	lock, err := pathRecordLock(path)
 	if err != nil {
 		return 0, pidLockUnknown, err
@@ -124,7 +124,7 @@ func lockOwnerPID(f *os.File, path string) (int, pidLockKind, error) {
 		return int(lock.Pid), pidLockRecord, nil
 	}
 
-	flockPID, hasRecordLock, err := inspectInodeLocks(f)
+	flockPID, hasRecordLock, err := inspectInodeLocks(f, recordedPID)
 	if err != nil {
 		return 0, pidLockUnknown, err
 	}

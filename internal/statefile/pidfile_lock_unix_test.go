@@ -61,6 +61,17 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 		require.Equal(t, pid, got)
 	})
 
+	t.Run("rejects a legacy flock whose recorded pid does not own it", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "server.pid")
+		ownerPID := startLegacyPIDLockHelper(t, path)
+		replacementPID := os.Getpid()
+		require.NotEqual(t, ownerPID, replacementPID)
+		require.NoError(t, os.WriteFile(path, fmt.Appendf(nil, "%d\n", replacementPID), 0644))
+
+		_, err := statefile.ReadPID(path)
+		require.Error(t, err)
+	})
+
 	t.Run("rejects a locked pid file moved from another path", func(t *testing.T) {
 		dir := t.TempDir()
 		firstPath := filepath.Join(dir, "first.pid")

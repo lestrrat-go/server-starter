@@ -130,7 +130,7 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		return closeWithError(fmt.Errorf("invalid pid file %q", path))
 	}
 
-	ownerPID, lockKind, err := lockOwnerPID(f, path)
+	ownerPID, lockKind, err := lockOwnerPID(f, path, pid)
 	if err != nil {
 		return closeWithError(fmt.Errorf("failed to inspect pid file %q lock: %w", path, err))
 	}
