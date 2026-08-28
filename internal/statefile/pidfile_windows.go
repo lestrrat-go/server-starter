@@ -67,11 +67,9 @@ func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
 }
 
 func lockFile(f *os.File) error {
-	// The file is truncated and rewritten after the lock is taken, so its
-	// length at lock time may not cover the eventual content. Lock a
-	// one-byte range instead of the whole file so the lock stays valid
-	// regardless of how the content shrinks or grows afterward.
-	var overlapped windows.Overlapped
+	// Keep the lock outside the PID text so a contender can read the owner
+	// through a second handle while this exclusive lock is held.
+	overlapped := windows.Overlapped{Offset: pidTextSize}
 	return windows.LockFileEx(
 		windows.Handle(f.Fd()),
 		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,

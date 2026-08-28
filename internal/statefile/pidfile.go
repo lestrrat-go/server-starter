@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const pidTextSize = 64
+
 // PIDFile is a pid file that has been acquired via Acquire. Closing it
 // releases the lock and, if this process still owns the file on disk,
 // removes it.
@@ -58,7 +60,7 @@ func acquire(path string, lock func(*os.File) error) (*PIDFile, error) {
 }
 
 func readOwnerPID(f *os.File) (int, bool) {
-	var data [64]byte
+	var data [pidTextSize]byte
 	n, err := f.ReadAt(data[:], 0)
 	if err != nil && err != io.EOF {
 		return 0, false
