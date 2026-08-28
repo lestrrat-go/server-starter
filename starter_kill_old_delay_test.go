@@ -13,6 +13,8 @@ import (
 
 // setEnvUnset ensures key is unset for the duration of the test, restoring
 // whatever value (or absence) it had beforehand once the test completes.
+// t.Setenv cannot express "absent" (getKillOldDelay distinguishes absent
+// from set-to-empty via os.LookupEnv), so this restores manually.
 func setEnvUnset(t *testing.T, key string) {
 	t.Helper()
 
@@ -20,6 +22,7 @@ func setEnvUnset(t *testing.T, key string) {
 	require.NoError(t, os.Unsetenv(key))
 	t.Cleanup(func() {
 		if hadOriginal {
+			//nolint:usetesting // restoring in Cleanup, not setting for the test itself
 			os.Setenv(key, original)
 			return
 		}
