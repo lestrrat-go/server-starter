@@ -5,6 +5,7 @@ package statefile_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,7 +33,7 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 
 	t.Run("rejects an unlocked stale file", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "server.pid")
-		require.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644))
+		require.NoError(t, os.WriteFile(path, fmt.Appendf(nil, "%d\n", os.Getpid()), 0644))
 
 		_, err := statefile.ReadPID(path)
 		require.ErrorContains(t, err, "not locked by a running supervisor")
@@ -43,7 +44,7 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 		ownerPID := startPIDLockHelper(t, path)
 		replacementPID := os.Getpid()
 		require.NotEqual(t, ownerPID, replacementPID)
-		require.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf("%d\n", replacementPID)), 0644))
+		require.NoError(t, os.WriteFile(path, fmt.Appendf(nil, "%d\n", replacementPID), 0644))
 
 		_, err := statefile.ReadPID(path)
 		require.ErrorContains(t, err, "does not match lock owner")
@@ -72,7 +73,7 @@ func TestPIDLockHelper(t *testing.T) {
 func startPIDLockHelper(t *testing.T, path string) int {
 	t.Helper()
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestPIDLockHelper$")
+	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestPIDLockHelper$")
 	cmd.Env = append(os.Environ(), pidLockHelperEnv+"="+path)
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)

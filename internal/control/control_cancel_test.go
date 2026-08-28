@@ -140,7 +140,7 @@ func (h *controlHelper) wait() error {
 func startControlHelper(t *testing.T, path string) *controlHelper {
 	t.Helper()
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestControlHelperProcess$")
+	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestControlHelperProcess$")
 	cmd.Env = append(os.Environ(), controlHelperEnv+"="+path)
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
