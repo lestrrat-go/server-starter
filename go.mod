@@ -1,4 +1,4 @@
-module github.com/lestrrat-go/server-starter
+module github.com/lestrrat-go/server-starter/v2
 
 go 1.23
 

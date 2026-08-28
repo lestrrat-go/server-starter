@@ -25,7 +25,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	"github.com/lestrrat-go/server-starter/listener"
+	"github.com/lestrrat-go/server-starter/v2/listener"
 )
 
 func main() {
@@ -104,9 +104,9 @@ func TestRun(t *testing.T) {
 
 go 1.23
 
-require github.com/lestrrat-go/server-starter v0.0.0
+require github.com/lestrrat-go/server-starter/v2 v2.0.0
 
-replace github.com/lestrrat-go/server-starter => %s
+replace github.com/lestrrat-go/server-starter/v2 => %s
 `, filepath.ToSlash(root))
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0600); err != nil {
 		t.Errorf("Failed to write go.mod: %s", err)
