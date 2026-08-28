@@ -214,14 +214,14 @@ func removeExistingUnixSocketWithMove(
 	defer parent.Close()
 
 	name := filepath.Base(path)
-	isSocket, err := pathIsSocketAt(parent, name)
+	selected, err := pathIdentityAt(parent, name)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("inspect unix socket path %q: %w", path, err)
 	}
-	if !isSocket {
+	if !selected.isSocket() {
 		return fmt.Errorf("unix socket path %q is not a socket", path)
 	}
 
@@ -246,12 +246,12 @@ func removeExistingUnixSocketWithMove(
 		return fmt.Errorf("move unix socket path %q: %w", path, err)
 	}
 
-	isSocket, err = pathIsSocketAt(quarantine, quarantinedSocketName)
+	moved, err := pathIdentityAt(quarantine, quarantinedSocketName)
 	if err != nil {
 		return fmt.Errorf("inspect moved unix socket path %q, preserved at %q: %w", path, quarantinePath, err)
 	}
-	if isSocket {
-		if err := removeAt(quarantine, quarantinedSocketName); err != nil {
+	if samePathIdentity(selected, moved) {
+		if err := removeAt(quarantine, quarantinedSocketName, moved); err != nil {
 			return fmt.Errorf("remove moved unix socket path %q: %w", path, err)
 		}
 		if err := closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName); err != nil {
@@ -263,7 +263,7 @@ func removeExistingUnixSocketWithMove(
 	// Only restoration needs no-replace semantics. The initial move targets an
 	// opened, verified private directory, so moveToQuarantineAt can use the
 	// portable anchored rename available on every supported Unix target.
-	if err := renameNoReplaceAt(quarantine, quarantinedSocketName, parent, name); err != nil {
+	if err := renameNoReplaceEntryAt(quarantine, quarantinedSocketName, parent, name, moved); err != nil {
 		return fmt.Errorf(
 			"unix socket path %q changed to a non-socket and was preserved at %q: %w",
 			path,
@@ -278,10 +278,14 @@ func removeExistingUnixSocketWithMove(
 }
 
 func closeAndRemoveSocketQuarantine(parent, quarantine *os.File, name string) error {
+	identity, err := pathIdentityForFile(quarantine)
+	if err != nil {
+		return err
+	}
 	if err := quarantine.Close(); err != nil {
 		return err
 	}
-	return removeDirAt(parent, name)
+	return removeDirAt(parent, name, identity)
 }
 
 func newSocketQuarantineName() (string, error) {

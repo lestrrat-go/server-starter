@@ -36,9 +36,9 @@ func TestRemoveExistingUnixSocketProtectsQuarantineFromNameExchange(t *testing.T
 		require.NoError(t, statErr)
 		require.Equal(t, os.FileMode(0700), info.Mode().Perm())
 		require.NoError(t, os.WriteFile(path, contents, 0600))
-		isSocket, inspectErr := pathIsSocketAt(newDir, newName)
+		identity, inspectErr := pathIdentityAt(newDir, newName)
 		require.NoError(t, inspectErr)
-		require.True(t, isSocket)
+		require.True(t, identity.isSocket())
 
 		replacementPath = filepath.Join(dir, filepath.Base(newDir.Name()))
 		exchangeErr = unix.Renameat2(
