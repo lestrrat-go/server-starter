@@ -100,9 +100,12 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 //
 // TCP and UDP ports must be between 0 and 65535. Inherited file descriptors
 // must be at least 3 so they do not overlap the standard streams.
+//
+// An empty spec returns an empty List. Ports applies the environment-specific
+// requirement that SERVER_STARTER_PORT contain at least one target.
 func ParsePorts(spec string) (List, error) {
 	if spec == "" {
-		return nil, ErrNoListeningTarget
+		return nil, nil
 	}
 
 	rawspec := strings.Split(spec, ";")
@@ -196,9 +199,11 @@ func ParsePorts(spec string) (List, error) {
 // ls is variadic so a single listener can be formatted ad-hoc, and so a
 // List can be passed directly as FormatPorts(list...).
 //
+// An empty list returns an empty string so FormatPorts and ParsePorts are
+// inverses for that valid parse-layer value.
+//
 // FormatPorts rejects the following inputs:
 //
-//   - an empty list, because ParsePorts rejects an empty string
 //   - a TCPListener or UDPListener with an empty Addr
 //   - a UnixListener with an empty Path
 //   - a TCPListener or UDPListener whose Addr contains a NUL byte, or a
@@ -215,7 +220,7 @@ func ParsePorts(spec string) (List, error) {
 //     different listener, including ambiguous relative unix socket paths
 func FormatPorts(ls ...Listener) (string, error) {
 	if len(ls) == 0 {
-		return "", ErrNoListeningTarget
+		return "", nil
 	}
 
 	specs := make([]string, len(ls))
@@ -299,8 +304,14 @@ func FormatPorts(ls ...Listener) (string, error) {
 // The returned List can contain TCPListener, UnixListener, and UDPListener
 // values. For a mixed list, type-switch on UDPListener and call ListenPacket;
 // call Listen on the other built-in Listener values.
+//
+// It returns ErrNoListeningTarget when the variable is empty or unset.
 func Ports() (List, error) {
-	return ParsePorts(os.Getenv(PortEnvName))
+	spec := os.Getenv(PortEnvName)
+	if spec == "" {
+		return nil, ErrNoListeningTarget
+	}
+	return ParsePorts(spec)
 }
 
 // ListenAll parses SERVER_STARTER_PORT and creates net.Listener objects. It is
