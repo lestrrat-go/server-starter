@@ -139,6 +139,51 @@ func looksLikeTCPGrammar(s string) bool {
 	return reLooksLikePort.MatchString(s)
 }
 
+// stripLeadingUDPMarker strips a leading "u" from s, reporting whether s
+// had one.
+func stripLeadingUDPMarker(s string) (string, bool) {
+	stripped := strings.TrimPrefix(s, "u")
+	return stripped, stripped != s
+}
+
+// stripTrailingUDPMarker strips a "u" immediately after the last ":" in s,
+// reporting whether s had one.
+func stripTrailingUDPMarker(s string) (string, bool) {
+	idx := strings.LastIndexByte(s, ':')
+	if idx < 0 || !strings.HasPrefix(s[idx+1:], "u") {
+		return s, false
+	}
+	return s[:idx+1] + strings.TrimPrefix(s[idx+1:], "u"), true
+}
+
+// udpCandidate is a candidate (udp, target) pair considered when
+// classifying a spec's UDP marker.
+type udpCandidate struct {
+	udp    bool
+	target string
+}
+
+// classifyUDPMarker returns, in priority order, the candidate
+// interpretations of hostPort's UDP marker(s): both a leading "u" and a
+// trailing ":u" stripped, only the leading "u" stripped, only the trailing
+// ":u" stripped, and finally no strip at all. The caller picks the first
+// candidate whose target satisfies looksLikeTCPGrammar.
+func classifyUDPMarker(hostPort string) []udpCandidate {
+	var candidates []udpCandidate
+
+	if leadingStripped, hasLeading := stripLeadingUDPMarker(hostPort); hasLeading {
+		if bothStripped, hasTrailing := stripTrailingUDPMarker(leadingStripped); hasTrailing {
+			candidates = append(candidates, udpCandidate{udp: true, target: bothStripped})
+		}
+		candidates = append(candidates, udpCandidate{udp: true, target: leadingStripped})
+	}
+	if trailingStripped, hasTrailing := stripTrailingUDPMarker(hostPort); hasTrailing {
+		candidates = append(candidates, udpCandidate{udp: true, target: trailingStripped})
+	}
+
+	return append(candidates, udpCandidate{udp: false, target: hostPort})
+}
+
 // parseListenTargets parses the "spec=fd;spec=fd;..." value carried by
 // SERVER_STARTER_PORT (see ServerStarterEnvVarName) into concrete Listener
 // values.
@@ -180,13 +225,11 @@ func parseListenTargets(str string) ([]Listener, error) {
 
 		udp := false
 		target := hostPort
-		if candidate := strings.TrimPrefix(hostPort, "u"); candidate != hostPort && looksLikeTCPGrammar(candidate) {
-			udp = true
-			target = candidate
-		} else if idx := strings.LastIndexByte(hostPort, ':'); idx >= 0 && strings.HasPrefix(hostPort[idx+1:], "u") {
-			if candidate := hostPort[:idx+1] + strings.TrimPrefix(hostPort[idx+1:], "u"); looksLikeTCPGrammar(candidate) {
-				udp = true
-				target = candidate
+		for _, c := range classifyUDPMarker(hostPort) {
+			if looksLikeTCPGrammar(c.target) {
+				udp = c.udp
+				target = c.target
+				break
 			}
 		}
 
