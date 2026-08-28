@@ -2,9 +2,9 @@ Migrating from v0 to v2
 ========================
 
 This is a reference for moving code from the v0 line (`master`) to v2. It
-covers the import path, the symbol mapping, the removed supervisor API, the
-unchanged runtime contract, three deliberate behavior changes, and Windows
-limitations.
+covers the import path, the symbol mapping, the removed supervisor API,
+runtime compatibility, listener-spec validation, three deliberate behavior
+changes, and Windows limitations.
 
 ## Import path
 
@@ -24,7 +24,7 @@ gone; everything it exported now lives at the module root, in package
 | `listener.ServerStarterEnvVarName` | `starter.PortEnvName` |
 | `listener.ErrNoListeningTarget` | `starter.ErrNoListeningTarget` |
 | `listener.Listener` / `List` / `TCPListener` / `UnixListener` | same names, module root |
-| — | new: `UDPListener`, `ParsePorts`, `NewTCPListener`, `NewUDPListener`, `NewUnixListener`, `Generation`, `IsUnderStartServer` |
+| — | new: `UDPListener`, `ParsePorts`, `FormatPorts`, `NewTCPListener`, `NewUDPListener`, `NewUnixListener`, `Generation`, `GenerationEnvName`, `IsUnderStartServer` |
 
 Two things to check when you move code over:
 
@@ -57,13 +57,32 @@ caller outside package `server-starter` could construct the argument.
 `WorkerState`'s two values, `WorkerStarted` and `ErrFailedToStart`, were
 referenced nowhere else in the codebase.
 
-## The runtime contract is unchanged
+## The runtime wire format remains compatible
 
 `SERVER_STARTER_PORT`, `SERVER_STARTER_GENERATION`, and file descriptors
-numbered starting at 3 all behave exactly as they did under v0. A worker
-binary built against v0's `listener` package still runs correctly under a
-v2 `start_server`, and a worker built against v2's `starter` package still
-runs correctly under a v0 `start_server`. Only the Go import path moved.
+numbered starting at 3 use the same wire format as v0. For listener specs
+that format successfully, a worker binary built against v0's `listener`
+package still runs correctly under a v2 `start_server`, and a worker built
+against v2's `starter` package still runs correctly under a v0
+`start_server`.
+
+## Listener-spec validation is stricter
+
+V0 joined each listener's `String()` result and passed it to the worker as
+`SERVER_STARTER_PORT` without validation. The public `FormatPorts` function
+now rejects values that cannot be encoded as one environment variable and
+read back as the same listener. This includes NUL bytes, Unix socket paths
+containing `;` or `=`, ambiguous relative Unix socket paths, and malformed
+listener values built directly as struct literals.
+
+The supervisor's `Config` accepts only string port and path metadata, so
+struct-literal listeners do not enter that API. The supervisor binds those
+strings before formatting worker metadata. TCP and UDP addresses containing
+a NUL byte therefore fail synchronously during `Run`. A Unix path containing
+a NUL byte can bind first and then fail asynchronously through the returned
+`Controller` when worker formatting begins. Unix paths containing delimiters
+or using an ambiguous relative form can fail at that same asynchronous stage.
+Valid listener specs keep the v0 wire format described above.
 
 ## Three deliberate divergences from Perl's Server::Starter
 

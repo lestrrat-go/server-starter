@@ -168,7 +168,12 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 
 	workerCh := make(chan processState)
 	workerStateDone := make(chan struct{})
-	p := rs.startWorker(ctx, workerCh, workerStateDone)
+	p, err := rs.startWorker(ctx, workerCh, workerStateDone)
+	if err != nil {
+		fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
+		ctrl.setErr(err)
+		return
+	}
 	rs.oldWorkers = make(map[int]int)
 	var sigToSend os.Signal
 	if rs.cfg.enableAutoRestart {
@@ -213,7 +218,14 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 				exitSt := grabExitStatus(rs.cfg.stderr, st)
 				fmt.Fprintf(rs.cfg.stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
 				rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
-				p = rs.startWorker(ctx, workerCh, workerStateDone)
+				newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone)
+				if err != nil {
+					fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
+					sigToSend = rs.cfg.signalOnTERM
+					ctrl.setErr(err)
+					return
+				}
+				p = newWorker
 				// A HUP received while startWorker was bringing up this
 				// replacement belongs to the restart already in progress.
 				select {
@@ -269,7 +281,14 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 				rs.oldWorkers[p.Pid] = rs.generation
 			}
 			rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
-			p = rs.startWorker(ctx, workerCh, workerStateDone)
+			newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone)
+			if err != nil {
+				fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
+				sigToSend = rs.cfg.signalOnTERM
+				ctrl.setErr(err)
+				return
+			}
+			p = newWorker
 			if rs.restartTimer != nil {
 				rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 			}

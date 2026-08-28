@@ -148,6 +148,106 @@ func ParsePorts(spec string) (List, error) {
 	return ret, nil
 }
 
+// FormatPorts encodes ls into the "spec=fd;spec=fd;..." wire format read
+// by ParsePorts and carried by SERVER_STARTER_PORT. It is the authoritative
+// encoder for that format: each Listener's own String() method is a
+// display form for humans and does not validate its receiver, so a
+// TCPListener, UDPListener, or UnixListener built directly as a struct
+// literal (bypassing New*Listener's normalisation) can render into a spec
+// that ParsePorts reads back as something else entirely, with no error
+// anywhere in the chain. FormatPorts closes that gap by rejecting a
+// malformed listener instead of silently encoding it.
+//
+// ls is variadic so a single listener can be formatted ad-hoc, and so a
+// List can be passed directly as FormatPorts(list...).
+//
+// FormatPorts rejects the following inputs:
+//
+//   - an empty list, because ParsePorts rejects an empty string
+//   - a TCPListener or UDPListener with an empty Addr
+//   - a UnixListener with an empty Path
+//   - a TCPListener or UDPListener whose Addr contains a NUL byte, or a
+//     UnixListener whose Path contains one; environment variables cannot
+//     carry NUL bytes
+//   - a UnixListener whose Path contains ';' (the spec separator) or '='
+//     (the spec/fd separator), either of which ParsePorts would misread
+//   - any Listener whose concrete type is not TCPListener, UDPListener, or
+//     UnixListener; FormatPorts has no way to validate an implementation
+//     it does not know, so it refuses to guess rather than risk emitting
+//     a spec ParsePorts cannot read back correctly
+//   - a listener whose String result ParsePorts would read back as a
+//     different listener, including ambiguous relative unix socket paths
+//     and TCP addresses that look like they carry the UDP marker
+func FormatPorts(ls ...Listener) (string, error) {
+	if len(ls) == 0 {
+		return "", ErrNoListeningTarget
+	}
+
+	specs := make([]string, len(ls))
+	for i, l := range ls {
+		switch v := l.(type) {
+		case TCPListener:
+			if v.Addr == "" {
+				return "", fmt.Errorf("starter: cannot format TCPListener (port %d): Addr is empty", v.Port)
+			}
+			if strings.ContainsRune(v.Addr, '\x00') {
+				return "", fmt.Errorf(
+					"starter: cannot format TCPListener (port %d): Addr contains a NUL byte",
+					v.Port,
+				)
+			}
+		case UDPListener:
+			if v.Addr == "" {
+				return "", fmt.Errorf("starter: cannot format UDPListener (port %d): Addr is empty", v.Port)
+			}
+			if strings.ContainsRune(v.Addr, '\x00') {
+				return "", fmt.Errorf(
+					"starter: cannot format UDPListener (port %d): Addr contains a NUL byte",
+					v.Port,
+				)
+			}
+		case UnixListener:
+			if v.Path == "" {
+				return "", fmt.Errorf("starter: cannot format UnixListener: Path is empty")
+			}
+			if strings.ContainsRune(v.Path, '\x00') {
+				return "", fmt.Errorf("starter: cannot format UnixListener: Path contains a NUL byte")
+			}
+			if strings.ContainsAny(v.Path, ";=") {
+				return "", fmt.Errorf("starter: cannot format UnixListener (path %q): Path must not contain ';' or '='", v.Path)
+			}
+		default:
+			return "", fmt.Errorf("starter: cannot format listener of type %T: unsupported Listener implementation", l)
+		}
+		specs[i] = l.String()
+	}
+
+	spec := strings.Join(specs, ";")
+	parsed, err := ParsePorts(spec)
+	if err != nil {
+		return "", fmt.Errorf("starter: cannot format listeners: encoded value is not parseable: %w", err)
+	}
+	if len(parsed) != len(ls) {
+		return "", fmt.Errorf(
+			"starter: cannot format listeners: encoded value parses as %d listeners instead of %d",
+			len(parsed),
+			len(ls),
+		)
+	}
+	for i, l := range ls {
+		if parsed[i] != l {
+			return "", fmt.Errorf(
+				"starter: cannot format listener %d (%T): encoded value parses as %T with different fields",
+				i,
+				l,
+				parsed[i],
+			)
+		}
+	}
+
+	return spec, nil
+}
+
 // Ports parses environment variable SERVER_STARTER_PORT (see PortEnvName).
 func Ports() (List, error) {
 	return ParsePorts(os.Getenv(PortEnvName))

@@ -54,3 +54,54 @@ func TestRunErrServerClosed(t *testing.T) {
 		t.Fatal("timed out waiting for ctrl.Wait() to return")
 	}
 }
+
+func TestRunReportsListenerMetadataErrorsAtLifecycleStage(t *testing.T) {
+	command, err := os.Executable()
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name string
+		spec string
+	}{
+		{name: "TCP NUL", spec: "127.0.0.1\x00bad:0"},
+		{name: "UDP NUL", spec: "u127.0.0.1\x00bad:0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sd, err := NewStarter(&config{command: command, ports: []string{test.spec}})
+			require.NoError(t, err)
+
+			ctrl, err := sd.Run(context.Background())
+			require.Error(t, err)
+			var opErr *net.OpError
+			require.ErrorAs(t, err, &opErr)
+			require.Nil(t, ctrl)
+		})
+	}
+
+	for _, test := range []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "Unix NUL", path: "listener\x00ignored.sock", wantErr: "NUL"},
+		{name: "Unix delimiter", path: "listener;ignored.sock", wantErr: "must not contain"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), test.path)
+			sd, err := NewStarter(&config{command: command, paths: []string{path}})
+			require.NoError(t, err)
+
+			ctrl, err := sd.Run(context.Background())
+			require.NoError(t, err)
+			require.NotNil(t, ctrl)
+
+			select {
+			case <-ctrl.Done():
+			case <-time.After(5 * time.Second):
+				t.Fatal("timed out waiting for listener metadata formatting failure")
+			}
+			require.ErrorContains(t, ctrl.Err(), "failed to format listeners for worker")
+			require.ErrorContains(t, ctrl.Err(), test.wantErr)
+		})
+	}
+}

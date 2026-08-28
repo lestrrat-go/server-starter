@@ -23,16 +23,14 @@ type Listener interface {
 	String() string
 }
 
-// List holds a list of Listeners. This is here just for convenience
-// so that you can do
-//
-//	list.String()
-//
-// to get a string compatible with SERVER_STARTER_PORT
+// List holds a list of Listeners.
 type List []Listener
 
-// String joins every Listener's String() with ";", producing a value
-// compatible with SERVER_STARTER_PORT.
+// String joins every Listener's display form with ";". It is retained for
+// compatibility with v0 and earlier v2 releases. Use FormatPorts when the
+// result will be passed through SERVER_STARTER_PORT, because String does not
+// validate that the result is safe for an environment variable or that
+// ParsePorts can read it back as the same listeners.
 func (ll List) String() string {
 	list := make([]string, len(ll))
 	for i, l := range ll {
@@ -90,7 +88,11 @@ func NewUnixListener(path string, fd uintptr) UnixListener {
 	return UnixListener{Path: path, fd: fd}
 }
 
-// String returns l in the "spec=fd" form used by SERVER_STARTER_PORT.
+// String returns a human-readable "spec=fd" rendering of l. It is a
+// display form: it does not validate l, so it can render an unnormalised
+// listener (for example one built directly as a struct literal, bypassing
+// NewTCPListener) into a spec that reads back as something else. For the
+// authoritative SERVER_STARTER_PORT encoder, see FormatPorts.
 func (l TCPListener) String() string {
 	if l.Addr == wildcardIPv4 {
 		return fmt.Sprintf("%d=%d", l.Port, l.fd)
@@ -108,7 +110,11 @@ func (l TCPListener) Listen() (net.Listener, error) {
 	return net.FileListener(os.NewFile(l.Fd(), net.JoinHostPort(l.Addr, strconv.Itoa(l.Port))))
 }
 
-// String returns l in the "uspec=fd" form used by SERVER_STARTER_PORT.
+// String returns a human-readable "uspec=fd" rendering of l. It is a
+// display form: it does not validate l, so it can render an unnormalised
+// listener (for example one built directly as a struct literal, bypassing
+// NewUDPListener) into a spec that reads back as something else. For the
+// authoritative SERVER_STARTER_PORT encoder, see FormatPorts.
 func (l UDPListener) String() string {
 	address := strconv.Itoa(l.Port)
 	if l.Addr != wildcardIPv4 {
@@ -132,7 +138,11 @@ func (l UDPListener) ListenPacket() (net.PacketConn, error) {
 	return net.FilePacketConn(os.NewFile(l.Fd(), net.JoinHostPort(l.Addr, strconv.Itoa(l.Port))))
 }
 
-// String returns l in the "path=fd" form used by SERVER_STARTER_PORT.
+// String returns a human-readable "path=fd" rendering of l. It is a
+// display form: it does not validate l, so it can render an empty Path, or
+// one containing ';' or '=', into a spec that ParsePorts cannot read back
+// correctly. For the authoritative SERVER_STARTER_PORT encoder, see
+// FormatPorts.
 func (l UnixListener) String() string {
 	return fmt.Sprintf("%s=%d", l.Path, l.fd)
 }

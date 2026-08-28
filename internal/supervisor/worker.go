@@ -78,8 +78,16 @@ func reportFailedStart(w io.Writer, pid int, reapedStatus syscall.WaitStatus, re
 	}
 }
 
-// startWorker starts the actual command.
-func (rs *runState) startWorker(ctx context.Context, ch chan<- processState, done <-chan struct{}) *os.Process {
+// startWorker starts the actual command. It returns a non-nil error only
+// when its non-empty listener set cannot be formatted into a valid
+// SERVER_STARTER_PORT spec (see starter.FormatPorts); that is a permanent
+// misconfiguration, not a transient exec failure, so it is reported instead
+// of retried.
+func (rs *runState) startWorker(
+	ctx context.Context,
+	ch chan<- processState,
+	done <-chan struct{},
+) (*os.Process, error) {
 	// Don't give up until we're running.
 	for {
 		pid := -1
@@ -177,8 +185,21 @@ func (rs *runState) startWorker(ctx context.Context, ch chan<- processState, don
 		}
 		cmd.ExtraFiles = files
 
+		portSpec := ""
+		if len(portList) > 0 {
+			portSpec, err = starter.FormatPorts(portList...)
+			if err != nil {
+				for _, file := range files {
+					if file != nil {
+						file.Close()
+					}
+				}
+				return nil, fmt.Errorf("failed to format listeners for worker: %w", err)
+			}
+		}
+
 		rs.generation++
-		cmd.Env = buildWorkerEnv(rs.envOverlay, portList.String(), rs.generation)
+		cmd.Env = buildWorkerEnv(rs.envOverlay, portSpec, rs.generation)
 
 		// Now start!
 		startErr := cmd.Start()
@@ -229,7 +250,7 @@ func (rs *runState) startWorker(ctx context.Context, ch chan<- processState, don
 					}
 				}()
 				// Bail out
-				return p
+				return p, nil
 			}
 		}
 		// If we fall through here, we prematurely exited :/
