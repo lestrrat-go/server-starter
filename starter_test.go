@@ -163,7 +163,7 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 		}
 	}
 
-	time.AfterFunc(time.Second, sd.Stop)
+	time.AfterFunc(time.Second, sd.stop)
 	<-doneCh
 
 	log.Printf("Checking ports...")

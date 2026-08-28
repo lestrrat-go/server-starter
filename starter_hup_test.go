@@ -125,7 +125,7 @@ func TestHUPWithLiveOldWorkers(t *testing.T) {
 		}
 	}()
 	defer func() {
-		sd.Stop()
+		sd.stop()
 		select {
 		case <-doneCh:
 		case <-time.After(10 * time.Second):
@@ -151,7 +151,7 @@ func TestHUPWithLiveOldWorkers(t *testing.T) {
 	}
 	waitForGenerations(t, statusFile, 3)
 
-	// Generations are 1-based: StartWorker increments before spawning. All
+	// Generations are 1-based: startWorker increments before spawning. All
 	// three must still be listed, which is what proves the older workers were
 	// kept and re-signalled rather than dropped.
 	gens := make(map[string]struct{})
