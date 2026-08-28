@@ -45,10 +45,12 @@ func TestTeardownRemovesUnixSocket(t *testing.T) {
 // satisfies errors.Is(err, ErrServerClosed), never nil and never some other
 // error, so callers can treat context cancellation as success.
 func TestRunErrServerClosed(t *testing.T) {
+	command, args := testWorkerCommand(t)
 	sd, err := NewStarter(&config{
-		command: "/bin/sh",
-		args:    []string{"-c", "exec sleep 30"},
-		ports:   []string{"0"},
+		command:   command,
+		args:      args,
+		ports:     []string{"0"},
+		sigonterm: "KILL",
 	})
 	require.NoError(t, err)
 

@@ -25,17 +25,15 @@ import (
 func TestRunConcurrentOnSharedStarter(t *testing.T) {
 	dir := t.TempDir()
 	markerFile := filepath.Join(dir, "workers.txt")
+	command, args := testWorkerCommand(t, markerFile)
 
-	// The worker command appends its own pid to markerFile, then sleeps.
-	// Using a shell command keeps this file buildable on Windows (it only
-	// needs to compile there) without needing a companion worker binary.
-	// "exec sleep" replaces the shell with sleep in place (same pid), so
-	// the TERM the supervisor sends terminates it directly instead of
-	// leaving an orphaned grandchild holding the test's stdout pipe open.
+	// The helper worker appends its own pid to markerFile, then waits until
+	// the supervisor terminates it.
 	sd, err := NewStarter(&config{
-		command: "/bin/sh",
-		args:    []string{"-c", `echo $$ >> "$1"; exec sleep 30`, "sh", markerFile},
-		ports:   []string{"0"},
+		command:   command,
+		args:      args,
+		ports:     []string{"0"},
+		sigonterm: "KILL",
 	})
 	require.NoError(t, err)
 
