@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const pidTextSize = 64
+const maxPIDFileSize = 64
 
 // ErrPIDFileLocked means a live supervisor already holds the pid-file lock.
 var ErrPIDFileLocked = errors.New("pid file is already locked")
@@ -88,7 +88,7 @@ func acquire(path string, lock func(*os.File) error) (*PIDFile, error) {
 }
 
 func readOwnerPID(f *os.File) (int, bool) {
-	var data [pidTextSize]byte
+	var data [maxPIDFileSize]byte
 	n, err := readPIDText(f, data[:])
 	if err != nil && err != io.EOF {
 		return 0, false
@@ -110,7 +110,7 @@ func (p *PIDFile) Close() error {
 // supervisor lock. Keeping the returned handle open also lets callers wait on
 // the same file even if the pathname is later replaced.
 func OpenRunningPID(path string) (*RunningPID, error) {
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	f, err := openRunningPIDFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -120,9 +120,12 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		return nil, err
 	}
 
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(io.LimitReader(f, maxPIDFileSize+1))
 	if err != nil {
 		return closeWithError(err)
+	}
+	if len(data) > maxPIDFileSize {
+		return closeWithError(fmt.Errorf("pid file %q is too large", path))
 	}
 	value := strings.TrimSpace(string(data))
 	pid, err := strconv.Atoi(value)
@@ -145,11 +148,11 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 	if err != nil {
 		return closeWithError(err)
 	}
-	pathInfo, err := os.Stat(path)
+	pathInfo, err := os.Lstat(path)
 	if err != nil {
 		return closeWithError(err)
 	}
-	if !os.SameFile(openedInfo, pathInfo) {
+	if !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
 		return closeWithError(fmt.Errorf("pid file %q was replaced while being validated", path))
 	}
 

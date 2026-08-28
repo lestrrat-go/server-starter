@@ -3,13 +3,54 @@
 package statefile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestOpenRunningPIDRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.pid")
+	path := filepath.Join(dir, "server.pid")
+	require.NoError(t, os.WriteFile(target, fmt.Appendf(nil, "%d\n", os.Getpid()), 0600))
+	require.NoError(t, os.Symlink(target, path))
+
+	running, err := OpenRunningPID(path)
+	require.Error(t, err)
+	require.Nil(t, running)
+}
+
+func TestOpenRunningPIDRejectsFIFOWithoutBlocking(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.pid")
+	require.NoError(t, syscall.Mkfifo(path, 0600))
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := OpenRunningPID(path)
+		result <- err
+	}()
+
+	select {
+	case err := <-result:
+		require.ErrorContains(t, err, "is not a regular file")
+	case <-time.After(time.Second):
+		require.Fail(t, "OpenRunningPID blocked while opening a FIFO")
+	}
+}
+
+func TestOpenRunningPIDRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.pid")
+	require.NoError(t, os.WriteFile(path, make([]byte, maxPIDFileSize+1), 0600))
+
+	running, err := OpenRunningPID(path)
+	require.ErrorContains(t, err, "is too large")
+	require.Nil(t, running)
+}
 
 func TestAcquireRejectsSymlinkWithoutChangingTarget(t *testing.T) {
 	dir := t.TempDir()

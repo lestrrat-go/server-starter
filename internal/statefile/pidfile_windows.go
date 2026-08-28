@@ -55,6 +55,45 @@ func openPIDFile(path string) (*os.File, error) {
 	return f, nil
 }
 
+func openRunningPIDFile(path string) (*os.File, error) {
+	pathp, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pid file %q: %w", path, err)
+	}
+	handle, err := createPIDFile(pathp, windows.OPEN_EXISTING)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pid file %q: %w", path, err)
+	}
+	f := os.NewFile(uintptr(handle), path)
+	if f == nil {
+		windows.CloseHandle(handle)
+		return nil, fmt.Errorf("failed to open pid file %q", path)
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to inspect pid file %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("pid file %q is not a regular file", path)
+	}
+	var handleInfo windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &handleInfo); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to inspect pid file %q: %w", path, err)
+	}
+	if handleInfo.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		f.Close()
+		return nil, fmt.Errorf("pid file %q is a reparse point", path)
+	}
+	if handleInfo.NumberOfLinks != 1 {
+		f.Close()
+		return nil, fmt.Errorf("pid file %q has %d hard links, expected one", path, handleInfo.NumberOfLinks)
+	}
+	return f, nil
+}
+
 func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
 	return windows.CreateFile(
 		path,

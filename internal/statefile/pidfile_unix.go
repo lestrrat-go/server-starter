@@ -22,32 +22,47 @@ func openPIDFile(path string) (*os.File, error) {
 		return nil, fmt.Errorf("failed to open pid file %q: %w", path, err)
 	}
 
+	if err := validateOpenedPIDFile(f, path); err != nil {
+		f.Close()
+		return nil, err
+	}
+
+	return f, nil
+}
+
+func openRunningPIDFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pid file %q: %w", path, err)
+	}
+	if err := validateOpenedPIDFile(f, path); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+func validateOpenedPIDFile(f *os.File, path string) error {
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("failed to inspect pid file %q: %w", path, err)
+		return fmt.Errorf("failed to inspect pid file %q: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
-		f.Close()
-		return nil, fmt.Errorf("pid file %q is not a regular file", path)
+		return fmt.Errorf("pid file %q is not a regular file", path)
 	}
 
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		f.Close()
-		return nil, fmt.Errorf("failed to verify ownership of pid file %q", path)
+		return fmt.Errorf("failed to verify ownership of pid file %q", path)
 	}
 	expectedUID := uint32(os.Geteuid())
 	if stat.Uid != expectedUID {
-		f.Close()
-		return nil, fmt.Errorf("pid file %q is owned by uid %d, expected uid %d", path, stat.Uid, expectedUID)
+		return fmt.Errorf("pid file %q is owned by uid %d, expected uid %d", path, stat.Uid, expectedUID)
 	}
 	if stat.Nlink != 1 {
-		f.Close()
-		return nil, fmt.Errorf("pid file %q has %d hard links, expected one", path, stat.Nlink)
+		return fmt.Errorf("pid file %q has %d hard links, expected one", path, stat.Nlink)
 	}
-
-	return f, nil
+	return nil
 }
 
 func readPIDText(f *os.File, data []byte) (int, error) {

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -56,8 +57,13 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 		pid := startLegacyPIDLockHelper(t, path)
 
 		got, err := statefile.ReadPID(path)
-		require.NoError(t, err)
-		require.Equal(t, pid, got)
+		if runtime.GOOS == "linux" {
+			require.NoError(t, err)
+			require.Equal(t, pid, got)
+			return
+		}
+		require.ErrorContains(t, err, "cannot be attributed to a process")
+		require.Zero(t, got)
 	})
 
 	t.Run("rejects a legacy flock whose recorded pid does not own it", func(t *testing.T) {
