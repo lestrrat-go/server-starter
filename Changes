@@ -21,8 +21,8 @@ Changes
        --signal-on-term is set to something other than TERM and the
        supervisor is stopped with INT or QUIT rather than TERM.
      * When a file is deleted from the envdir, the corresponding
-       environment variable no longer disappears from the worker's
-       environment; it falls back to the value inherited from the real
+       environment variable no longer keeps the last value the supervisor
+       applied from it; it falls back to the value inherited from the real
        environment, since the worker's environment is now built fresh on
        every spawn.
      * KILL_OLD_DELAY, ENABLE_AUTO_RESTART, and AUTO_RESTART_INTERVAL are no

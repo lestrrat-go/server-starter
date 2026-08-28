@@ -82,15 +82,14 @@ observable differences. Each is deliberate.
    than TERM and then stops the supervisor with INT or QUIT rather than
    TERM.
 
-2. **A deleted envdir file no longer unsets a shadowed value.** Under v0,
-   the supervisor tracked which environment variables it had applied from
-   the envdir and unset them from its own environment when their file
-   disappeared. That also erased any value the variable had before the
-   envdir touched it, if one was inherited from the real environment. In
-   v2, the worker's environment is built fresh on every spawn from the
-   envdir contents plus the inherited environment, so a variable that is no
+2. **A deleted envdir file no longer leaves a stale value behind.** Under
+   v0, the supervisor applied envdir values into its own environment with
+   `os.Setenv` and never removed them, so deleting an envdir file left the
+   last applied value in place and the worker kept seeing it. In v2, the
+   worker's environment is built fresh on every spawn from the envdir
+   contents plus the inherited environment, so a variable that is no
    longer present in the envdir simply falls back to whatever value it had
-   in the inherited environment, instead of disappearing.
+   in the inherited environment, instead of keeping the stale value.
 
 3. **`KILL_OLD_DELAY`, `ENABLE_AUTO_RESTART`, and `AUTO_RESTART_INTERVAL`
    are no longer exported into the supervisor's own process environment.**
