@@ -3,6 +3,7 @@ package supervisor
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,11 +15,12 @@ var errNoEnv = errors.New("no ENVDIR specified, or ENVDIR does not exist")
 // for the caller to overlay onto a spawned worker's environment. Unlike the
 // old setEnv, it is a pure function: it never touches the supervisor's own
 // process environment, so the caller decides what, if anything, to do with
-// the result.
-func loadEnvdir(dn string) map[string]string {
+// the result. Any failure to load is reported to w, since loadEnvdir has no
+// stream of its own.
+func loadEnvdir(dn string, w io.Writer) map[string]string {
 	m, err := reloadEnv(dn)
 	if err != nil && !errors.Is(err, errNoEnv) {
-		fmt.Fprintf(os.Stderr, "failed to load from envdir: %s\n", err)
+		fmt.Fprintf(w, "failed to load from envdir: %s\n", err)
 	}
 	return m
 }

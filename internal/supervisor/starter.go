@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
@@ -23,6 +24,12 @@ type Config interface {
 	EnableAutoRestart() bool            // Whether to restart workers automatically on a timer
 	AutoRestartInterval() time.Duration // Interval between automatic restarts
 	KillOldDelay() time.Duration        // Delay before signalling old workers after a restart
+
+	// Stdout and Stderr are where the worker's own output and the
+	// supervisor's own diagnostics are written. A nil return from either
+	// falls back to the process-level os.Stdout/os.Stderr.
+	Stdout() io.Writer
+	Stderr() io.Writer
 }
 
 // Starter holds validated, immutable configuration for a supervisor run. It
@@ -46,6 +53,9 @@ type Starter struct {
 	enableAutoRestart   bool
 	autoRestartInterval time.Duration
 	killOldDelay        time.Duration
+
+	stdout io.Writer
+	stderr io.Writer
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
@@ -71,6 +81,18 @@ func NewStarter(c Config) (*Starter, error) {
 		return nil, err
 	}
 
+	// A Config that returns nil for either writer falls back to the
+	// process-level stream, so every existing Config implementer keeps
+	// working without having to grow an opinion about logging.
+	stdout := c.Stdout()
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+	stderr := c.Stderr()
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+
 	s := &Starter{
 		args:                c.Args(),
 		command:             c.Command(),
@@ -86,6 +108,8 @@ func NewStarter(c Config) (*Starter, error) {
 		enableAutoRestart:   c.EnableAutoRestart(),
 		autoRestartInterval: c.AutoRestartInterval(),
 		killOldDelay:        c.KillOldDelay(),
+		stdout:              stdout,
+		stderr:              stderr,
 	}
 
 	return s, nil

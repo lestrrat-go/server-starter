@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"time"
 
@@ -37,6 +38,12 @@ type options struct {
 	// being re-derived on every Config method call. Run populates this after
 	// parsing and before calling supervisor.NewStarter.
 	resolved resolvedSettings
+
+	// logWriter is the file opened for --log-file, if any. Run sets this
+	// before calling supervisor.NewStarter; nil (the --log-file-unset case)
+	// makes Stdout/Stderr return nil, and NewStarter substitutes the real
+	// os.Stdout/os.Stderr for a nil Config writer.
+	logWriter io.Writer
 }
 
 func (o options) Args() []string          { return o.OptArgs }
@@ -54,3 +61,6 @@ func (o options) Envdir() string                     { return o.resolved.envdir 
 func (o options) EnableAutoRestart() bool            { return o.resolved.enableAutoRestart }
 func (o options) AutoRestartInterval() time.Duration { return o.resolved.autoRestartInterval }
 func (o options) KillOldDelay() time.Duration        { return o.resolved.killOldDelay }
+
+func (o options) Stdout() io.Writer { return o.logWriter }
+func (o options) Stderr() io.Writer { return o.logWriter }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"os"
@@ -19,12 +20,12 @@ import (
 var successStatus syscall.WaitStatus
 var failureStatus syscall.WaitStatus
 
-func grabExitStatus(st processState) syscall.WaitStatus {
+func grabExitStatus(w io.Writer, st processState) syscall.WaitStatus {
 	// Note: POSSIBLY non portable. seems to work on Unix/Windows
 	// When/if this blows up, we will look for a cure
 	exitSt, ok := st.Sys().(syscall.WaitStatus)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Oh no, you are running on a platform where ProcessState.Sys().(syscall.WaitStatus) doesn't work! We're doomed! Temporarily setting status to 255. Please contact the author about this\n")
+		fmt.Fprintf(w, "Oh no, you are running on a platform where ProcessState.Sys().(syscall.WaitStatus) doesn't work! We're doomed! Temporarily setting status to 255. Please contact the author about this\n")
 		exitSt = failureStatus
 	}
 	return exitSt
@@ -47,6 +48,20 @@ func (d dummyProcessState) Sys() any {
 	return d.status
 }
 
+// reportFailedStart writes the "worker failed to start" diagnostic to w. ps
+// is nil when the spawn itself failed (exec never produced a process, so
+// there is no exit status to report) or when the worker vanished before its
+// exit status could be collected; either way, dereferencing it would panic,
+// so the message falls back to the pid alone. When ps is non-nil, its status
+// is reported the same way the neighbouring worker-death messages do.
+func reportFailedStart(w io.Writer, pid int, ps *os.ProcessState) {
+	if ps == nil {
+		fmt.Fprintf(w, "new worker %d seems to have failed to start\n", pid)
+		return
+	}
+	fmt.Fprintf(w, "new worker %d seems to have failed to start, status:%d\n", pid, grabExitStatus(w, ps))
+}
+
 // startWorker starts the actual command.
 func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.Process {
 	// Don't give up until we're running.
@@ -60,8 +75,8 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 		if rs.cfg.dir != "" {
 			cmd.Dir = rs.cfg.dir
 		}
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = rs.cfg.stdout
+		cmd.Stderr = rs.cfg.stderr
 
 		// This whole section here basically sets up the env
 		// var and the file descriptors that are inherited by the
@@ -150,11 +165,11 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 			}
 		}
 		if startErr != nil {
-			fmt.Fprintf(os.Stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
+			fmt.Fprintf(rs.cfg.stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
 		} else {
 			// Save pid...
 			pid = cmd.Process.Pid
-			fmt.Fprintf(os.Stderr, "starting new worker %d\n", pid)
+			fmt.Fprintf(rs.cfg.stderr, "starting new worker %d\n", pid)
 
 			// Wait for interval before checking if the process is alive. A
 			// cancelled ctx bails out early too: it means a shutdown was
@@ -195,7 +210,7 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 			f.Close()
 		}
 
-		fmt.Fprintf(os.Stderr, "new worker %d seems to have failed to start\n", pid)
+		reportFailedStart(rs.cfg.stderr, pid, cmd.ProcessState)
 	}
 }
 
