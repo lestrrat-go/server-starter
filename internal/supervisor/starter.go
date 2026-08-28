@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -63,6 +64,15 @@ type Starter struct {
 	stderr io.Writer
 }
 
+func hasPathSeparator(path string) bool {
+	for i := range len(path) {
+		if os.IsPathSeparator(path[i]) {
+			return true
+		}
+	}
+	return false
+}
+
 // NewStarter creates a new Starter object. Config parameter may NOT be
 // nil, as `Ports` and/or `Paths`, and `Command` are required
 func NewStarter(c Config) (*Starter, error) {
@@ -88,10 +98,19 @@ func NewStarter(c Config) (*Starter, error) {
 		signalOnTERM = signalOnTERMValue
 	}
 
-	if c.Command() == "" {
+	command := c.Command()
+	if command == "" {
 		return nil, fmt.Errorf("argument Command must be specified")
 	}
-	if _, err := exec.LookPath(c.Command()); err != nil {
+	dir := c.Dir()
+	if dir != "" && !filepath.IsAbs(command) && hasPathSeparator(command) {
+		var err error
+		command, err = filepath.Abs(filepath.Join(dir, command))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := exec.LookPath(command); err != nil {
 		return nil, err
 	}
 
@@ -109,8 +128,8 @@ func NewStarter(c Config) (*Starter, error) {
 
 	s := &Starter{
 		args:                c.Args(),
-		command:             c.Command(),
-		dir:                 c.Dir(),
+		command:             command,
+		dir:                 dir,
 		interval:            c.Interval(),
 		pidFile:             c.PidFile(),
 		ports:               c.Ports(),

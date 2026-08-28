@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -148,6 +149,40 @@ func readFileEventually(t *testing.T, path string) []byte {
 
 	t.Fatalf("timed out waiting for %s", path)
 	return nil
+}
+
+func TestNewStarterResolvesRelativeCommandAgainstDir(t *testing.T) {
+	dir := t.TempDir()
+	commandName := "worker"
+	if runtime.GOOS == "windows" {
+		commandName += ".exe"
+	}
+	executable := filepath.Join(dir, commandName)
+	require.NoError(t, os.WriteFile(executable, nil, 0700))
+
+	sd, err := NewStarter(&config{
+		command: "." + string(os.PathSeparator) + commandName,
+		dir:     dir,
+	})
+	require.NoError(t, err)
+	require.Equal(t, executable, sd.command)
+}
+
+func TestNewStarterPreservesBareCommandForPATHLookup(t *testing.T) {
+	dir := t.TempDir()
+	commandName := "worker"
+	if runtime.GOOS == "windows" {
+		commandName += ".exe"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, commandName), nil, 0700))
+	t.Setenv("PATH", dir)
+
+	sd, err := NewStarter(&config{
+		command: commandName,
+		dir:     t.TempDir(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, commandName, sd.command)
 }
 
 func TestRun(t *testing.T) {
