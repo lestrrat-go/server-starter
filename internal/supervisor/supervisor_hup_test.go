@@ -378,7 +378,7 @@ func TestHUPDuringUnexpectedExitRestartJoinsThatRestart(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	ctrl, err := sd.Run(ctx)
