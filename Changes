@@ -29,8 +29,9 @@ Changes
        every spawn.
      * KILL_OLD_DELAY, ENABLE_AUTO_RESTART, and AUTO_RESTART_INTERVAL are no
        longer exported into the supervisor's own process environment. They
-       are passed as configuration instead, so the worker environment they
-       produce is unchanged.
+       are passed as configuration instead, so command-line values are not
+       newly exported to workers. Ambient and envdir values retain their
+       normal worker inheritance, with envdir values taking precedence.
    - See MIGRATION.md for a full symbol-by-symbol migration guide
 
 0.0.2 Jan 06 2015

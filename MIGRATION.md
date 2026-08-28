@@ -115,17 +115,15 @@ observable differences. Each is deliberate.
    Perl sets these in its own process and relies on `fork` to carry them
    down to the worker. A Go library must not mutate its own process-global
    environment that way, since two supervisors running in one process would
-   race on it. In v2 these are passed as configuration values and the
-   worker's environment is constructed explicitly from them. These
-   variables are not placed in the worker's environment at all — a
-   worker process never sees `KILL_OLD_DELAY`, `ENABLE_AUTO_RESTART`, or
-   `AUTO_RESTART_INTERVAL`. A v0 worker did not see them either, since
-   v0's supervisor never exported them for `fork` to carry down, so
-   someone migrating from v0 observes no difference here. The divergence
-   is from Perl's `Server::Starter`, which does export these variables
-   into its own process and relies on `fork` to pass them to the worker.
-   This is not a claim that the worker's environment is otherwise
-   identical to v0's; other things about it have changed.
+   race on it. In v2, values derived from command-line flags are passed as
+   configuration and are not newly exported to the worker. Existing
+   environment values keep their normal inheritance: a value present in
+   the ambient environment reaches the worker, and an envdir value is
+   overlaid on the ambient value. A worker can therefore see any of these
+   variables when its launch environment or envdir supplies them. This
+   matches v0's inheritance behavior; the divergence is from Perl's
+   `Server::Starter`, which exports its configuration values before
+   `fork` passes them to the worker.
 
 ## Windows limitations
 
