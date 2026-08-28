@@ -27,10 +27,15 @@ func Run() int {
 	opts := &options{OptInterval: -1}
 	p := flags.NewParser(opts, flags.PrintErrors|flags.PassDoubleDash)
 	args, err := p.Parse()
-	if err != nil || opts.OptHelp {
+	if err != nil {
 		showHelp()
 		return 1
 	}
+	if opts.OptHelp {
+		showHelp()
+		return 0
+	}
+
 	if err := validateControlActions(opts); err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		return 1

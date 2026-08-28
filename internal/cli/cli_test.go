@@ -99,3 +99,89 @@ func TestRunRejectsConflictingControlActions(t *testing.T) {
 	require.Equal(t, 1, exitCode)
 	require.Equal(t, "--stop and --restart cannot be used together; choose one action\n", string(stderr))
 }
+
+func TestRunInformationalAndParseExitCodes(t *testing.T) {
+	testCases := []struct {
+		name       string
+		args       []string
+		exitCode   int
+		stdoutText string
+		stderrText string
+	}{
+		{
+			name:       "help succeeds",
+			args:       []string{"--help"},
+			exitCode:   0,
+			stderrText: "Usage:",
+		},
+		{
+			name:       "version succeeds",
+			args:       []string{"--version"},
+			exitCode:   0,
+			stdoutText: "0.0.2\n",
+		},
+		{
+			name:       "parse error fails",
+			args:       []string{"--unknown-option"},
+			exitCode:   1,
+			stderrText: "Usage:",
+		},
+		{
+			name:       "help does not hide a parse error",
+			args:       []string{"--help", "--unknown-option"},
+			exitCode:   1,
+			stderrText: "Usage:",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			exitCode, stdout, stderr := runCLI(t, tc.args...)
+			require.Equal(t, tc.exitCode, exitCode)
+			if tc.stdoutText == "" {
+				require.Empty(t, stdout)
+			} else {
+				require.Contains(t, stdout, tc.stdoutText)
+			}
+			if tc.stderrText == "" {
+				require.Empty(t, stderr)
+			} else {
+				require.Contains(t, stderr, tc.stderrText)
+			}
+		})
+	}
+}
+
+func runCLI(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	require.NoError(t, err)
+	stderrReader, stderrWriter, err := os.Pipe()
+	require.NoError(t, err)
+
+	originalArgs := os.Args
+	originalStdout := os.Stdout
+	originalStderr := os.Stderr
+	os.Args = append([]string{"start_server"}, args...)
+	os.Stdout = stdoutWriter
+	os.Stderr = stderrWriter
+	t.Cleanup(func() {
+		os.Args = originalArgs
+		os.Stdout = originalStdout
+		os.Stderr = originalStderr
+	})
+
+	exitCode := Run()
+	require.NoError(t, stdoutWriter.Close())
+	require.NoError(t, stderrWriter.Close())
+
+	stdout, err := io.ReadAll(stdoutReader)
+	require.NoError(t, err)
+	stderr, err := io.ReadAll(stderrReader)
+	require.NoError(t, err)
+	require.NoError(t, stdoutReader.Close())
+	require.NoError(t, stderrReader.Close())
+
+	return exitCode, string(stdout), string(stderr)
+}
