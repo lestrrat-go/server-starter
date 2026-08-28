@@ -39,18 +39,34 @@ func Stop(ctx context.Context, pidPath string) error {
 			return fmt.Errorf("timed out waiting for process %d to stop: %w", pid, ctx.Err())
 		case <-ticker.C:
 		}
-		f, err := os.OpenFile(pidPath, os.O_RDWR, 0644)
-		if errors.Is(err, os.ErrNotExist) {
+		stopped, err := processStopped(pidPath, statefile.TryLock)
+		if err != nil {
+			return err
+		}
+		if stopped {
 			return nil
 		}
-		if err == nil {
-			err = statefile.TryLock(f)
-			f.Close()
-			if err == nil {
-				return nil
-			}
-		}
 	}
+}
+
+func processStopped(pidPath string, tryLock func(*os.File) error) (bool, error) {
+	f, err := os.OpenFile(pidPath, os.O_RDWR, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to open pid file %q while waiting for process to stop: %w", pidPath, err)
+	}
+
+	lockErr := tryLock(f)
+	closeErr := f.Close()
+	if lockErr != nil && !errors.Is(lockErr, syscall.EWOULDBLOCK) {
+		return false, fmt.Errorf("failed to check pid file %q while waiting for process to stop: %w", pidPath, lockErr)
+	}
+	if closeErr != nil {
+		return false, fmt.Errorf("failed to close pid file %q while waiting for process to stop: %w", pidPath, closeErr)
+	}
+	return lockErr == nil, nil
 }
 
 // Restart reads the pid from pidPath, sends SIGHUP, and waits until the
@@ -67,7 +83,7 @@ func Restart(ctx context.Context, pidPath, statusPath string) error {
 	}
 	previous, err := statefile.ReadStatus(statusPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read status file %q before restart: %w", statusPath, err)
 	}
 	if err := signalProcess(pid, syscall.SIGHUP); err != nil {
 		return err
@@ -86,7 +102,10 @@ func Restart(ctx context.Context, pidPath, statusPath string) error {
 		case <-ticker.C:
 		}
 		current, err := statefile.ReadStatus(statusPath)
-		if err == nil && generationAdvanced(previous, current) && oldWorkersGone(previous, current) {
+		if err != nil {
+			return fmt.Errorf("failed to read status file %q while waiting for restart: %w", statusPath, err)
+		}
+		if generationAdvanced(previous, current) && oldWorkersGone(previous, current) {
 			return nil
 		}
 	}
