@@ -252,8 +252,8 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- e
 	// Just wait for the worker to exit, for a restart request, or for ctx
 	// to be cancelled.
 	for {
-		// startWorker can return nil when a shutdown/restart request arrives
-		// after a replacement exits but before the next retry succeeds.
+		// startWorker can return nil when cancellation arrives while a newly
+		// spawned process is undergoing its liveness check.
 		currentPID := 0
 		if p != nil {
 			currentPID = p.Pid
@@ -342,6 +342,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- e
 			if p != nil {
 				rs.oldWorkers[p.Pid] = rs.generation
 			}
+			p = nil
 			if err := rs.reloadEnvdir(); err != nil {
 				sigToSend = rs.cfg.signalOnTERM
 				ctrl.setErr(err)

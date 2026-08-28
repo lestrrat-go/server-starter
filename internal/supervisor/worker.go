@@ -22,6 +22,8 @@ var failureStatus syscall.WaitStatus
 
 const minimumCheckedStartupInterval = time.Second
 
+const minimumWorkerStartRetryDelay = 100 * time.Millisecond
+
 type workerStartupState struct {
 	checked bool
 }
@@ -49,6 +51,31 @@ func (s workerStartupState) waitForProbe(ctx context.Context, interval time.Dura
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func terminalWorkerStartError(err error) bool {
+	return errors.Is(err, os.ErrNotExist) ||
+		errors.Is(err, os.ErrPermission) ||
+		errors.Is(err, syscall.EINVAL)
+}
+
+func workerStartRetryDelay(interval time.Duration) time.Duration {
+	if interval < minimumWorkerStartRetryDelay {
+		return minimumWorkerStartRetryDelay
+	}
+	return interval
+}
+
+func waitForWorkerStartRetry(ctx context.Context, interval time.Duration) bool {
+	timer := time.NewTimer(workerStartRetryDelay(interval))
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -132,11 +159,11 @@ func reportFailedStart(
 // startWorker starts the actual command. It returns a non-nil error when worker
 // descriptor setup fails, when its non-empty listener set cannot be formatted
 // into a valid SERVER_STARTER_PORT spec (see starter.FormatPorts), or when the
-// initial worker command cannot start or exits before passing a synchronous
-// startup check. Without a synchronous startup check, command-start errors and
-// early exits remain transient and are retried. Context cancellation always
-// returns ctx.Err(); the supervisor loop translates it to ErrServerClosed for
-// an ordinary Run while checked startup reports the context error directly.
+// command has a terminal launch error, or the initial worker exits before
+// passing a synchronous startup check. Transient launch errors and unchecked
+// early exits are retried. Context cancellation always returns ctx.Err(); the
+// supervisor loop translates it to ErrServerClosed for an ordinary Run while
+// checked startup reports the context error directly.
 func (rs *runState) startWorker(
 	ctx context.Context,
 	ch chan<- processState,
@@ -235,9 +262,13 @@ func (rs *runState) startWorker(
 		cmd.ExtraFiles = nil
 		if startErr != nil {
 			fmt.Fprintf(rs.cfg.stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
-			if startup.checked {
-				return nil, startErr
+			if terminalWorkerStartError(startErr) {
+				return nil, fmt.Errorf("failed to start worker %s: %w", cmd.Path, startErr)
 			}
+			if !waitForWorkerStartRetry(ctx, rs.cfg.interval) {
+				return nil, ctx.Err()
+			}
+			continue
 		} else {
 			// Save pid...
 			pid = cmd.Process.Pid
