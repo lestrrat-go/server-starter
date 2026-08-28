@@ -38,9 +38,8 @@ type runState struct {
 
 	oldWorkers map[int]int
 
-	restartTimer      *time.Timer
-	restartC          <-chan time.Time
-	autoRestartForced bool
+	restartTimer *time.Timer
+	restartC     <-chan time.Time
 }
 
 // Run acquires the pid file, binds every listener, and performs the initial
@@ -191,6 +190,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 	}()
 
 	rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
+	hangupPending := false
 
 	// Just wait for the worker to exit, for a restart request, or for ctx
 	// to be cancelled.
@@ -204,15 +204,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 		if err := statefile.WriteStatus(rs.cfg.statusFile, statefile.StatusMap(rs.oldWorkers, currentPID, rs.generation)); err != nil {
 			fmt.Fprintf(rs.cfg.stderr, "failed to write status file: %s\n", err)
 		}
-		// restart == 2: respawn unconditionally
-		// restart == 1: respawn only if no old workers are still alive
-		// restart == 0: leave the worker alone
-		//
-		// Level 1 has no callers yet. It exists for ENABLE_AUTO_RESTART,
-		// whose two thresholds in Server::Starter differ in exactly this
-		// way: the ordinary interval waits for the old workers to go, the
-		// forced one (twice the interval) does not.
-		restart := 0
+		restart := false
 
 		select {
 		case st := <-workerCh:
@@ -223,47 +215,42 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 				rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
 				p = rs.startWorker(ctx, workerCh, workerStateDone)
 				if rs.restartTimer != nil {
-					rs.autoRestartForced = false
 					rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 				}
 			} else {
 				exitSt := grabExitStatus(rs.cfg.stderr, st)
 				fmt.Fprintf(rs.cfg.stderr, "old worker %d died, status:%d\n", st.Pid(), exitSt)
 				delete(rs.oldWorkers, st.Pid())
+				if len(rs.oldWorkers) == 0 && hangupPending {
+					hangupPending = false
+					restart = true
+					sigToSend = rs.cfg.signalOnHUP
+				}
 			}
 		case <-ctx.Done():
 			sigToSend = rs.cfg.signalOnTERM
 			ctrl.setErr(ErrServerClosed)
 			return
 		case <-ctrl.hangup:
-			// When we receive a hangup request, we need to spawn a new
-			// worker.
-			//
-			// This is level 2, not 1, on purpose. Server::Starter runs its
-			// HUP path unconditionally (Starter.pm's `if ($restart)`), while
-			// level 1 below is gated on there being no live old workers.
-			// Using level 1 here made a HUP a no-op whenever an earlier
-			// worker was still shutting down, so repeated HUPs never
-			// re-signalled it. See #9.
 			fmt.Fprintf(rs.cfg.stderr, "received hangup request (num_old_workers=%d)\n", len(rs.oldWorkers))
-			restart = 2
-			sigToSend = rs.cfg.signalOnHUP
+			if len(rs.oldWorkers) == 0 {
+				restart = true
+				sigToSend = rs.cfg.signalOnHUP
+			} else {
+				hangupPending = true
+				fmt.Fprintf(rs.cfg.stderr, "coalescing hangup request until old workers exit\n")
+			}
 		case <-rs.restartC:
 			if len(rs.oldWorkers) == 0 {
-				restart = 1
-				rs.autoRestartForced = false
-			} else if rs.autoRestartForced {
-				restart = 2
-				rs.autoRestartForced = false
+				restart = true
 			} else {
-				rs.autoRestartForced = true
 				if rs.restartTimer != nil {
 					rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 				}
 			}
 		}
 
-		if restart > 1 || restart > 0 && len(rs.oldWorkers) == 0 {
+		if restart {
 			fmt.Fprintf(rs.cfg.stderr, "spawning a new worker (num_old_workers=%d)\n", len(rs.oldWorkers))
 			if p != nil {
 				rs.oldWorkers[p.Pid] = rs.generation
@@ -271,7 +258,6 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
 			p = rs.startWorker(ctx, workerCh, workerStateDone)
 			if rs.restartTimer != nil {
-				rs.autoRestartForced = false
 				rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 			}
 			fmt.Fprintf(rs.cfg.stderr, "new worker is now running, sending %s to old workers:", signame(sigToSend))
