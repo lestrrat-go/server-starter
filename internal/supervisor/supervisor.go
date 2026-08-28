@@ -115,7 +115,8 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 			}
 		}
 		_ = os.Remove(path)
-		l, err := net.Listen("unix", path)
+		lc := listenConfig("unix")
+		l, err := lc.Listen(ctx, "unix", path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
 			return nil, err

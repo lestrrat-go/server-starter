@@ -13,7 +13,7 @@ import (
 
 func TestTeardownRemovesUnixSocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.sock")
-	l, err := net.Listen("unix", path)
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}
