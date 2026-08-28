@@ -192,7 +192,12 @@ func removeExistingUnixSocket(path string) error {
 	return removeExistingUnixSocketWithRename(path, renameNoReplaceAt)
 }
 
-func removeExistingUnixSocketWithRename(path string, renamePath func(*os.File, string, string) error) error {
+const quarantinedSocketName = "socket"
+
+func removeExistingUnixSocketWithRename(
+	path string,
+	renamePath func(*os.File, string, *os.File, string) error,
+) error {
 	if runtime.GOOS == "linux" && strings.HasPrefix(path, "@") {
 		return nil
 	}
@@ -223,27 +228,38 @@ func removeExistingUnixSocketWithRename(path string, renamePath func(*os.File, s
 	if err != nil {
 		return fmt.Errorf("create quarantine name for unix socket path %q: %w", path, err)
 	}
-	quarantinePath := filepath.Join(parentPath, quarantineName)
+	quarantinePath := filepath.Join(parentPath, quarantineName, quarantinedSocketName)
+	quarantine, err := createPrivateDirAt(parent, quarantineName)
+	if err != nil {
+		return fmt.Errorf("create quarantine directory for unix socket path %q: %w", path, err)
+	}
+	defer quarantine.Close()
 
-	if err := renamePath(parent, name, quarantineName); err != nil {
+	if err := renamePath(parent, name, quarantine, quarantinedSocketName); err != nil {
+		if cleanupErr := closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName); cleanupErr != nil {
+			return fmt.Errorf("move unix socket path %q: %w; remove quarantine directory: %v", path, err, cleanupErr)
+		}
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("move unix socket path %q: %w", path, err)
 	}
 
-	isSocket, err = pathIsSocketAt(parent, quarantineName)
+	isSocket, err = pathIsSocketAt(quarantine, quarantinedSocketName)
 	if err != nil {
 		return fmt.Errorf("inspect moved unix socket path %q, preserved at %q: %w", path, quarantinePath, err)
 	}
 	if isSocket {
-		if err := removeAt(parent, quarantineName); err != nil {
+		if err := removeAt(quarantine, quarantinedSocketName); err != nil {
 			return fmt.Errorf("remove moved unix socket path %q: %w", path, err)
+		}
+		if err := closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName); err != nil {
+			return fmt.Errorf("remove quarantine directory for unix socket path %q: %w", path, err)
 		}
 		return nil
 	}
 
-	if err := renameNoReplaceAt(parent, quarantineName, name); err != nil {
+	if err := renameNoReplaceAt(quarantine, quarantinedSocketName, parent, name); err != nil {
 		return fmt.Errorf(
 			"unix socket path %q changed to a non-socket and was preserved at %q: %w",
 			path,
@@ -251,7 +267,17 @@ func removeExistingUnixSocketWithRename(path string, renamePath func(*os.File, s
 			err,
 		)
 	}
+	if err := closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName); err != nil {
+		return fmt.Errorf("remove quarantine directory for changed unix socket path %q: %w", path, err)
+	}
 	return fmt.Errorf("unix socket path %q changed during preparation and is not a socket", path)
+}
+
+func closeAndRemoveSocketQuarantine(parent, quarantine *os.File, name string) error {
+	if err := quarantine.Close(); err != nil {
+		return err
+	}
+	return removeDirAt(parent, name)
 }
 
 func newSocketQuarantineName() (string, error) {

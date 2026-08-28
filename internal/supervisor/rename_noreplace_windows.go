@@ -9,9 +9,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func renameNoReplaceAt(dir *os.File, oldName, newName string) error {
-	oldpath := filepath.Join(dir.Name(), oldName)
-	newpath := filepath.Join(dir.Name(), newName)
+func renameNoReplaceAt(oldDir *os.File, oldName string, newDir *os.File, newName string) error {
+	oldpath := filepath.Join(oldDir.Name(), oldName)
+	newpath := filepath.Join(newDir.Name(), newName)
 	oldpathPtr, err := windows.UTF16PtrFromString(oldpath)
 	if err != nil {
 		return err
@@ -32,5 +32,22 @@ func pathIsSocketAt(dir *os.File, name string) (bool, error) {
 }
 
 func removeAt(dir *os.File, name string) error {
+	return os.Remove(filepath.Join(dir.Name(), name))
+}
+
+func createPrivateDirAt(dir *os.File, name string) (*os.File, error) {
+	path := filepath.Join(dir.Name(), name)
+	if err := os.Mkdir(path, 0700); err != nil {
+		return nil, err
+	}
+	privateDir, err := os.Open(path)
+	if err != nil {
+		_ = os.Remove(path)
+		return nil, err
+	}
+	return privateDir, nil
+}
+
+func removeDirAt(dir *os.File, name string) error {
 	return os.Remove(filepath.Join(dir.Name(), name))
 }

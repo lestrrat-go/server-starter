@@ -61,7 +61,7 @@ func TestRemoveExistingUnixSocketRejectsNonSocketEntries(t *testing.T) {
 		require.NoError(t, os.Mkdir(path, 0700))
 
 		renameCalled := false
-		err := removeExistingUnixSocketWithRename(path, func(*os.File, string, string) error {
+		err := removeExistingUnixSocketWithRename(path, func(*os.File, string, *os.File, string) error {
 			renameCalled = true
 			return nil
 		})
@@ -143,10 +143,15 @@ func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
 		})
 
 		go func() {
-			result <- removeExistingUnixSocketWithRename(path, func(dir *os.File, oldName, newName string) error {
+			result <- removeExistingUnixSocketWithRename(path, func(
+				oldDir *os.File,
+				oldName string,
+				newDir *os.File,
+				newName string,
+			) error {
 				close(renameReached)
 				<-continueRename
-				return renameNoReplaceAt(dir, oldName, newName)
+				return renameNoReplaceAt(oldDir, oldName, newDir, newName)
 			})
 		}()
 
@@ -186,8 +191,13 @@ func TestRemoveExistingUnixSocketPreservesReplacement(t *testing.T) {
 		})
 
 		go func() {
-			result <- removeExistingUnixSocketWithRename(path, func(dir *os.File, oldName, newName string) error {
-				if err := renameNoReplaceAt(dir, oldName, newName); err != nil {
+			result <- removeExistingUnixSocketWithRename(path, func(
+				oldDir *os.File,
+				oldName string,
+				newDir *os.File,
+				newName string,
+			) error {
+				if err := renameNoReplaceAt(oldDir, oldName, newDir, newName); err != nil {
 					return err
 				}
 				close(renameFinished)
@@ -226,11 +236,16 @@ func TestRemoveExistingUnixSocketAnchorsParentDirectory(t *testing.T) {
 	require.NoError(t, l.Close())
 
 	contents := []byte("replacement")
-	err = removeExistingUnixSocketWithRename(path, func(dir *os.File, oldName, newName string) error {
+	err = removeExistingUnixSocketWithRename(path, func(
+		oldDir *os.File,
+		oldName string,
+		newDir *os.File,
+		newName string,
+	) error {
 		require.NoError(t, os.Rename(parentPath, movedParentPath))
 		require.NoError(t, os.Mkdir(parentPath, 0700))
 		require.NoError(t, os.WriteFile(path, contents, 0600))
-		return renameNoReplaceAt(dir, oldName, newName)
+		return renameNoReplaceAt(oldDir, oldName, newDir, newName)
 	})
 	require.NoError(t, err)
 
