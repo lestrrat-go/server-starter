@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -79,9 +78,6 @@ func Run() int {
 		opts.OptArgs = args[1:]
 	}
 
-	if opts.OptEnvdir != "" {
-		os.Setenv("ENVDIR", opts.OptEnvdir)
-	}
 	if opts.OptLogFile != "" {
 		f, err := os.OpenFile(opts.OptLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
@@ -92,18 +88,16 @@ func Run() int {
 		os.Stderr = f
 	}
 
-	// Export these into the environment the same way Perl's start_server
-	// does (Starter.pm:50-55), and only when the flag was actually passed
-	// so an unset flag does not clobber an inherited environment value.
-	if p.FindOptionByLongName("kill-old-delay").IsSet() {
-		os.Setenv("KILL_OLD_DELAY", strconv.Itoa(opts.OptKillOldDelay))
-	}
-	if p.FindOptionByLongName("enable-auto-restart").IsSet() {
-		os.Setenv("ENABLE_AUTO_RESTART", "1")
-	}
-	if p.FindOptionByLongName("auto-restart-interval").IsSet() {
-		os.Setenv("AUTO_RESTART_INTERVAL", strconv.Itoa(opts.OptAutoRestartInterval))
-	}
+	// Resolve envdir/auto-restart/kill-old-delay once, here, instead of
+	// exporting them into the process environment for internal/supervisor
+	// to read back (which is not safe: two supervisors running in one
+	// process would race on the shared environment). Precedence is the
+	// flag if it was explicitly passed, otherwise the ambient environment
+	// variable, otherwise a default -- the same result the old exporting
+	// code produced, without mutating the process environment to get it.
+	opts.resolved = resolveSettings(opts, func(long string) bool {
+		return p.FindOptionByLongName(long).IsSet()
+	})
 
 	s, err := supervisor.NewStarter(opts)
 	if err != nil {

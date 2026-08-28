@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	starter "github.com/lestrrat-go/server-starter/v2"
 )
 
 var successStatus syscall.WaitStatus
@@ -92,7 +96,7 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 			}
 		}
 		files := make([]*os.File, maxFD-2)
-		ports := make([]string, len(rs.listeners))
+		portList := make(starter.List, len(rs.listeners))
 		var err error
 		for slot := range files {
 			files[slot], err = os.OpenFile(os.DevNull, os.O_RDONLY, 0)
@@ -131,13 +135,12 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 			}
 			files[descriptors[i]-3].Close()
 			files[descriptors[i]-3] = f
-			ports[i] = fmt.Sprintf("%s=%d", l.spec, descriptors[i])
+			portList[i] = l.starterListener(descriptors[i])
 		}
 		cmd.ExtraFiles = files
 
 		rs.generation++
-		os.Setenv("SERVER_STARTER_PORT", strings.Join(ports, ";"))
-		os.Setenv("SERVER_STARTER_GENERATION", fmt.Sprintf("%d", rs.generation))
+		cmd.Env = buildWorkerEnv(rs.envOverlay, portList.String(), rs.generation)
 
 		// Now start!
 		startErr := cmd.Start()
@@ -194,4 +197,33 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 
 		fmt.Fprintf(os.Stderr, "new worker %d seems to have failed to start\n", pid)
 	}
+}
+
+// buildWorkerEnv builds the environment for a spawned worker explicitly,
+// rather than relying on exec.Command's default inheritance combined with
+// mutating the supervisor's own process environment (the old approach,
+// which two concurrent supervisors running in the same process would race
+// on). It
+// starts from the supervisor's own environment, overlays the envdir map
+// (last-loaded envdir wins over the ambient value, mirroring the old
+// setEnv's precedence), then sets the protocol variables. Building a map
+// first and flattening it afterward guarantees each key appears once in the
+// result: a duplicate KEY= entry in cmd.Env is resolved by "last one wins"
+// on Linux, but that is not something to depend on for readability.
+func buildWorkerEnv(overlay map[string]string, portSpec string, generation int) []string {
+	merged := make(map[string]string, len(overlay)+2)
+	for _, kv := range os.Environ() {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			merged[k] = v
+		}
+	}
+	maps.Copy(merged, overlay)
+	merged[starter.PortEnvName] = portSpec
+	merged[starter.GenerationEnvName] = strconv.Itoa(generation)
+
+	env := make([]string, 0, len(merged))
+	for k, v := range merged {
+		env = append(env, k+"="+v)
+	}
+	return env
 }

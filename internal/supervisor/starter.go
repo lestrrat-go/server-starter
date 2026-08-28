@@ -19,6 +19,10 @@ type Config interface {
 	SignalOnHUP() os.Signal  // Signal to send when HUP is received
 	SignalOnTERM() os.Signal // Signal to send when TERM is received
 	StatusFile() string
+	Envdir() string                     // Directory of files to load into each worker's environment
+	EnableAutoRestart() bool            // Whether to restart workers automatically on a timer
+	AutoRestartInterval() time.Duration // Interval between automatic restarts
+	KillOldDelay() time.Duration        // Delay before signalling old workers after a restart
 }
 
 // Starter holds validated, immutable configuration for a supervisor run. It
@@ -37,6 +41,11 @@ type Starter struct {
 	paths      []string
 	command    string
 	args       []string
+
+	envdir              string
+	enableAutoRestart   bool
+	autoRestartInterval time.Duration
+	killOldDelay        time.Duration
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
@@ -63,16 +72,20 @@ func NewStarter(c Config) (*Starter, error) {
 	}
 
 	s := &Starter{
-		args:         c.Args(),
-		command:      c.Command(),
-		dir:          c.Dir(),
-		interval:     c.Interval(),
-		pidFile:      c.PidFile(),
-		ports:        c.Ports(),
-		paths:        c.Paths(),
-		signalOnHUP:  signalOnHUP,
-		signalOnTERM: signalOnTERM,
-		statusFile:   c.StatusFile(),
+		args:                c.Args(),
+		command:             c.Command(),
+		dir:                 c.Dir(),
+		interval:            c.Interval(),
+		pidFile:             c.PidFile(),
+		ports:               c.Ports(),
+		paths:               c.Paths(),
+		signalOnHUP:         signalOnHUP,
+		signalOnTERM:        signalOnTERM,
+		statusFile:          c.StatusFile(),
+		envdir:              c.Envdir(),
+		enableAutoRestart:   c.EnableAutoRestart(),
+		autoRestartInterval: c.AutoRestartInterval(),
+		killOldDelay:        c.KillOldDelay(),
 	}
 
 	return s, nil

@@ -30,6 +30,13 @@ type options struct {
 	OptStop                bool     `long:"stop" description:"reads the pid from --pid-file, sends SIGTERM, and waits for the process to exit"`
 	OptHelp                bool     `long:"help" description:"prints this help"`
 	OptVersion             bool     `long:"version" description:"prints the version number"`
+
+	// resolved carries the four settings whose precedence (flag if
+	// explicitly passed, otherwise the ambient environment variable,
+	// otherwise a default) is worked out once by resolveSettings, instead of
+	// being re-derived on every Config method call. Run populates this after
+	// parsing and before calling supervisor.NewStarter.
+	resolved resolvedSettings
 }
 
 func (o options) Args() []string          { return o.OptArgs }
@@ -42,3 +49,8 @@ func (o options) Paths() []string         { return o.OptPaths }
 func (o options) SignalOnHUP() os.Signal  { return supervisor.SigFromName(o.OptSignalOnHUP) }
 func (o options) SignalOnTERM() os.Signal { return supervisor.SigFromName(o.OptSignalOnTERM) }
 func (o options) StatusFile() string      { return o.OptStatusFile }
+
+func (o options) Envdir() string                     { return o.resolved.envdir }
+func (o options) EnableAutoRestart() bool            { return o.resolved.enableAutoRestart }
+func (o options) AutoRestartInterval() time.Duration { return o.resolved.autoRestartInterval }
+func (o options) KillOldDelay() time.Duration        { return o.resolved.killOldDelay }
