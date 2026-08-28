@@ -114,14 +114,14 @@ observable differences. Each is deliberate.
    down to the worker. A Go library must not mutate its own process-global
    environment that way, since two supervisors running in one process would
    race on it. In v2, values derived from command-line flags are passed as
-   configuration and are not newly exported to the worker. Existing
-   environment values keep their normal inheritance: a value present in
-   the ambient environment reaches the worker, and an envdir value is
-   overlaid on the ambient value. A worker can therefore see any of these
-   variables when its launch environment or envdir supplies them. This
-   matches v0's inheritance behavior; the divergence is from Perl's
-   `Server::Starter`, which exports its configuration values before
-   `fork` passes them to the worker.
+   configuration instead, so flag-derived values alone do not add these
+   variables to the worker's environment. Existing environment values keep
+   their normal inheritance: a value present in the ambient environment
+   reaches the worker, and an envdir value is overlaid on the ambient value.
+   A worker can therefore see any of these variables when its launch
+   environment or envdir supplies them. This matches v0's inheritance
+   behavior; the divergence is from Perl's `Server::Starter`, which exports
+   its configuration values before `fork` passes them to the worker.
 
 ## Windows limitations
 
