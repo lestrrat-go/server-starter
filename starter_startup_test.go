@@ -93,7 +93,7 @@ func TestSIGTERMDuringFailedReplacementDoesNotPanic(t *testing.T) {
 		select {
 		case <-doneCh:
 		case <-time.After(10 * time.Second):
-			sd.Stop()
+			sd.stop()
 			select {
 			case <-doneCh:
 			case <-time.After(10 * time.Second):

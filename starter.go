@@ -138,7 +138,7 @@ func NewStarter(c Config) (*Starter, error) {
 	return s, nil
 }
 
-func (s *Starter) Stop() {
+func (s *Starter) stop() {
 	p, _ := os.FindProcess(os.Getpid())
 	_ = p.Signal(syscall.SIGTERM)
 }
@@ -262,7 +262,7 @@ func listenConfig(network string) net.ListenConfig {
 
 func (s *Starter) Run() error {
 	//nolint:errcheck
-	defer s.Teardown()
+	defer s.teardown()
 
 	if s.pidFile != "" {
 		f, err := acquirePIDFile(s.pidFile)
@@ -343,7 +343,7 @@ func (s *Starter) Run() error {
 	// Okay, ready to launch the program now...
 	setEnv()
 	workerCh := make(chan processState)
-	p := s.StartWorker(sigCh, workerCh)
+	p := s.startWorker(sigCh, workerCh)
 	oldWorkers := make(map[int]int)
 	var sigReceived os.Signal
 	var sigToSend os.Signal
@@ -404,7 +404,7 @@ func (s *Starter) Run() error {
 
 		// Just wait for the worker to exit, or for us to receive a signal
 		for {
-			// StartWorker can return nil when a signal arrives after a replacement
+			// startWorker can return nil when a signal arrives after a replacement
 			// exits but before the next retry succeeds.
 			currentPID := 0
 			if p != nil {
@@ -430,7 +430,7 @@ func (s *Starter) Run() error {
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
 					setEnv()
-					p = s.StartWorker(sigCh, workerCh)
+					p = s.startWorker(sigCh, workerCh)
 					if restartTimer != nil {
 						autoRestartForced = false
 						restartTimer.Reset(autoRestartInterval())
@@ -483,7 +483,7 @@ func (s *Starter) Run() error {
 					oldWorkers[p.Pid] = s.generation
 				}
 				setEnv()
-				p = s.StartWorker(sigCh, workerCh)
+				p = s.startWorker(sigCh, workerCh)
 				if restartTimer != nil {
 					autoRestartForced = false
 					restartTimer.Reset(autoRestartInterval())
@@ -562,15 +562,8 @@ func getKillOldDelay() time.Duration {
 	return time.Duration(delay) * time.Second
 }
 
-type WorkerState int
-
-const (
-	WorkerStarted WorkerState = iota
-	ErrFailedToStart
-)
-
-// StartWorker starts the actual command.
-func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Process {
+// startWorker starts the actual command.
+func (s *Starter) startWorker(sigCh chan os.Signal, ch chan processState) *os.Process {
 	// Don't give up until we're running.
 	for {
 		pid := -1
@@ -739,7 +732,8 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 	}
 }
 
-func (s *Starter) Teardown() error {
+//nolint:unparam // error return kept as-is; unparam only checks unexported funcs, exposed by this rename
+func (s *Starter) teardown() error {
 	if s.statusFile != "" {
 		os.Remove(s.statusFile)
 	}
