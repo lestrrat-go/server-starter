@@ -74,7 +74,7 @@ func lockFile(f *os.File) error {
 	var overlapped windows.Overlapped
 	return windows.LockFileEx(
 		windows.Handle(f.Fd()),
-		windows.LOCKFILE_EXCLUSIVE_LOCK,
+		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
 		0,
 		1,
 		0,
@@ -91,6 +91,10 @@ func validatePIDFileLinkCount(f *os.File, path string) error {
 		return fmt.Errorf("pid file %q has %d hard links, expected one", path, handleInfo.NumberOfLinks)
 	}
 	return nil
+}
+
+func lockUnavailable(err error) bool {
+	return errors.Is(err, windows.ERROR_LOCK_VIOLATION)
 }
 
 // TryLock is used by control.Stop to poll for the supervisor having
