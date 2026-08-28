@@ -21,6 +21,7 @@ import (
 )
 
 const controlHelperEnv = "SERVER_STARTER_CONTROL_HELPER"
+const controlHelperModeEnv = "SERVER_STARTER_CONTROL_HELPER_MODE"
 
 func TestStopSignalsLockedSupervisor(t *testing.T) {
 	t.Parallel()
@@ -29,6 +30,16 @@ func TestStopSignalsLockedSupervisor(t *testing.T) {
 	helper := startControlHelper(t, pidPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, Stop(ctx, pidPath))
+	require.NoError(t, helper.wait())
+}
+
+func TestStopSignalsLegacyFlockSupervisor(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "pid")
+	helper := startControlHelperWithMode(t, pidPath, "legacy")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	require.NoError(t, Stop(ctx, pidPath))
 	require.NoError(t, helper.wait())
@@ -108,9 +119,19 @@ func TestControlHelperProcess(t *testing.T) {
 		return
 	}
 
-	pidFile, err := statefile.Acquire(path)
-	require.NoError(t, err)
-	defer pidFile.Close()
+	if os.Getenv(controlHelperModeEnv) == "legacy" {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+		require.NoError(t, err)
+		defer file.Close()
+		require.NoError(t, syscall.Flock(int(file.Fd()), syscall.LOCK_EX))
+		_, err = fmt.Fprintf(file, "%d\n", os.Getpid())
+		require.NoError(t, err)
+		require.NoError(t, file.Sync())
+	} else {
+		pidFile, err := statefile.Acquire(path)
+		require.NoError(t, err)
+		defer pidFile.Close()
+	}
 
 	signal.Ignore(syscall.SIGHUP)
 	defer signal.Reset(syscall.SIGHUP)
@@ -118,7 +139,7 @@ func TestControlHelperProcess(t *testing.T) {
 	signal.Notify(term, syscall.SIGTERM)
 	defer signal.Stop(term)
 
-	_, err = fmt.Fprintln(os.Stdout, "ready")
+	_, err := fmt.Fprintln(os.Stdout, "ready")
 	require.NoError(t, err)
 	<-term
 }
@@ -138,10 +159,17 @@ func (h *controlHelper) wait() error {
 }
 
 func startControlHelper(t *testing.T, path string) *controlHelper {
+	return startControlHelperWithMode(t, path, "")
+}
+
+func startControlHelperWithMode(t *testing.T, path, mode string) *controlHelper {
 	t.Helper()
 
 	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestControlHelperProcess$")
 	cmd.Env = append(os.Environ(), controlHelperEnv+"="+path)
+	if mode != "" {
+		cmd.Env = append(cmd.Env, controlHelperModeEnv+"="+mode)
+	}
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
 	cmd.Stderr = os.Stderr

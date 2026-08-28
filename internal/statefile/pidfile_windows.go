@@ -116,7 +116,7 @@ func readPIDText(f *os.File, data []byte) (int, error) {
 	return int(bytesRead), nil
 }
 
-func lockFile(f *os.File) error {
+func lockFile(f *os.File, _ string) error {
 	// Start with the legacy exclusive byte-zero lock so old and current
 	// supervisors cannot both acquire the PID file.
 	var overlapped windows.Overlapped
@@ -188,10 +188,10 @@ func TryLock(f *os.File) error {
 	return fmt.Errorf("waiting for a stopped process is not supported on windows")
 }
 
-func lockOwnerPID(f *os.File) (int, error) {
-	return 0, fmt.Errorf("inspecting pid-file lock ownership is not supported on windows")
+func lockOwnerPID(f *os.File, _ string) (int, pidLockKind, error) {
+	return 0, pidLockUnknown, fmt.Errorf("inspecting pid-file lock ownership is not supported on windows")
 }
 
-func lockReleased(f *os.File) (bool, error) {
+func lockReleased(f *os.File, _ string, _ pidLockKind) (bool, error) {
 	return false, fmt.Errorf("waiting for a stopped process is not supported on windows")
 }

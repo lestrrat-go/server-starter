@@ -3,9 +3,12 @@
 package statefile
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 )
 
@@ -51,8 +54,14 @@ func readPIDText(f *os.File, data []byte) (int, error) {
 	return f.ReadAt(data, 0)
 }
 
-func lockFile(f *os.File) error {
-	lock := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 0}
+func lockFile(f *os.File, path string) error {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return err
+	}
+	lock, err := pathRecordLock(path)
+	if err != nil {
+		return err
+	}
 	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
 }
 
@@ -91,29 +100,57 @@ func closePIDFile(f *os.File, path string) error {
 	return errors.Join(removeErr, f.Close())
 }
 
-// TryLock attempts to take an exclusive, non-blocking lock on f. It is used
-// by control.Stop to poll for the supervisor having exited: once the
-// supervisor process dies, its lock on the pid file is released and this call
-// starts succeeding. It returns syscall.EWOULDBLOCK while another process
-// holds the lock; any other error means the lock check failed.
+// TryLock attempts to take an exclusive, non-blocking BSD lock on f. It is
+// used by control.Stop to poll for a legacy supervisor having exited: once
+// the supervisor process dies, its lock on the pid file is released
+// and this call starts succeeding. It returns syscall.EWOULDBLOCK while
+// another process holds the lock; any other error means the check failed.
 func TryLock(f *os.File) error {
-	lock := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 0}
-	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 }
 
-func lockOwnerPID(f *os.File) (int, error) {
-	lock := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 0}
+func lockOwnerPID(f *os.File, path string) (int, pidLockKind, error) {
+	lock, err := pathRecordLock(path)
+	if err != nil {
+		return 0, pidLockUnknown, err
+	}
 	if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &lock); err != nil {
-		return 0, err
+		return 0, pidLockUnknown, err
 	}
-	if lock.Type == syscall.F_UNLCK {
-		return 0, nil
+	if lock.Type != syscall.F_UNLCK {
+		if lock.Pid <= 0 {
+			return 0, pidLockUnknown, fmt.Errorf("record lock has no process owner")
+		}
+		return int(lock.Pid), pidLockRecord, nil
 	}
-	return int(lock.Pid), nil
+
+	flockPID, hasRecordLock, err := inspectInodeLocks(f)
+	if err != nil {
+		return 0, pidLockUnknown, err
+	}
+	if hasRecordLock {
+		return 0, pidLockUnknown, fmt.Errorf("pid file lock was acquired for a different path")
+	}
+	if flockPID > 0 {
+		return flockPID, pidLockFlock, nil
+	}
+	return 0, pidLockUnknown, nil
 }
 
-func lockReleased(f *os.File) (bool, error) {
-	err := TryLock(f)
+func lockReleased(f *os.File, path string, kind pidLockKind) (bool, error) {
+	var err error
+	switch kind {
+	case pidLockRecord:
+		lock, lockErr := pathRecordLock(path)
+		if lockErr != nil {
+			return false, lockErr
+		}
+		err = syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
+	case pidLockFlock:
+		err = TryLock(f)
+	default:
+		return false, fmt.Errorf("unknown pid-file lock kind")
+	}
 	if err == nil {
 		return true, nil
 	}
@@ -121,4 +158,21 @@ func lockReleased(f *os.File) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// pathRecordLock binds a supervisor lock to the absolute pid-file path
+// without changing the traditional one-line pid-file format. The BSD flock
+// remains the lifetime lock; this record lock supplies an inspectable owner
+// pid and makes a locked file moved from another path fail validation.
+func pathRecordLock(path string) (syscall.Flock_t, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return syscall.Flock_t{}, err
+	}
+	digest := sha256.Sum256([]byte(filepath.Clean(absPath)))
+	start := int64(binary.BigEndian.Uint64(digest[:8]) & uint64(^uint64(0)>>1))
+	if start == 0 {
+		start = 1
+	}
+	return syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: start, Len: 1}, nil
 }
