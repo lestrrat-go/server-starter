@@ -25,19 +25,9 @@ type PIDFile struct {
 // RunningPID is a validated reference to a running supervisor. The pid is
 // accepted only when it matches the process that owns the pid-file lock.
 type RunningPID struct {
-	file     *os.File
-	path     string
-	pid      int
-	lockKind pidLockKind
+	file *os.File
+	pid  int
 }
-
-type pidLockKind uint8
-
-const (
-	pidLockUnknown pidLockKind = iota
-	pidLockRecord
-	pidLockFlock
-)
 
 // Acquire opens path, takes a non-blocking ownership lock on it, and writes
 // the current process's pid into it. It returns ErrPIDFileLocked when another
@@ -93,8 +83,8 @@ func readOwnerPID(f *os.File) (int, bool) {
 	if err != nil && err != io.EOF {
 		return 0, false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data[:n])))
-	return pid, err == nil && pid > 0
+	parsedPID, err := strconv.ParseInt(strings.TrimSpace(string(data[:n])), 10, 32)
+	return int(parsedPID), err == nil && parsedPID > 0
 }
 
 func (p *PIDFile) Close() error {
@@ -128,12 +118,13 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		return closeWithError(fmt.Errorf("pid file %q is too large", path))
 	}
 	value := strings.TrimSpace(string(data))
-	pid, err := strconv.Atoi(value)
-	if err != nil || pid <= 0 {
+	parsedPID, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || parsedPID <= 0 {
 		return closeWithError(fmt.Errorf("invalid pid file %q", path))
 	}
+	pid := int(parsedPID)
 
-	ownerPID, lockKind, err := lockOwnerPID(f, path, pid)
+	ownerPID, err := lockOwnerPID(f, path)
 	if err != nil {
 		return closeWithError(fmt.Errorf("failed to inspect pid file %q lock: %w", path, err))
 	}
@@ -156,7 +147,7 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		return closeWithError(fmt.Errorf("pid file %q was replaced while being validated", path))
 	}
 
-	return &RunningPID{file: f, path: path, pid: pid, lockKind: lockKind}, nil
+	return &RunningPID{file: f, pid: pid}, nil
 }
 
 // ReadPID reads a pid only from a live supervisor-owned pid file.
@@ -176,7 +167,7 @@ func (p *RunningPID) PID() int {
 
 // Exited reports whether the supervisor has released its pid-file lock.
 func (p *RunningPID) Exited() (bool, error) {
-	return lockReleased(p.file, p.path, p.lockKind)
+	return lockReleased(p.file)
 }
 
 // Close releases the open pid-file reference.

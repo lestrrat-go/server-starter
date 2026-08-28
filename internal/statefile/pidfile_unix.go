@@ -22,7 +22,7 @@ func openPIDFile(path string) (*os.File, error) {
 		return nil, fmt.Errorf("failed to open pid file %q: %w", path, err)
 	}
 
-	if err := validateOwnedPIDFile(f, path); err != nil {
+	if err := validatePIDFile(f, path); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -35,22 +35,14 @@ func openRunningPIDFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open pid file %q: %w", path, err)
 	}
-	if err := validateOpenedPIDFile(f, path); err != nil {
+	if err := validatePIDFile(f, path); err != nil {
 		f.Close()
 		return nil, err
 	}
 	return f, nil
 }
 
-func validateOpenedPIDFile(f *os.File, path string) error {
-	return validatePIDFile(f, path, false)
-}
-
-func validateOwnedPIDFile(f *os.File, path string) error {
-	return validatePIDFile(f, path, true)
-}
-
-func validatePIDFile(f *os.File, path string, requireOwner bool) error {
+func validatePIDFile(f *os.File, path string) error {
 	info, err := f.Stat()
 	if err != nil {
 		return fmt.Errorf("failed to inspect pid file %q: %w", path, err)
@@ -62,12 +54,6 @@ func validatePIDFile(f *os.File, path string, requireOwner bool) error {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return fmt.Errorf("failed to inspect pid file %q metadata", path)
-	}
-	if requireOwner {
-		expectedUID := uint32(os.Geteuid())
-		if stat.Uid != expectedUID {
-			return fmt.Errorf("pid file %q is owned by uid %d, expected uid %d", path, stat.Uid, expectedUID)
-		}
 	}
 	if stat.Nlink != 1 {
 		return fmt.Errorf("pid file %q has %d hard links, expected one", path, stat.Nlink)
@@ -134,61 +120,56 @@ func TryLock(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 }
 
-func lockOwnerPID(f *os.File, path string, recordedPID int) (int, pidLockKind, error) {
+func lockOwnerPID(f *os.File, path string) (int, error) {
 	lock, err := pathRecordLock(path)
 	if err != nil {
-		return 0, pidLockUnknown, err
+		return 0, err
 	}
 	if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &lock); err != nil {
-		return 0, pidLockUnknown, err
+		return 0, err
 	}
 	recordLockPID := 0
 	if lock.Type != syscall.F_UNLCK {
 		if lock.Pid <= 0 {
-			return 0, pidLockUnknown, fmt.Errorf("record lock has no process owner")
+			return 0, fmt.Errorf("record lock has no process owner")
 		}
 		recordLockPID = int(lock.Pid)
 	}
 
-	flockPID, hasRecordLock, hasFlock, err := inspectInodeLocks(f, recordedPID)
+	flockPID, hasRecordLock, hasFlock, err := inspectInodeLocks(f)
 	if err != nil {
-		return 0, pidLockUnknown, err
+		return 0, err
 	}
 	if recordLockPID > 0 {
 		if !hasFlock {
-			return 0, pidLockUnknown, fmt.Errorf("record lock owner %d could not be verified as the BSD flock owner", recordLockPID)
+			return 0, fmt.Errorf("record lock owner %d could not be verified as the BSD flock owner", recordLockPID)
 		}
 		if flockPID > 0 && flockPID != recordLockPID {
-			return 0, pidLockUnknown, fmt.Errorf("record lock owner %d does not match BSD flock owner %d", recordLockPID, flockPID)
+			return 0, fmt.Errorf("record lock owner %d does not match BSD flock owner %d", recordLockPID, flockPID)
 		}
-		return recordLockPID, pidLockRecord, nil
+		if hasRecordLock && hasFlock && flockPID == 0 {
+			// On the affected non-Linux targets, this cannot represent split
+			// owners: a whole-file BSD flock conflicts with another process's
+			// fcntl record lock, so a second process cannot acquire the path-byte
+			// record lock while the first process owns the flock.
+			return recordLockPID, nil
+		}
+		return recordLockPID, nil
 	}
 	if hasRecordLock {
-		return 0, pidLockUnknown, fmt.Errorf("pid file lock was acquired for a different path")
+		return 0, fmt.Errorf("pid file lock was acquired for a different path")
 	}
 	if flockPID > 0 {
-		return flockPID, pidLockFlock, nil
+		return flockPID, nil
 	}
 	if hasFlock {
-		return 0, pidLockUnknown, fmt.Errorf("legacy BSD flock ownership cannot be attributed to a process on this platform")
+		return 0, fmt.Errorf("legacy BSD flock ownership cannot be attributed to a process on this platform")
 	}
-	return 0, pidLockUnknown, nil
+	return 0, nil
 }
 
-func lockReleased(f *os.File, path string, kind pidLockKind) (bool, error) {
-	var err error
-	switch kind {
-	case pidLockRecord:
-		lock, lockErr := pathRecordLock(path)
-		if lockErr != nil {
-			return false, lockErr
-		}
-		err = syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
-	case pidLockFlock:
-		err = TryLock(f)
-	default:
-		return false, fmt.Errorf("unknown pid-file lock kind")
-	}
+func lockReleased(f *os.File) (bool, error) {
+	err := TryLock(f)
 	if err == nil {
 		return true, nil
 	}

@@ -1,4 +1,4 @@
-//go:build !darwin && !linux && !windows
+//go:build !linux && !windows
 
 package statefile
 
@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-func inspectInodeLocks(f *os.File, _ int) (int, bool, bool, error) {
+func inspectInodeLocks(f *os.File) (int, bool, bool, error) {
 	recordLock := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 0}
 	if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &recordLock); err != nil {
 		return 0, false, false, err

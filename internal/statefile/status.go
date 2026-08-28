@@ -11,10 +11,7 @@ import (
 	"strings"
 )
 
-const (
-	maxPIDFileSize    = 64
-	maxStatusFileSize = 64 * 1024
-)
+const maxStatusFileSize = 64 * 1024
 
 // StatusMap builds the generation-to-pid map that mirrors the current
 // status-file contents: one entry for each old worker still draining
@@ -80,22 +77,6 @@ func WriteStatus(fn string, generations map[int]int) error {
 	}
 
 	return nil
-}
-
-// ReadPID reads and parses the pid stored in the pid file at path. It rejects
-// non-regular files, payloads larger than the PID format requires, and values
-// outside the positive signed 32-bit range accepted by process signalling.
-func ReadPID(ctx context.Context, path string) (int, error) {
-	data, err := readStateFile(ctx, path, maxPIDFileSize)
-	if err != nil {
-		return 0, err
-	}
-	value := strings.TrimSpace(string(data))
-	parsedPID, err := strconv.ParseInt(value, 10, 32)
-	if err != nil || parsedPID <= 0 {
-		return 0, fmt.Errorf("invalid pid file %q", path)
-	}
-	return int(parsedPID), nil
 }
 
 // ReadStatus reads and parses the status file at path into a

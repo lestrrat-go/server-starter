@@ -128,7 +128,7 @@ func TestReadPIDAllowsDifferentPIDFileOwner(t *testing.T) {
 	require.Equal(t, pid, got)
 }
 
-func TestAcquireRejectsDifferentPIDFileOwner(t *testing.T) {
+func TestAcquireAllowsDifferentPIDFileOwner(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("changing pid-file ownership requires root")
 	}
@@ -138,8 +138,8 @@ func TestAcquireRejectsDifferentPIDFileOwner(t *testing.T) {
 	require.NoError(t, os.Chown(path, 1, -1))
 
 	pidFile, err := statefile.Acquire(path)
-	require.ErrorContains(t, err, "is owned by uid 1, expected uid 0")
-	require.Nil(t, pidFile)
+	require.NoError(t, err)
+	require.NoError(t, pidFile.Close())
 }
 
 func TestPIDLockHelper(t *testing.T) {

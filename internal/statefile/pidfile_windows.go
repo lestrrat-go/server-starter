@@ -227,10 +227,10 @@ func TryLock(f *os.File) error {
 	return fmt.Errorf("waiting for a stopped process is not supported on windows")
 }
 
-func lockOwnerPID(f *os.File, _ string, _ int) (int, pidLockKind, error) {
-	return 0, pidLockUnknown, fmt.Errorf("inspecting pid-file lock ownership is not supported on windows")
+func lockOwnerPID(f *os.File, _ string) (int, error) {
+	return 0, fmt.Errorf("inspecting pid-file lock ownership is not supported on windows")
 }
 
-func lockReleased(f *os.File, _ string, _ pidLockKind) (bool, error) {
+func lockReleased(f *os.File) (bool, error) {
 	return false, fmt.Errorf("waiting for a stopped process is not supported on windows")
 }
