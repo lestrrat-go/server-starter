@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -9,6 +10,8 @@ import (
 // defaultAutoRestartInterval mirrors internal/supervisor's historical
 // default (previously baked into the AUTO_RESTART_INTERVAL reader).
 const defaultAutoRestartInterval = 360 * time.Second
+
+const maxAutoRestartIntervalSeconds = int64(math.MaxInt64) / int64(time.Second)
 
 // defaultKillOldDelayWithAutoRestart is the delay used when nothing sets
 // --kill-old-delay/KILL_OLD_DELAY and auto-restart is enabled.
@@ -74,11 +77,9 @@ func resolveEnableAutoRestart(isSet bool, flagValue bool) bool {
 }
 
 // resolveAutoRestartInterval matches internal/supervisor's old
-// autoRestartInterval() exactly: a raw value that fails to parse, or is not
-// positive, falls back to the 360-second default. This validation applied
-// uniformly to flag and ambient values alike in the old code (both were
-// funneled through AUTO_RESTART_INTERVAL and read back by the same
-// function), so it is reproduced here for both sources.
+// autoRestartInterval() exactly: a raw value that fails to parse, is not
+// positive, or cannot fit in a time.Duration falls back to the 360-second
+// default. This validation applies uniformly to flag and ambient values.
 func resolveAutoRestartInterval(isSet bool, flagSeconds int) time.Duration {
 	var raw string
 	var ok bool
@@ -87,12 +88,19 @@ func resolveAutoRestartInterval(isSet bool, flagSeconds int) time.Duration {
 	} else {
 		raw, ok = os.LookupEnv("AUTO_RESTART_INTERVAL")
 	}
-	if ok {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			return time.Duration(parsed) * time.Second
-		}
+	if !ok {
+		return defaultAutoRestartInterval
 	}
-	return defaultAutoRestartInterval
+
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || parsed <= 0 || parsed > maxAutoRestartIntervalSeconds {
+		return defaultAutoRestartInterval
+	}
+	interval := time.Duration(parsed) * time.Second
+	if interval <= 0 {
+		return defaultAutoRestartInterval
+	}
+	return interval
 }
 
 // resolveKillOldDelay matches internal/supervisor's old getKillOldDelay():
