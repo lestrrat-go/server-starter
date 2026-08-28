@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/jessevdk/go-flags"
@@ -107,7 +110,39 @@ func Run() int {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		return 1
 	}
-	if err := s.Run(); err != nil {
+
+	// internal/supervisor no longer touches os/signal: it is a library and
+	// must not impose a signal policy on whatever embeds it. This is where
+	// that policy lives for the start_server command itself.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := s.Run(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		return 1
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer signal.Stop(sigCh)
+
+	go func() {
+		for sig := range sigCh {
+			if sig == syscall.SIGHUP {
+				ctrl.Hangup()
+				continue
+			}
+			// INT, TERM, or QUIT: request shutdown and stop watching for
+			// further signals, ctrl.Wait() below takes it from here.
+			cancel()
+			return
+		}
+	}()
+
+	// A clean, ctx-driven shutdown is success, not failure: report only a
+	// genuine runtime error.
+	if err := ctrl.Wait(); err != nil && !errors.Is(err, supervisor.ErrServerClosed) {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		return 1
 	}
