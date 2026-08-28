@@ -8,12 +8,24 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestTerminalWorkerStartErrorRecognizesWindowsBadExecutable(t *testing.T) {
-	err := &os.PathError{
-		Op:   "fork/exec",
-		Path: "worker.exe",
-		Err:  windows.ERROR_BAD_EXE_FORMAT,
+func TestTerminalWorkerStartErrorRecognizesWindowsLaunchErrors(t *testing.T) {
+	tests := map[string]error{
+		"bad executable format": windows.ERROR_BAD_EXE_FORMAT,
+		"invalid parameter":     windows.ERROR_INVALID_PARAMETER,
+		"command line too long": windows.ERROR_FILENAME_EXCED_RANGE,
+		"machine type mismatch": windows.ERROR_EXE_MACHINE_TYPE_MISMATCH,
+		"elevation required":    windows.ERROR_ELEVATION_REQUIRED,
 	}
 
-	require.True(t, terminalWorkerStartError(err))
+	for name, startErr := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := &os.PathError{
+				Op:   "fork/exec",
+				Path: "worker.exe",
+				Err:  startErr,
+			}
+
+			require.True(t, terminalWorkerStartError(err))
+		})
+	}
 }
