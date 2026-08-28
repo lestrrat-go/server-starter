@@ -13,8 +13,8 @@ Changes
    - Added worker-facing helpers: ParsePorts, NewTCPListener, NewUDPListener,
      NewUnixListener, Generation, IsUnderStartServer, and a new UDPListener
      type with ListenPacketAll for UDP support
-   - Three deliberate behavior changes from the original Perl
-     Server::Starter, carried through from v0's Go port:
+   - Three deliberate behavior changes, introduced in v2, relative to the
+     original Perl Server::Starter:
      * On receiving INT or QUIT, the supervisor now sends the worker the
        same signal configured via --signal-on-term that it already sends on
        TERM, instead of a hardcoded TERM. Only observable when
