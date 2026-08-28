@@ -1,6 +1,7 @@
 package statefile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,6 +20,10 @@ func TestWriteStatusFile(t *testing.T) {
 		got, err := os.ReadFile(fn)
 		require.NoError(t, err)
 		require.Equal(t, "1:100\n2:200\n3:300\n", string(got))
+
+		info, err := os.Stat(fn)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0600), info.Mode().Perm())
 
 		entries, err := os.ReadDir(dir)
 		require.NoError(t, err)
@@ -68,6 +73,33 @@ func TestWriteStatusFile(t *testing.T) {
 		entries, err := os.ReadDir(dir)
 		require.NoError(t, err)
 		require.Len(t, entries, 1, "no stray temporary file should remain")
+	})
+
+	t.Run("does not follow the legacy predictable temporary symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		fn := filepath.Join(dir, "status")
+		victim := filepath.Join(dir, "victim")
+		require.NoError(t, os.WriteFile(victim, []byte("sensitive\n"), 0600))
+
+		legacyTemp := fmt.Sprintf("%s.%d", fn, os.Getpid())
+		if err := os.Symlink(victim, legacyTemp); err != nil {
+			t.Skipf("cannot create symlink: %s", err)
+		}
+
+		err := WriteStatus(fn, map[int]int{1: 100})
+		require.NoError(t, err)
+
+		got, err := os.ReadFile(victim)
+		require.NoError(t, err)
+		require.Equal(t, "sensitive\n", string(got))
+
+		got, err = os.ReadFile(fn)
+		require.NoError(t, err)
+		require.Equal(t, "1:100\n", string(got))
+
+		info, err := os.Lstat(legacyTemp)
+		require.NoError(t, err)
+		require.NotZero(t, info.Mode()&os.ModeSymlink)
 	})
 }
 
