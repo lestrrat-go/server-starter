@@ -214,6 +214,12 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 				fmt.Fprintf(rs.cfg.stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
 				rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
 				p = rs.startWorker(ctx, workerCh, workerStateDone)
+				// A HUP received while startWorker was bringing up this
+				// replacement belongs to the restart already in progress.
+				select {
+				case <-ctrl.hangup:
+				default:
+				}
 				if rs.restartTimer != nil {
 					rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 				}

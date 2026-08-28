@@ -184,6 +184,27 @@ func (b *restartDiagnosticGate) Write(p []byte) (int, error) {
 	return b.syncBuffer.Write(p)
 }
 
+// unexpectedRestartDiagnosticGate blocks the replacement spawned after the
+// current worker exits. Tests can then buffer a HUP before that replacement
+// completes its startup check.
+type unexpectedRestartDiagnosticGate struct {
+	syncBuffer
+	reached chan struct{}
+	release chan struct{}
+	starts  int
+}
+
+func (b *unexpectedRestartDiagnosticGate) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "starting new worker") {
+		b.starts++
+		if b.starts == 2 {
+			close(b.reached)
+			<-b.release
+		}
+	}
+	return b.syncBuffer.Write(p)
+}
+
 func waitForGenerationRemoval(t *testing.T, statusFile, removed string) []string {
 	t.Helper()
 
@@ -333,4 +354,63 @@ func TestHUPDuringAutomaticRestartJoinsThatRestart(t *testing.T) {
 	require.NoError(t, oldWorker.Signal(syscall.SIGTERM))
 
 	require.Equal(t, []string{"2"}, waitForGenerationRemoval(t, statusFile, "1"))
+}
+
+func TestHUPDuringUnexpectedExitRestartJoinsThatRestart(t *testing.T) {
+	dir := t.TempDir()
+	statusFile := filepath.Join(dir, "status")
+	stderr := unexpectedRestartDiagnosticGate{
+		reached: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(stderr.release)
+		}
+	}()
+
+	sd, err := NewStarter(&config{
+		command:    buildStubbornWorker(t, dir),
+		statusfile: statusFile,
+		interval:   1,
+		stderr:     &stderr,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+	defer func() {
+		cancel()
+		select {
+		case <-ctrl.Done():
+		case <-time.After(10 * time.Second):
+			t.Error("timed out waiting for Run() to return")
+		}
+	}()
+
+	waitForGenerationList(t, statusFile, []string{"1"})
+	status, err := statefile.ReadStatus(statusFile)
+	require.NoError(t, err)
+	worker, err := os.FindProcess(status[1])
+	require.NoError(t, err)
+	require.NoError(t, worker.Signal(syscall.SIGTERM))
+
+	select {
+	case <-stderr.reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the unexpected-exit restart interleaving")
+	}
+
+	ctrl.Hangup()
+	close(stderr.release)
+	released = true
+
+	waitForGenerationList(t, statusFile, []string{"2"})
+	require.Never(t, func() bool {
+		return !slices.Equal(generations(t, statusFile), []string{"2"})
+	}, 2*time.Second, 20*time.Millisecond)
 }
