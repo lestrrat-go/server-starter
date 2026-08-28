@@ -43,13 +43,13 @@ func (d dummyProcessState) Sys() any {
 }
 
 // startWorker starts the actual command.
-func (s *Starter) startWorker(sigCh chan os.Signal, ch chan processState) *os.Process {
+func (rs *runState) startWorker(sigCh chan os.Signal, ch chan processState) *os.Process {
 	// Don't give up until we're running.
 	for {
 		pid := -1
-		cmd := exec.Command(s.command, s.args...)
-		if s.dir != "" {
-			cmd.Dir = s.dir
+		cmd := exec.Command(rs.cfg.command, rs.cfg.args...)
+		if rs.cfg.dir != "" {
+			cmd.Dir = rs.cfg.dir
 		}
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -57,10 +57,9 @@ func (s *Starter) startWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		// This whole section here basically sets up the env
 		// var and the file descriptors that are inherited by the
 		// external process
-		s.mu.RLock()
-		descriptors := make([]int, len(s.listeners))
-		used := make(map[int]struct{}, len(s.listeners))
-		for i, l := range s.listeners {
+		descriptors := make([]int, len(rs.listeners))
+		used := make(map[int]struct{}, len(rs.listeners))
+		for i, l := range rs.listeners {
 			if l.fd >= 0 {
 				descriptors[i] = l.fd
 				used[l.fd] = struct{}{}
@@ -88,12 +87,11 @@ func (s *Starter) startWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 			}
 		}
 		files := make([]*os.File, maxFD-2)
-		ports := make([]string, len(s.listeners))
+		ports := make([]string, len(rs.listeners))
 		var err error
 		for slot := range files {
 			files[slot], err = os.OpenFile(os.DevNull, os.O_RDONLY, 0)
 			if err != nil {
-				s.mu.RUnlock()
 				for _, file := range files {
 					if file != nil {
 						file.Close()
@@ -102,7 +100,7 @@ func (s *Starter) startWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 				panic(err)
 			}
 		}
-		for i, l := range s.listeners {
+		for i, l := range rs.listeners {
 			// file descriptor numbers in ExtraFiles turn out to be
 			// index + 3, so we can just hard code it
 			var f *os.File
@@ -119,7 +117,6 @@ func (s *Starter) startWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 				}
 			}
 			if err != nil {
-				s.mu.RUnlock()
 				for _, file := range files {
 					if file != nil {
 						file.Close()
@@ -131,12 +128,11 @@ func (s *Starter) startWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 			files[descriptors[i]-3] = f
 			ports[i] = fmt.Sprintf("%s=%d", l.spec, descriptors[i])
 		}
-		s.mu.RUnlock()
 		cmd.ExtraFiles = files
 
-		s.generation++
+		rs.generation++
 		os.Setenv("SERVER_STARTER_PORT", strings.Join(ports, ";"))
-		os.Setenv("SERVER_STARTER_GENERATION", fmt.Sprintf("%d", s.generation))
+		os.Setenv("SERVER_STARTER_GENERATION", fmt.Sprintf("%d", rs.generation))
 
 		// Now start!
 		startErr := cmd.Start()
@@ -153,7 +149,7 @@ func (s *Starter) startWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 			fmt.Fprintf(os.Stderr, "starting new worker %d\n", pid)
 
 			// Wait for interval before checking if the process is alive
-			tch := time.After(s.interval)
+			tch := time.After(rs.cfg.interval)
 			sigs := []os.Signal{}
 			for loop := true; loop; {
 				select {
