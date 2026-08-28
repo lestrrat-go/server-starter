@@ -74,6 +74,12 @@ func TestParseListenTargets(t *testing.T) {
 		require.Equal(t, "u[::1]:9090=4", got[0].String())
 	})
 
+	t.Run("UDP host and port with marker in both positions", func(t *testing.T) {
+		got, err := parseListenTargets("u10.0.0.5:u9090=4")
+		require.NoError(t, err)
+		require.Equal(t, UDPListener{Addr: "10.0.0.5", Port: 9090, fd: 4}, got[0])
+	})
+
 	t.Run("unix socket path", func(t *testing.T) {
 		got, err := parseListenTargets("/foo/bar.sock=5")
 		require.NoError(t, err)
