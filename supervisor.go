@@ -18,7 +18,6 @@ func (s *Starter) stop() {
 }
 
 func (s *Starter) Run() error {
-	//nolint:errcheck
 	defer s.teardown()
 
 	if s.pidFile != "" {
@@ -281,8 +280,7 @@ func (s *Starter) Run() error {
 	}
 }
 
-//nolint:unparam // error return kept as-is; unparam only checks unexported funcs, exposed by this rename
-func (s *Starter) teardown() error {
+func (s *Starter) teardown() {
 	if s.statusFile != "" {
 		os.Remove(s.statusFile)
 	}
@@ -297,6 +295,4 @@ func (s *Starter) teardown() error {
 		}
 	}
 	s.mu.RUnlock()
-
-	return nil
 }
