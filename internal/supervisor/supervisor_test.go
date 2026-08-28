@@ -13,8 +13,8 @@ func TestTeardownRemovesUnixSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Starter{listeners: []listener{{listener: l, spec: path}}}
-	s.teardown()
+	rs := &runState{cfg: &Starter{}, listeners: []listener{{listener: l, spec: path}}}
+	rs.teardown()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("unix socket path remains, stat error = %v", err)
 	}

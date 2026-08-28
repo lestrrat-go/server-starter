@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sync"
 	"syscall"
 	"time"
 )
@@ -22,6 +21,10 @@ type Config interface {
 	StatusFile() string
 }
 
+// Starter holds validated, immutable configuration for a supervisor run. It
+// carries no per-run state, so one Starter may be shared across goroutines
+// and Run multiple times concurrently to spawn independent supervised runs.
+// All per-invocation state lives in runState, allocated fresh inside Run.
 type Starter struct {
 	interval     time.Duration
 	signalOnHUP  os.Signal
@@ -32,11 +35,8 @@ type Starter struct {
 	dir        string
 	ports      []string
 	paths      []string
-	listeners  []listener
-	generation int
 	command    string
 	args       []string
-	mu         sync.RWMutex
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
@@ -67,7 +67,6 @@ func NewStarter(c Config) (*Starter, error) {
 		command:      c.Command(),
 		dir:          c.Dir(),
 		interval:     c.Interval(),
-		listeners:    make([]listener, 0, len(c.Ports())+len(c.Paths())),
 		pidFile:      c.PidFile(),
 		ports:        c.Ports(),
 		paths:        c.Paths(),
