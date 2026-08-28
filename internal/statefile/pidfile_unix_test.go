@@ -5,6 +5,7 @@ package statefile
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,7 @@ func TestAcquireRejectsHardLinkAddedWhileWaitingForLock(t *testing.T) {
 	lockHolder, err := os.OpenFile(path, os.O_RDWR, 0)
 	require.NoError(t, err)
 	defer lockHolder.Close()
-	require.NoError(t, lockFile(lockHolder))
+	require.NoError(t, syscall.Flock(int(lockHolder.Fd()), syscall.LOCK_EX))
 
 	lockAttempted := make(chan struct{})
 	type acquireResult struct {
@@ -62,7 +63,7 @@ func TestAcquireRejectsHardLinkAddedWhileWaitingForLock(t *testing.T) {
 	go func() {
 		pidFile, acquireErr := acquire(path, func(f *os.File) error {
 			close(lockAttempted)
-			return lockFile(f)
+			return syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
 		})
 		result <- acquireResult{pidFile: pidFile, err: acquireErr}
 	}()
