@@ -23,10 +23,20 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 func main() {
 	signal.Ignore(syscall.SIGUSR1)
+	if len(os.Args) == 3 && os.Args[1] == "ignore-term" {
+		signal.Ignore(syscall.SIGTERM)
+		if err := os.WriteFile(os.Args[2], []byte("ready"), 0600); err != nil {
+			panic(err)
+		}
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM)

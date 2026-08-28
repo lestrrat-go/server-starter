@@ -40,6 +40,11 @@ type Starter struct {
 	interval     time.Duration
 	signalOnHUP  os.Signal
 	signalOnTERM os.Signal
+
+	// shutdownGracePeriod is internal policy rather than Config surface: all
+	// callers get a bounded graceful shutdown without another required knob.
+	// Tests shorten it on their own Starter instances.
+	shutdownGracePeriod time.Duration
 	// you can't set this in go:	backlog
 	statusFile string
 	pidFile    string
@@ -103,6 +108,7 @@ func NewStarter(c Config) (*Starter, error) {
 		paths:               c.Paths(),
 		signalOnHUP:         signalOnHUP,
 		signalOnTERM:        signalOnTERM,
+		shutdownGracePeriod: defaultShutdownGracePeriod,
 		statusFile:          c.StatusFile(),
 		envdir:              c.Envdir(),
 		enableAutoRestart:   c.EnableAutoRestart(),

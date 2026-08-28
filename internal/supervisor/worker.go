@@ -79,7 +79,7 @@ func reportFailedStart(w io.Writer, pid int, reapedStatus syscall.WaitStatus, re
 }
 
 // startWorker starts the actual command.
-func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.Process {
+func (rs *runState) startWorker(ctx context.Context, ch chan<- processState, done <-chan struct{}) *os.Process {
 	// Don't give up until we're running.
 	for {
 		pid := -1
@@ -214,13 +214,18 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 				// the program exiting
 				go func() {
 					err := cmd.Wait()
+					var st processState
 					var exitErr *exec.ExitError
 					if errors.As(err, &exitErr) {
-						ch <- exitErr.ProcessState
+						st = exitErr.ProcessState
 					} else if err != nil {
-						ch <- &dummyProcessState{pid: pid, status: failureStatus}
+						st = &dummyProcessState{pid: pid, status: failureStatus}
 					} else {
-						ch <- &dummyProcessState{pid: pid, status: successStatus}
+						st = &dummyProcessState{pid: pid, status: successStatus}
+					}
+					select {
+					case ch <- st:
+					case <-done:
 					}
 				}()
 				// Bail out
