@@ -78,18 +78,69 @@ func parsePortTarget(raw string) (portTarget, error) {
 		fd = value
 		target = strings.TrimSpace(target[:i])
 	}
-
-	udp := strings.HasPrefix(target, "u")
-	if udp {
-		target = strings.TrimPrefix(target, "u")
+	if err := validatePortTargetDelimiter(target); err != nil {
+		return portTarget{}, err
 	}
+
+	parsed, err := starter.ParsePorts(target + "=0")
+	if err != nil || len(parsed) != 1 {
+		return portTarget{}, fmt.Errorf("invalid port in %q", raw)
+	}
+
+	var host string
+	var port int
+	network := ""
+	spec := strings.TrimSuffix(parsed[0].String(), "=0")
+	switch target := parsed[0].(type) {
+	case starter.TCPListener:
+		host = target.Addr
+		port = target.Port
+		network = "tcp4"
+	case starter.UDPListener:
+		host = target.Addr
+		port = target.Port
+		network = "udp4"
+	default:
+		return portTarget{}, fmt.Errorf("invalid port in %q", raw)
+	}
+	if !portwire.ValidPort(int64(port)) {
+		return portTarget{}, fmt.Errorf("invalid port in %q", raw)
+	}
+	if host == "0.0.0.0" {
+		host = ""
+	}
+	if strings.Contains(host, ":") {
+		if strings.HasPrefix(network, "udp") {
+			network = "udp6"
+		} else {
+			network = "tcp6"
+		}
+	}
+	return portTarget{host: host, port: port, network: network, spec: spec, fd: fd}, nil
+}
+
+// validatePortTargetDelimiter preserves the public FormatPorts error for a
+// semicolon in a CLI target. ParsePorts cannot inspect that target directly
+// because it correctly treats the semicolon as a SERVER_STARTER_PORT entry
+// separator.
+func validatePortTargetDelimiter(target string) error {
+	if !strings.ContainsRune(target, ';') {
+		return nil
+	}
+
+	udp := false
+	if explicitTarget, ok := strings.CutPrefix(target, "udp://"); ok {
+		udp = true
+		target = explicitTarget
+	}
+
 	host := ""
 	portText := target
 	if strings.HasPrefix(target, "[") {
 		var err error
 		host, portText, err = net.SplitHostPort(target)
 		if err != nil {
-			return portTarget{}, fmt.Errorf("invalid address %q: %w", raw, err)
+			return nil
 		}
 	} else if i := strings.LastIndexByte(target, ':'); i >= 0 {
 		host = target[:i]
@@ -101,27 +152,15 @@ func parsePortTarget(raw string) (portTarget, error) {
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || !portwire.ValidPort(int64(port)) {
-		return portTarget{}, fmt.Errorf("invalid port in %q", raw)
+		return nil
 	}
-	network := "tcp4"
+
 	if udp {
-		network = "udp4"
+		_, err = starter.FormatPorts(starter.NewUDPListener(host, port, 0))
+	} else {
+		_, err = starter.FormatPorts(starter.NewTCPListener(host, port, 0))
 	}
-	if strings.Contains(host, ":") {
-		if udp {
-			network = "udp6"
-		} else {
-			network = "tcp6"
-		}
-	}
-	spec := strconv.Itoa(port)
-	if host != "" {
-		spec = net.JoinHostPort(host, strconv.Itoa(port))
-	}
-	if udp {
-		spec = "u" + spec
-	}
-	return portTarget{host: host, port: port, network: network, spec: spec, fd: fd}, nil
+	return err
 }
 
 // validateListenerWireFormat applies the public SERVER_STARTER_PORT encoder

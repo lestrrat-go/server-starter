@@ -33,17 +33,17 @@ func TestTCPListenerFd(t *testing.T) {
 func TestUDPListenerString(t *testing.T) {
 	t.Run("wildcard address", func(t *testing.T) {
 		l := starter.NewUDPListener("0.0.0.0", 8080, 3)
-		require.Equal(t, "u8080=3", l.String())
+		require.Equal(t, "udp://8080=3", l.String())
 	})
 
 	t.Run("specific address", func(t *testing.T) {
 		l := starter.NewUDPListener("192.168.1.20", 9092, 5)
-		require.Equal(t, "u192.168.1.20:9092=5", l.String())
+		require.Equal(t, "udp://192.168.1.20:9092=5", l.String())
 	})
 
 	t.Run("ipv6 address", func(t *testing.T) {
 		l := starter.NewUDPListener("2001:db8::1", 9093, 6)
-		require.Equal(t, "u[2001:db8::1]:9093=6", l.String())
+		require.Equal(t, "udp://[2001:db8::1]:9093=6", l.String())
 	})
 }
 
@@ -71,7 +71,7 @@ func TestNewTCPListenerNormalisesEmptyAddr(t *testing.T) {
 func TestNewUDPListenerNormalisesEmptyAddr(t *testing.T) {
 	l := starter.NewUDPListener("", 8080, 1)
 	require.Equal(t, "0.0.0.0", l.Addr)
-	require.Equal(t, "u8080=1", l.String())
+	require.Equal(t, "udp://8080=1", l.String())
 }
 
 func TestNewUnixListenerNoNormalisation(t *testing.T) {
@@ -88,7 +88,7 @@ func TestListFormatPorts(t *testing.T) {
 	}
 	spec, err := starter.FormatPorts(list...)
 	require.NoError(t, err)
-	require.Equal(t, "10.0.0.5:9090=3;u192.168.1.20:9092=4;/var/run/app.sock=5", spec)
+	require.Equal(t, "10.0.0.5:9090=3;udp://192.168.1.20:9092=4;/var/run/app.sock=5", spec)
 }
 
 func TestListStringCompatibility(t *testing.T) {
@@ -97,13 +97,13 @@ func TestListStringCompatibility(t *testing.T) {
 		starter.NewUDPListener("192.168.1.20", 9092, 4),
 		starter.NewUnixListener("/var/run/app.sock", 5),
 	}
-	require.Equal(t, "10.0.0.5:9090=3;u192.168.1.20:9092=4;/var/run/app.sock=5", list.String())
+	require.Equal(t, "10.0.0.5:9090=3;udp://192.168.1.20:9092=4;/var/run/app.sock=5", list.String())
 }
 
 // TestListFormatPortsParsePortsRoundTrip checks that FormatPorts and
 // ParsePorts are inverses of each other, scoped to the shapes the
 // supervisor can actually emit: a bare TCP port, "host:port",
-// "[ipv6]:port" (each with and without the UDP "u" prefix), and an
+// "[ipv6]:port" (each with and without the UDP "udp://" prefix), and an
 // absolute unix socket path.
 //
 // Empty lists and ambiguous listener display forms are covered separately as

@@ -11,7 +11,7 @@ import (
 // ParsePorts so it can verify the routing without requiring inherited file
 // descriptors from a running supervisor.
 func Example_starter_mixedListeners() {
-	targets, err := starter.ParsePorts("8080=3;u8081=4;/tmp/app.sock=5")
+	targets, err := starter.ParsePorts("8080=3;udp://8081=4;/tmp/app.sock=5")
 	if err != nil {
 		fmt.Printf("failed to parse ports: %s\n", err)
 		return
@@ -32,6 +32,6 @@ func Example_starter_mixedListeners() {
 
 	// Output:
 	// stream: 8080=3 via Listen
-	// packet: u8081=4 via ListenPacket
+	// packet: udp://8081=4 via ListenPacket
 	// stream: /tmp/app.sock=5 via Listen
 }

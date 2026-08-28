@@ -3,8 +3,8 @@ Migrating from v0 to v2
 
 This is a reference for moving code from the v0 line (`master`) to v2. It
 covers the import path, the symbol mapping, the removed supervisor API,
-runtime compatibility, listener-spec validation, three deliberate behavior
-changes, and Windows limitations.
+runtime compatibility, the UDP extension, listener-spec validation, three
+deliberate behavior changes, and Windows limitations.
 
 ## Import path
 
@@ -57,14 +57,20 @@ caller outside package `server-starter` could construct the argument.
 `WorkerState`'s two values, `WorkerStarted` and `ErrFailedToStart`, were
 referenced nowhere else in the codebase.
 
-## The runtime wire format remains compatible
+## Runtime compatibility and the UDP extension
 
 `SERVER_STARTER_PORT`, `SERVER_STARTER_GENERATION`, and file descriptors
-numbered starting at 3 use the same wire format as v0. For listener specs
-that format successfully, a worker binary built against v0's `listener`
-package still runs correctly under a v2 `start_server`, and a worker built
-against v2's `starter` package still runs correctly under a v0
-`start_server`.
+numbered starting at 3 retain their v0 behavior for TCP and unix sockets. A
+worker binary built against v0's `listener` package still handles those
+targets under a v2 `start_server`, and a worker built against v2's `starter`
+package handles them under a v0 `start_server`.
+
+UDP targets are a v2 extension. Their canonical command-line and
+`SERVER_STARTER_PORT` spelling is `udp://PORT`, `udp://host:PORT`, or
+`udp://[ipv6]:PORT`. The v2 parser still reads unambiguous legacy forms such
+as `uPORT`, `host:uPORT`, and `u[ipv6]:PORT`. A leading `u` on an otherwise
+valid hostname is no longer treated as a transport marker, so
+`ubuntu.internal:8080` is TCP; spell UDP targets with `udp://`.
 
 ## Listener-spec validation is stricter
 
@@ -79,8 +85,9 @@ The supervisor's `Config` accepts only string port and path metadata, so
 struct-literal listeners do not enter that API. Before acquiring its pid file
 or binding a listener, the supervisor applies the same public `FormatPorts`
 rule used to build worker metadata. Invalid listener names therefore fail
-synchronously during `Run`. Valid listener specs keep the v0 wire format
-described above.
+synchronously during `Run`. Valid TCP and unix listener specs keep the v0
+wire format described above, while UDP targets use the explicit `udp://`
+extension.
 
 ## Three deliberate divergences from Perl's Server::Starter
 

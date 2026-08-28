@@ -12,7 +12,7 @@ import (
 // covers the three listener kinds a worker can receive — a bare TCP port, a
 // UDP target on a specific host:port, and a unix socket path.
 func Example_starter_parseports() {
-	spec := "8080=3;u127.0.0.1:8081=4;/tmp/app.sock=5"
+	spec := "8080=3;udp://127.0.0.1:8081=4;/tmp/app.sock=5"
 
 	list, err := starter.ParsePorts(spec)
 	if err != nil {
@@ -28,6 +28,6 @@ func Example_starter_parseports() {
 
 	// Output:
 	// 8080=3 (fd=3)
-	// u127.0.0.1:8081=4 (fd=4)
+	// udp://127.0.0.1:8081=4 (fd=4)
 	// /tmp/app.sock=5 (fd=5)
 }
