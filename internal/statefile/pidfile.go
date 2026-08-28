@@ -1,7 +1,6 @@
 package statefile
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -78,15 +77,7 @@ func (p *PIDFile) Close() error {
 	if p == nil || p.file == nil {
 		return nil
 	}
-	var removeErr error
-	if pathInfo, err := os.Stat(p.path); err == nil {
-		if fileInfo, statErr := p.file.Stat(); statErr == nil && os.SameFile(pathInfo, fileInfo) {
-			if err := os.Remove(p.path); err != nil && !os.IsNotExist(err) {
-				removeErr = err
-			}
-		}
-	}
-	closeErr := p.file.Close()
+	err := closePIDFile(p.file, p.path)
 	p.file = nil
-	return errors.Join(removeErr, closeErr)
+	return err
 }

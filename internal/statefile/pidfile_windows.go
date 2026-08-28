@@ -59,7 +59,7 @@ func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
 	return windows.CreateFile(
 		path,
 		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
 		nil,
 		disposition,
 		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
@@ -139,6 +139,23 @@ func validatePIDFileLinkCount(f *os.File, path string) error {
 		return fmt.Errorf("pid file %q has %d hard links, expected one", path, handleInfo.NumberOfLinks)
 	}
 	return nil
+}
+
+func closePIDFile(f *os.File, path string) error {
+	owned := false
+	if pathInfo, err := os.Stat(path); err == nil {
+		if fileInfo, statErr := f.Stat(); statErr == nil {
+			owned = os.SameFile(pathInfo, fileInfo)
+		}
+	}
+	closeErr := f.Close()
+	var removeErr error
+	if owned {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			removeErr = err
+		}
+	}
+	return errors.Join(removeErr, closeErr)
 }
 
 func finishPIDFileLock(f *os.File) error {

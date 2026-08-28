@@ -78,6 +78,18 @@ func validatePIDFileLinkCount(f *os.File, path string) error {
 	return nil
 }
 
+func closePIDFile(f *os.File, path string) error {
+	var removeErr error
+	if pathInfo, err := os.Stat(path); err == nil {
+		if fileInfo, statErr := f.Stat(); statErr == nil && os.SameFile(pathInfo, fileInfo) {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				removeErr = err
+			}
+		}
+	}
+	return errors.Join(removeErr, f.Close())
+}
+
 // TryLock attempts to take an exclusive, non-blocking lock on f. It is used
 // by control.Stop to poll for the supervisor having exited: once the
 // supervisor process dies, its lock on the pid file is released and this call
