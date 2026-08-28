@@ -13,11 +13,15 @@ The ```start_server``` utility is a superdaemon for hot-deploying server program
 
 It is often a pain to write a server program that supports graceful restarts, with no resource leaks. Server::Starter solves the problem by splitting the task into two: ```start_server``` works as a superdaemon that binds to zero or more TCP ports or unix sockets, and repeatedly spawns the server program that actually handles the necessary tasks (for example, responding to incoming connections). The spawned server programs under ```start_server``` call accept(2) and handle the requests.
 
-To gracefully restart the server program, send SIGHUP to the superdaemon. The superdaemon spawns a new server program, and if (and only if) it starts up successfully, sends SIGTERM to the old server program.
+To gracefully restart the server program, send SIGHUP to the superdaemon. The
+superdaemon spawns a new server program, and if (and only if) it starts up
+successfully, sends the configured restart or termination signal to the old
+server program (`SIGTERM` by default).
 
 By using ```start_server``` it is much easier to write a hot-deployable server. Following are the only requirements a server program to be run under ```start_server``` should conform to:
 
-- receive file descriptors to listen to through an environment variable - perform a graceful shutdown when receiving SIGTERM
+- receive file descriptors to listen to through an environment variable
+- perform a graceful shutdown when receiving the configured termination signal (`SIGTERM` by default)
 
 Many PSGI servers support this. If you want your Go program to support it, import the root of this module (`github.com/lestrrat-go/server-starter/v2`, see the [package docs](https://github.com/lestrrat-go/server-starter/tree/develop/v2)) for the worker-side implementation, which also fills the ```net.Listener``` interface.
 
