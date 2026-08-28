@@ -123,7 +123,7 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 	// graph gains entries (e.g. golang.org/x/sys) that the scratch module's
 	// go.mod/go.sum haven't recorded yet. -mod=mod lets it resolve those on
 	// the fly instead of requiring a manual "go mod tidy" here.
-	cmd := exec.Command("go", "build", "-mod=mod", "-buildvcs=false", "-o", filepath.Join(dir, "echod"), ".")
+	cmd := exec.CommandContext(context.Background(), "go", "build", "-mod=mod", "-buildvcs=false", "-o", filepath.Join(dir, "echod"), ".")
 	cmd.Dir = dir
 	// GOWORK=off keeps a go.work anywhere above $TMPDIR from pulling the
 	// scratch module into an unrelated workspace.
@@ -154,7 +154,7 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 	}
 
 	for _, port := range ports {
-		_, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", port))
+		_, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%s", port))
 		if err != nil {
 			t.Errorf("Error connecing to port '%s': %s", port, err)
 		}

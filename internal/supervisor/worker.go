@@ -48,7 +48,11 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 	// Don't give up until we're running.
 	for {
 		pid := -1
-		cmd := exec.Command(rs.cfg.command, rs.cfg.args...)
+		// The supervisor owns worker termination: on shutdown it sends
+		// signalOnTERM and drains, so context cancellation must not kill
+		// workers out from under that. WithoutCancel keeps the call
+		// context-aware without handing the child's lifetime to ctx.
+		cmd := exec.CommandContext(context.WithoutCancel(ctx), rs.cfg.command, rs.cfg.args...)
 		if rs.cfg.dir != "" {
 			cmd.Dir = rs.cfg.dir
 		}

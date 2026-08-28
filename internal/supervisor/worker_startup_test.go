@@ -47,7 +47,7 @@ func buildFailingReplacementWorker(t *testing.T, dir string) string {
 	}
 
 	bin := filepath.Join(dir, "failing-replacement")
-	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", bin, ".")
+	cmd := exec.CommandContext(context.Background(), "go", "build", "-buildvcs=false", "-o", bin, ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	if output, err := cmd.CombinedOutput(); err != nil {

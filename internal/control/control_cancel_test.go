@@ -24,7 +24,9 @@ import (
 func TestStopCancelledContext(t *testing.T) {
 	t.Parallel()
 
-	cmd := exec.Command("/bin/true")
+	// context.Background(): this child is a short-lived helper the test
+	// owns and waits on directly, not tied to the ctx under test below.
+	cmd := exec.CommandContext(context.Background(), "/bin/true")
 	require.NoError(t, cmd.Run(), "spawn short-lived child")
 	pid := cmd.Process.Pid
 
@@ -59,7 +61,10 @@ func TestStopCancelledContext(t *testing.T) {
 func TestRestartCancelledContext(t *testing.T) {
 	t.Parallel()
 
-	cmd := exec.Command("/bin/sh", "-c", `trap "" HUP; exec sleep 30`)
+	// context.Background(): the test kills and reaps this child itself
+	// (see the deferred Kill/Wait below), independent of the ctx under
+	// test that gets cancelled 200ms from now.
+	cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", `trap "" HUP; exec sleep 30`)
 	require.NoError(t, cmd.Start(), "spawn HUP-immune child")
 	pid := cmd.Process.Pid
 	defer func() {
