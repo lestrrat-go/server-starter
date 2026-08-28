@@ -7,10 +7,10 @@ import (
 	starter "github.com/lestrrat-go/server-starter/v2"
 )
 
-// Example_starter_generation shows why Generation returns two values. The
-// supervisor sets generation 0 on its own process before it spawns any
-// worker, so 0 is a legal, present value — a caller cannot treat a zero
-// return as "absent". The bool return is what tells the two cases apart.
+// Example_starter_generation shows why Generation returns two values. V2
+// workers start at generation 1, but Generation accepts an explicitly
+// supplied generation 0 for compatibility. The bool return distinguishes
+// that value from an absent variable.
 func Example_starter_generation() {
 	// Example* functions receive no *testing.T, so t.Setenv is unavailable;
 	// save and restore the variable by hand so this example leaves no
@@ -33,16 +33,25 @@ func Example_starter_generation() {
 	generation, ok := starter.Generation()
 	fmt.Printf("absent: generation=%d ok=%t\n", generation, ok)
 
-	// Present: the supervisor sets this on every worker spawn, including
-	// generation 0 on its own process before the first worker.
+	// Worker: the v2 supervisor starts workers at generation 1.
+	if err := os.Setenv(starter.GenerationEnvName, "1"); err != nil {
+		fmt.Printf("failed to set generation env: %s\n", err)
+		return
+	}
+	generation, ok = starter.Generation()
+	fmt.Printf("first worker: generation=%d ok=%t\n", generation, ok)
+
+	// Compatibility: Generation accepts an explicitly supplied zero even
+	// though the v2 supervisor never emits it for a worker.
 	if err := os.Setenv(starter.GenerationEnvName, "0"); err != nil {
 		fmt.Printf("failed to set generation env: %s\n", err)
 		return
 	}
 	generation, ok = starter.Generation()
-	fmt.Printf("present: generation=%d ok=%t\n", generation, ok)
+	fmt.Printf("explicit zero: generation=%d ok=%t\n", generation, ok)
 
 	// Output:
 	// absent: generation=0 ok=false
-	// present: generation=0 ok=true
+	// first worker: generation=1 ok=true
+	// explicit zero: generation=0 ok=true
 }

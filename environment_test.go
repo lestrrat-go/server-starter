@@ -50,7 +50,9 @@ func TestGeneration(t *testing.T) {
 		require.Equal(t, 5, generation)
 	})
 
-	t.Run("generation zero is valid", func(t *testing.T) {
+	t.Run("explicit generation zero is accepted", func(t *testing.T) {
+		// Generation accepts zero for compatibility even though v2 workers
+		// start at generation one.
 		t.Setenv(starter.GenerationEnvName, "0")
 		generation, ok := starter.Generation()
 		require.True(t, ok)

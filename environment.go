@@ -19,11 +19,10 @@ import (
 const PortEnvName = "SERVER_STARTER_PORT"
 
 // GenerationEnvName is the environment variable the supervisor sets to the
-// worker's generation number on every spawn. The supervisor also sets it to
-// 0 on its own process before it spawns any worker, so the first worker is
-// generation 1, and each subsequent spawn increments it by one. Unlike
-// PortEnvName it is never empty, which makes it the reliable signal for
-// IsUnderStartServer.
+// worker's generation number on every spawn. The first worker is generation
+// 1, and each subsequent spawn increments it by one. The v2 supervisor does
+// not set it on its own process. Unlike PortEnvName it is never empty, which
+// makes it the reliable signal for IsUnderStartServer.
 const GenerationEnvName = "SERVER_STARTER_GENERATION"
 
 // IsUnderStartServer reports whether the calling process was spawned by the
@@ -40,10 +39,10 @@ func IsUnderStartServer() bool {
 }
 
 // Generation returns the worker's generation number, as reported by
-// GenerationEnvName, and whether it was present and valid. It returns a
-// bool rather than relying on a zero value alone because generation 0 is a
-// legal value: the supervisor sets it on its own process before it spawns
-// any worker, so a zero return cannot by itself be read as "absent".
+// GenerationEnvName, and whether it was present and valid. It accepts an
+// explicitly supplied generation 0 for compatibility, even though v2 workers
+// start at generation 1. The bool return distinguishes an accepted zero from
+// an absent or invalid value.
 func Generation() (int, bool) {
 	v, ok := os.LookupEnv(GenerationEnvName)
 	if !ok {
