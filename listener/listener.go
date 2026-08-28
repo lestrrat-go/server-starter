@@ -10,6 +10,17 @@ import (
 	"strings"
 )
 
+// ServerStarterEnvVarName is the environment variable that carries the
+// listener specification, as a list of "spec=fd" pairs joined by ";".
+//
+// Each spec is either a TCP/UDP target (a bare port, "host:port", or
+// "[ipv6]:port", optionally prefixed with "u" for UDP) or a unix socket
+// path. A path containing "/" is always read as a unix socket. A relative
+// unix socket path with no "/" that happens to parse as a port or
+// "host:port" (e.g. "8080" or "db:5432") is indistinguishable from a TCP/UDP
+// spec in this wire format and is interpreted as TCP/UDP; pass such sockets
+// as absolute paths, or prefix them with "./" (which contains "/" and so is
+// always read as a unix socket).
 const ServerStarterEnvVarName = "SERVER_STARTER_PORT"
 const wildcardIPv4 = "0.0.0.0"
 
@@ -119,6 +130,29 @@ func (l UnixListener) Listen() (net.Listener, error) {
 var reLooksLikeHostPort = regexp.MustCompile(`^(.+?):(\d+)$`)
 var reLooksLikePort = regexp.MustCompile(`^\d+$`)
 
+// looksLikeTCPGrammar reports whether s parses as a bare port, "host:port",
+// or "[ipv6]:port" — the grammar shared by TCP and UDP specs.
+func looksLikeTCPGrammar(s string) bool {
+	if reLooksLikeHostPort.MatchString(s) {
+		return true
+	}
+	return reLooksLikePort.MatchString(s)
+}
+
+// parseListenTargets parses the "spec=fd;spec=fd;..." value carried by
+// SERVER_STARTER_PORT (see ServerStarterEnvVarName) into concrete Listener
+// values.
+//
+// Each spec is classified in this order: a spec containing "/" is always a
+// unix socket path, taken verbatim; otherwise a spec beginning with "u"
+// whose remainder parses as a port/host:port is a UDP target on that
+// remainder; otherwise a spec that itself parses as a port/host:port is a
+// TCP target; otherwise the spec is a unix socket path, taken verbatim.
+//
+// This leaves one shape ambiguous: a relative unix socket path with no "/"
+// that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")
+// is read as TCP, not as a unix socket. Pass such sockets as absolute
+// paths, or prefix them with "./" to disambiguate.
 func parseListenTargets(str string) ([]Listener, error) {
 	if str == "" {
 		return nil, ErrNoListeningTarget
@@ -138,16 +172,25 @@ func parseListenTargets(str string) ([]Listener, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: %s", pairString, err)
 		}
-		udp := strings.HasPrefix(hostPort, "u")
-		if udp {
-			hostPort = strings.TrimPrefix(hostPort, "u")
-		}
-		if i := strings.LastIndexByte(hostPort, ':'); i >= 0 && strings.HasPrefix(hostPort[i+1:], "u") {
-			udp = true
-			hostPort = hostPort[:i+1] + strings.TrimPrefix(hostPort[i+1:], "u")
+
+		if strings.ContainsRune(hostPort, '/') {
+			ret[i] = UnixListener{Path: hostPort, fd: uintptr(fd)}
+			continue
 		}
 
-		if matches := reLooksLikeHostPort.FindStringSubmatch(hostPort); matches != nil {
+		udp := false
+		target := hostPort
+		if candidate := strings.TrimPrefix(hostPort, "u"); candidate != hostPort && looksLikeTCPGrammar(candidate) {
+			udp = true
+			target = candidate
+		} else if idx := strings.LastIndexByte(hostPort, ':'); idx >= 0 && strings.HasPrefix(hostPort[idx+1:], "u") {
+			if candidate := hostPort[:idx+1] + strings.TrimPrefix(hostPort[idx+1:], "u"); looksLikeTCPGrammar(candidate) {
+				udp = true
+				target = candidate
+			}
+		}
+
+		if matches := reLooksLikeHostPort.FindStringSubmatch(target); matches != nil {
 			port, err := strconv.ParseInt(matches[2], 10, 0)
 			if err != nil {
 				return nil, err
@@ -158,7 +201,7 @@ func parseListenTargets(str string) ([]Listener, error) {
 			} else {
 				ret[i] = TCPListener{Addr: strings.Trim(matches[1], "[]"), Port: int(port), fd: uintptr(fd)}
 			}
-		} else if match := reLooksLikePort.FindString(hostPort); match != "" {
+		} else if match := reLooksLikePort.FindString(target); match != "" {
 			port, err := strconv.ParseInt(match, 10, 0)
 			if err != nil {
 				return nil, err

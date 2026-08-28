@@ -99,6 +99,40 @@ func TestParseListenTargets(t *testing.T) {
 		require.ErrorIs(t, err, ErrNoListeningTarget)
 		require.Nil(t, got)
 	})
+
+	t.Run("relative unix path starting with u is not stripped", func(t *testing.T) {
+		got, err := parseListenTargets("unix.sock=5")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, UnixListener{}, got[0])
+		require.Equal(t, UnixListener{Path: "unix.sock", fd: 5}, got[0])
+	})
+
+	t.Run("unix path containing colon and digits is not read as TCP", func(t *testing.T) {
+		got, err := parseListenTargets("/tmp/a:80=5")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, UnixListener{}, got[0])
+		require.Equal(t, UnixListener{Path: "/tmp/a:80", fd: 5}, got[0])
+	})
+
+	t.Run("dot slash prefixed numeric path is a unix socket", func(t *testing.T) {
+		got, err := parseListenTargets("./8080=5")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, UnixListener{}, got[0])
+		require.Equal(t, UnixListener{Path: "./8080", fd: 5}, got[0])
+	})
+
+	t.Run("mixed multi-target spec", func(t *testing.T) {
+		got, err := parseListenTargets("unix.sock=5;u8080=3;10.0.0.5:9090=4;/foo/bar.sock=6")
+		require.NoError(t, err)
+		require.Len(t, got, 4)
+		require.Equal(t, UnixListener{Path: "unix.sock", fd: 5}, got[0])
+		require.Equal(t, UDPListener{Addr: wildcardIPv4, Port: 8080, fd: 3}, got[1])
+		require.Equal(t, TCPListener{Addr: "10.0.0.5", Port: 9090, fd: 4}, got[2])
+		require.Equal(t, UnixListener{Path: "/foo/bar.sock", fd: 6}, got[3])
+	})
 }
 
 func TestPortNoEnv(t *testing.T) {
