@@ -91,19 +91,23 @@ func TestListFormatPorts(t *testing.T) {
 	require.Equal(t, "10.0.0.5:9090=3;u192.168.1.20:9092=4;/var/run/app.sock=5", spec)
 }
 
+func TestListStringCompatibility(t *testing.T) {
+	list := starter.List{
+		starter.NewTCPListener("10.0.0.5", 9090, 3),
+		starter.NewUDPListener("192.168.1.20", 9092, 4),
+		starter.NewUnixListener("/var/run/app.sock", 5),
+	}
+	require.Equal(t, "10.0.0.5:9090=3;u192.168.1.20:9092=4;/var/run/app.sock=5", list.String())
+}
+
 // TestListFormatPortsParsePortsRoundTrip checks that FormatPorts and
 // ParsePorts are inverses of each other, scoped to the shapes the
 // supervisor can actually emit: a bare TCP port, "host:port",
 // "[ipv6]:port" (each with and without the UDP "u" prefix), and an
 // absolute unix socket path.
 //
-// Two shapes are deliberately excluded, because they do not round-trip
-// today and fixing that is out of scope here:
-//   - an empty List: FormatPorts gives "", which ParsePorts rejects with
-//     ErrNoListeningTarget instead of returning an empty List.
-//   - a relative unix socket path with no "/" that happens to parse as a
-//     port or "host:port" (e.g. "8080" or "db:5432"): ParsePorts reads it
-//     back as TCP/UDP, per the documented ambiguity on ParsePorts.
+// Empty lists and ambiguous listener display forms are covered separately as
+// FormatPorts errors because ParsePorts cannot read them back unchanged.
 func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 	roundTrip := func(t *testing.T, list starter.List) {
 		t.Helper()

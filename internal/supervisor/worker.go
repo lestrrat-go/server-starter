@@ -79,10 +79,10 @@ func reportFailedStart(w io.Writer, pid int, reapedStatus syscall.WaitStatus, re
 }
 
 // startWorker starts the actual command. It returns a non-nil error only
-// when the listeners it was configured with cannot be formatted into a
-// valid SERVER_STARTER_PORT spec (see starter.FormatPorts); that is a
-// permanent misconfiguration, not a transient exec failure, so it is
-// reported instead of retried.
+// when its non-empty listener set cannot be formatted into a valid
+// SERVER_STARTER_PORT spec (see starter.FormatPorts); that is a permanent
+// misconfiguration, not a transient exec failure, so it is reported instead
+// of retried.
 func (rs *runState) startWorker(
 	ctx context.Context,
 	ch chan<- processState,
@@ -185,14 +185,17 @@ func (rs *runState) startWorker(
 		}
 		cmd.ExtraFiles = files
 
-		portSpec, err := starter.FormatPorts(portList...)
-		if err != nil {
-			for _, file := range files {
-				if file != nil {
-					file.Close()
+		portSpec := ""
+		if len(portList) > 0 {
+			portSpec, err = starter.FormatPorts(portList...)
+			if err != nil {
+				for _, file := range files {
+					if file != nil {
+						file.Close()
+					}
 				}
+				return nil, fmt.Errorf("failed to format listeners for worker: %w", err)
 			}
-			return nil, fmt.Errorf("failed to format listeners for worker: %w", err)
 		}
 
 		rs.generation++

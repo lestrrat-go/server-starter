@@ -162,6 +162,11 @@ func TestParsePorts(t *testing.T) {
 }
 
 func TestFormatPorts(t *testing.T) {
+	t.Run("rejects an empty List", func(t *testing.T) {
+		_, err := starter.FormatPorts(starter.List{}...)
+		require.ErrorIs(t, err, starter.ErrNoListeningTarget)
+	})
+
 	t.Run("rejects empty TCP Addr", func(t *testing.T) {
 		_, err := starter.FormatPorts(starter.TCPListener{Addr: "", Port: 8080})
 		require.Error(t, err)
@@ -198,6 +203,20 @@ func TestFormatPorts(t *testing.T) {
 	t.Run("rejects an unknown Listener implementation", func(t *testing.T) {
 		_, err := starter.FormatPorts(fakeListener{})
 		require.Error(t, err)
+	})
+
+	t.Run("rejects an ambiguous relative unix socket path", func(t *testing.T) {
+		_, err := starter.FormatPorts(starter.NewUnixListener("8080", 3))
+		require.Error(t, err)
+		require.ErrorContains(t, err, "UnixListener")
+		require.ErrorContains(t, err, "TCPListener")
+	})
+
+	t.Run("rejects a TCP address that looks like a UDP marker", func(t *testing.T) {
+		_, err := starter.FormatPorts(starter.NewTCPListener("upstream", 8080, 3))
+		require.Error(t, err)
+		require.ErrorContains(t, err, "TCPListener")
+		require.ErrorContains(t, err, "UDPListener")
 	})
 
 	// Round-trip coverage against ParsePorts for every valid shape the

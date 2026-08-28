@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 )
 
 const wildcardIPv4 = "0.0.0.0"
@@ -22,10 +23,20 @@ type Listener interface {
 	String() string
 }
 
-// List holds a list of Listeners. Pass a List to FormatPorts (as
-// FormatPorts(list...)) to get the string compatible with
-// SERVER_STARTER_PORT.
+// List holds a list of Listeners.
 type List []Listener
+
+// String joins every Listener's display form with ";". It is retained for
+// compatibility with v0 and earlier v2 releases. Use FormatPorts when the
+// result will be passed through SERVER_STARTER_PORT, because String does not
+// validate that ParsePorts can read the result back as the same listeners.
+func (ll List) String() string {
+	list := make([]string, len(ll))
+	for i, l := range ll {
+		list[i] = l.String()
+	}
+	return strings.Join(list, ";")
+}
 
 // TCPListener is a listener for ... tcp duh.
 type TCPListener struct {

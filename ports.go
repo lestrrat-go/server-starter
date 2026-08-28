@@ -161,8 +161,9 @@ func ParsePorts(spec string) (List, error) {
 // ls is variadic so a single listener can be formatted ad-hoc, and so a
 // List can be passed directly as FormatPorts(list...).
 //
-// FormatPorts rejects, by returning an error naming the offending listener:
+// FormatPorts rejects the following inputs:
 //
+//   - an empty list, because ParsePorts rejects an empty string
 //   - a TCPListener or UDPListener with an empty Addr
 //   - a UnixListener with an empty Path
 //   - a UnixListener whose Path contains ';' (the spec separator) or '='
@@ -171,7 +172,14 @@ func ParsePorts(spec string) (List, error) {
 //     UnixListener; FormatPorts has no way to validate an implementation
 //     it does not know, so it refuses to guess rather than risk emitting
 //     a spec ParsePorts cannot read back correctly
+//   - a listener whose String result ParsePorts would read back as a
+//     different listener, including ambiguous relative unix socket paths
+//     and TCP addresses that look like they carry the UDP marker
 func FormatPorts(ls ...Listener) (string, error) {
+	if len(ls) == 0 {
+		return "", ErrNoListeningTarget
+	}
+
 	specs := make([]string, len(ls))
 	for i, l := range ls {
 		switch v := l.(type) {
@@ -195,7 +203,31 @@ func FormatPorts(ls ...Listener) (string, error) {
 		}
 		specs[i] = l.String()
 	}
-	return strings.Join(specs, ";"), nil
+
+	spec := strings.Join(specs, ";")
+	parsed, err := ParsePorts(spec)
+	if err != nil {
+		return "", fmt.Errorf("starter: cannot format listeners: encoded value is not parseable: %w", err)
+	}
+	if len(parsed) != len(ls) {
+		return "", fmt.Errorf(
+			"starter: cannot format listeners: encoded value parses as %d listeners instead of %d",
+			len(parsed),
+			len(ls),
+		)
+	}
+	for i, l := range ls {
+		if parsed[i] != l {
+			return "", fmt.Errorf(
+				"starter: cannot format listener %d (%T): encoded value parses as %T with different fields",
+				i,
+				l,
+				parsed[i],
+			)
+		}
+	}
+
+	return spec, nil
 }
 
 // Ports parses environment variable SERVER_STARTER_PORT (see PortEnvName).
