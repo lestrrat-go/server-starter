@@ -19,7 +19,7 @@ type PIDFile struct {
 	path string
 }
 
-// Acquire opens path, takes a non-blocking exclusive lock on it, and writes
+// Acquire opens path, takes a non-blocking ownership lock on it, and writes
 // the current process's pid into it.
 func Acquire(path string) (*PIDFile, error) {
 	return acquire(path, lockFile)
@@ -56,6 +56,10 @@ func acquire(path string, lock func(*os.File) error) (*PIDFile, error) {
 	if err := f.Sync(); err != nil {
 		f.Close()
 		return nil, err
+	}
+	if err := finishPIDFileLock(f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to finish pid file lock %s: %w", path, err)
 	}
 	return &PIDFile{file: f, path: path}, nil
 }

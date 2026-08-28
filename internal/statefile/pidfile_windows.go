@@ -67,9 +67,9 @@ func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
 }
 
 func lockFile(f *os.File) error {
-	// Keep the lock far beyond the PID text and any buffered read request so a
-	// contender can read the owner through a second handle.
-	overlapped := windows.Overlapped{OffsetHigh: 1}
+	// Start with the legacy exclusive byte-zero lock so old and current
+	// supervisors cannot both acquire the PID file.
+	var overlapped windows.Overlapped
 	return windows.LockFileEx(
 		windows.Handle(f.Fd()),
 		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
@@ -89,6 +89,24 @@ func validatePIDFileLinkCount(f *os.File, path string) error {
 		return fmt.Errorf("pid file %q has %d hard links, expected one", path, handleInfo.NumberOfLinks)
 	}
 	return nil
+}
+
+func finishPIDFileLock(f *os.File) error {
+	// Overlay a shared lock on the same handle, then release the exclusive
+	// lock. The shared lock still rejects every contender's exclusive lock,
+	// including the legacy lock, while allowing the PID text to be read.
+	var overlapped windows.Overlapped
+	if err := windows.LockFileEx(
+		windows.Handle(f.Fd()),
+		windows.LOCKFILE_FAIL_IMMEDIATELY,
+		0,
+		1,
+		0,
+		&overlapped,
+	); err != nil {
+		return err
+	}
+	return windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, &overlapped)
 }
 
 func lockUnavailable(err error) bool {

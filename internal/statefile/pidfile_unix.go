@@ -51,6 +51,10 @@ func lockFile(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 }
 
+func finishPIDFileLock(*os.File) error {
+	return nil
+}
+
 func lockUnavailable(err error) bool {
 	return errors.Is(err, syscall.EWOULDBLOCK)
 }
