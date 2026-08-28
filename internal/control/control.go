@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,11 +11,14 @@ import (
 	"github.com/lestrrat-go/server-starter/v2/internal/statefile"
 )
 
-const controlTimeout = 30 * time.Second
+// pollInterval is how often Stop and Restart re-check for completion while
+// waiting for the target process to react to a signal.
+const pollInterval = 20 * time.Millisecond
 
 // Stop reads the pid from pidPath, sends SIGTERM, and waits for the process
-// to exit.
-func Stop(pidPath string) error {
+// to exit. The caller controls how long to wait via ctx; a typical caller
+// wraps ctx with a timeout.
+func Stop(ctx context.Context, pidPath string) error {
 	pid, err := statefile.ReadPID(pidPath)
 	if err != nil {
 		return err
@@ -22,8 +26,19 @@ func Stop(pidPath string) error {
 	if err := signalProcess(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
 	}
-	deadline := time.Now().Add(controlTimeout)
-	for time.Now().Before(deadline) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for process %d to stop: %w", pid, ctx.Err())
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for process %d to stop: %w", pid, ctx.Err())
+		case <-ticker.C:
+		}
 		f, err := os.OpenFile(pidPath, os.O_RDWR, 0644)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -35,15 +50,14 @@ func Stop(pidPath string) error {
 				return nil
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
 	}
-	return fmt.Errorf("timed out waiting for process %d to stop", pid)
 }
 
 // Restart reads the pid from pidPath, sends SIGHUP, and waits until the
 // server(s) of the older generation(s) die by monitoring the contents of
-// statusPath.
-func Restart(pidPath, statusPath string) error {
+// statusPath. The caller controls how long to wait via ctx; a typical
+// caller wraps ctx with a timeout.
+func Restart(ctx context.Context, pidPath, statusPath string) error {
 	if statusPath == "" {
 		return fmt.Errorf("--status-file is required with --restart")
 	}
@@ -58,15 +72,24 @@ func Restart(pidPath, statusPath string) error {
 	if err := signalProcess(pid, syscall.SIGHUP); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(controlTimeout)
-	for time.Now().Before(deadline) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for restart: %w", ctx.Err())
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for restart: %w", ctx.Err())
+		case <-ticker.C:
+		}
 		current, err := statefile.ReadStatus(statusPath)
 		if err == nil && generationAdvanced(previous, current) && oldWorkersGone(previous, current) {
 			return nil
 		}
-		time.Sleep(20 * time.Millisecond)
 	}
-	return fmt.Errorf("timed out waiting for restart")
 }
 
 func generationAdvanced(previous, current map[int]int) bool {

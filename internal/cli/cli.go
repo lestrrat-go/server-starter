@@ -1,14 +1,21 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/jessevdk/go-flags"
 	"github.com/lestrrat-go/server-starter/v2/internal/control"
 	"github.com/lestrrat-go/server-starter/v2/internal/supervisor"
 )
+
+// controlTimeout bounds how long --stop and --restart wait for the target
+// process to react. It preserves the 30-second default that used to be
+// built into internal/control.
+const controlTimeout = 30 * time.Second
 
 // Run parses command-line arguments and dispatches to the appropriate
 // start_server behavior (running the supervisor, --stop, --restart,
@@ -36,11 +43,13 @@ func Run() int {
 			fmt.Fprintf(os.Stderr, "--pid-file is required with --stop or --restart\n")
 			return 1
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), controlTimeout)
+		defer cancel()
 		var err error
 		if opts.OptStop {
-			err = control.Stop(opts.OptPidFile)
+			err = control.Stop(ctx, opts.OptPidFile)
 		} else {
-			err = control.Restart(opts.OptPidFile, opts.OptStatusFile)
+			err = control.Restart(ctx, opts.OptPidFile, opts.OptStatusFile)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)
