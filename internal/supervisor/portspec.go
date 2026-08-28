@@ -10,10 +10,21 @@ import (
 	starter "github.com/lestrrat-go/server-starter/v2"
 )
 
+const (
+	// Explicit descriptors are a convenience for integrations that require a
+	// stable inherited descriptor number. Keep them bounded because ExtraFiles
+	// must materialize every slot from descriptor 3 through the largest one.
+	maxInheritedListenerFD = 1024
+
+	// Sparse layouts are padded with open files. Limit the padding separately
+	// so a single valid-but-distant descriptor cannot consume hundreds of
+	// process descriptors before the worker starts.
+	maxSparseListenerFDSlots = 256
+)
+
 type listener struct {
 	listener net.Listener
 	packet   net.PacketConn
-	fd       int
 
 	// network, host, and port describe a TCP/UDP listener's bind target
 	// (network is "tcp4"/"tcp6"/"udp4"/"udp6"); path describes a unix
@@ -57,6 +68,9 @@ func parsePortTarget(raw string) (portTarget, error) {
 		value, err := strconv.Atoi(strings.TrimSpace(target[i+1:]))
 		if err != nil || value < 0 {
 			return portTarget{}, fmt.Errorf("invalid file descriptor in %q", raw)
+		}
+		if err := validateExplicitListenerFD(value); err != nil {
+			return portTarget{}, fmt.Errorf("invalid file descriptor in %q: %w", raw, err)
 		}
 		fd = value
 		target = strings.TrimSpace(target[:i])
@@ -105,6 +119,67 @@ func parsePortTarget(raw string) (portTarget, error) {
 		spec = "u" + spec
 	}
 	return portTarget{host: host, port: port, network: network, spec: spec, fd: fd}, nil
+}
+
+func validateExplicitListenerFD(fd int) error {
+	if fd < 3 {
+		return fmt.Errorf("listener descriptor %d conflicts with standard streams", fd)
+	}
+	if fd > maxInheritedListenerFD {
+		return fmt.Errorf("listener descriptor %d exceeds maximum %d", fd, maxInheritedListenerFD)
+	}
+	return nil
+}
+
+// assignListenerDescriptors validates requested descriptor numbers and fills
+// automatic entries (represented by -1) from descriptor 3 upward. The
+// returned slice is safe to use as indexes into exec.Cmd.ExtraFiles.
+func assignListenerDescriptors(requested []int) ([]int, error) {
+	descriptors := make([]int, len(requested))
+	used := make(map[int]struct{}, len(requested))
+	maxFD := 2
+	for i, fd := range requested {
+		if fd == -1 {
+			continue
+		}
+		if err := validateExplicitListenerFD(fd); err != nil {
+			return nil, err
+		}
+		if _, ok := used[fd]; ok {
+			return nil, fmt.Errorf("listener descriptor %d is specified more than once", fd)
+		}
+		descriptors[i] = fd
+		used[fd] = struct{}{}
+		if fd > maxFD {
+			maxFD = fd
+		}
+	}
+
+	padding := maxFD - 2 - len(requested)
+	if padding > maxSparseListenerFDSlots {
+		return nil, fmt.Errorf(
+			"listener descriptor layout requires %d unused slots; maximum is %d",
+			padding,
+			maxSparseListenerFDSlots,
+		)
+	}
+
+	nextFD := 3
+	for i := range descriptors {
+		if descriptors[i] != 0 {
+			continue
+		}
+		for {
+			if _, ok := used[nextFD]; !ok {
+				descriptors[i] = nextFD
+				used[nextFD] = struct{}{}
+				nextFD++
+				break
+			}
+			nextFD++
+		}
+	}
+	return descriptors, nil
 }
 
 func listenConfig(network string) net.ListenConfig {

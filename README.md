@@ -73,6 +73,13 @@ wg.Wait()
 
 See the `examples/` directory for complete, runnable programs.
 
+## SUPERVISOR PORT DESCRIPTORS
+
+The `--port` option accepts an optional `=fd` suffix when an integration
+requires a specific inherited descriptor. Explicit descriptors must be from 3
+through 1024. The complete listener layout may leave at most 256 unused
+descriptor slots, which the supervisor fills before starting each worker.
+
 ## WINDOWS
 
 `start_server` runs on Windows, with two limitations: `--daemonize` is not
