@@ -132,16 +132,26 @@ func lockOwnerPID(f *os.File, path string, recordedPID int) (int, pidLockKind, e
 	if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &lock); err != nil {
 		return 0, pidLockUnknown, err
 	}
+	recordLockPID := 0
 	if lock.Type != syscall.F_UNLCK {
 		if lock.Pid <= 0 {
 			return 0, pidLockUnknown, fmt.Errorf("record lock has no process owner")
 		}
-		return int(lock.Pid), pidLockRecord, nil
+		recordLockPID = int(lock.Pid)
 	}
 
 	flockPID, hasRecordLock, err := inspectInodeLocks(f, recordedPID)
 	if err != nil {
 		return 0, pidLockUnknown, err
+	}
+	if recordLockPID > 0 {
+		if flockPID == 0 {
+			return 0, pidLockUnknown, fmt.Errorf("record lock owner %d could not be verified as the BSD flock owner", recordLockPID)
+		}
+		if flockPID != recordLockPID {
+			return 0, pidLockUnknown, fmt.Errorf("record lock owner %d does not match BSD flock owner %d", recordLockPID, flockPID)
+		}
+		return recordLockPID, pidLockRecord, nil
 	}
 	if hasRecordLock {
 		return 0, pidLockUnknown, fmt.Errorf("pid file lock was acquired for a different path")

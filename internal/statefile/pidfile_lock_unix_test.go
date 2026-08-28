@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -77,6 +79,20 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("rejects separate record and flock owners", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("Linux exposes BSD flock owners through /proc/locks")
+		}
+
+		path := filepath.Join(t.TempDir(), "server.pid")
+		flockPID := startLegacyPIDLockHelper(t, path)
+		recordPID := startRecordPIDLockHelper(t, path)
+		require.NotEqual(t, flockPID, recordPID)
+
+		_, err := statefile.ReadPID(path)
+		require.ErrorContains(t, err, "record lock owner")
+	})
+
 	t.Run("rejects a locked pid file moved from another path", func(t *testing.T) {
 		dir := t.TempDir()
 		firstPath := filepath.Join(dir, "first.pid")
@@ -96,15 +112,21 @@ func TestPIDLockHelper(t *testing.T) {
 	}
 
 	path := os.Getenv(pidLockHelperEnv)
-	if os.Getenv(pidLockHelperModeEnv) == "legacy" {
+	switch os.Getenv(pidLockHelperModeEnv) {
+	case "legacy", "record":
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 		require.NoError(t, err)
 		defer file.Close()
-		require.NoError(t, syscall.Flock(int(file.Fd()), syscall.LOCK_EX))
+		if os.Getenv(pidLockHelperModeEnv) == "legacy" {
+			require.NoError(t, syscall.Flock(int(file.Fd()), syscall.LOCK_EX))
+		} else {
+			lock := testPathRecordLock(path)
+			require.NoError(t, syscall.FcntlFlock(file.Fd(), syscall.F_SETLK, &lock))
+		}
 		_, err = fmt.Fprintf(file, "%d\n", os.Getpid())
 		require.NoError(t, err)
 		require.NoError(t, file.Sync())
-	} else {
+	default:
 		pidFile, err := statefile.Acquire(path)
 		require.NoError(t, err)
 		defer pidFile.Close()
@@ -125,6 +147,23 @@ func startPIDLockHelper(t *testing.T, path string) int {
 
 func startLegacyPIDLockHelper(t *testing.T, path string) int {
 	return startPIDLockHelperWithMode(t, path, "legacy")
+}
+
+func startRecordPIDLockHelper(t *testing.T, path string) int {
+	return startPIDLockHelperWithMode(t, path, "record")
+}
+
+func testPathRecordLock(path string) syscall.Flock_t {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		panic(err)
+	}
+	digest := sha256.Sum256([]byte(filepath.Clean(absPath)))
+	start := int64(binary.BigEndian.Uint64(digest[:8]) & (^uint64(0) >> 1))
+	if start == 0 {
+		start = 1
+	}
+	return syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: start, Len: 1}
 }
 
 func startPIDLockHelperWithMode(t *testing.T, path, mode string) int {
