@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 	starter "github.com/lestrrat-go/server-starter/v2"
@@ -52,9 +53,17 @@ func main() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(w, r.Body)
 	})
-	for _, l := range listeners {
-		http.Serve(l, handler)
+	var wg sync.WaitGroup
+	for _, listener := range listeners {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := http.Serve(listener, handler); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to serve %s: %s\n", listener.Addr(), err)
+			}
+		}()
 	}
+	wg.Wait()
 
 	loop := false
 	sigCh := make(chan os.Signal)
