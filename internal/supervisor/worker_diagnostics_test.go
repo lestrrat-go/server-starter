@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -46,27 +47,22 @@ func (b *syncBuffer) String() string {
 // TestReportFailedStartMessage covers worker.go's "new worker %d seems to
 // have failed to start" diagnostic (issue #22).
 //
-// A real *os.ProcessState is used for the with-status case rather than a
-// fabricated one -- the type has no public constructor, so the only way to
-// get one is to actually run a process to completion. reportFailedStart is
-// exercised directly rather than through a full supervisor Run(): on Unix,
-// the supervisor's own liveness probe (findWorker, in worker_unix.go) reaps
-// a worker that dies within the startup interval via its own WNOHANG
-// wait4(), which consumes the exit status before startWorker's later
-// cmd.Wait() can collect it. So cmd.ProcessState is nil in that case, and
-// this exact message is not observed to carry a status through a real
-// end-to-end run on Unix in practice, even though the code below correctly
-// reports one whenever a ProcessState is available (as it reliably is on
-// Windows, where findWorker does not reap). See the doc comment on
-// reportFailedStart.
+// reportFailedStart is exercised directly, with the reaped-status and
+// ProcessState-status inputs supplied by hand, rather than through a full
+// supervisor Run(): TestFailedStartReportsReapedExitStatus below already
+// covers the real end-to-end path (the one that actually happens on Unix,
+// where findWorker's own WNOHANG wait4() reaps a worker that dies within
+// the startup interval, consuming the exit status before startWorker's
+// later cmd.Wait() can collect it -- see the doc comment on findWorker in
+// worker_unix.go and on reportFailedStart in worker.go).
+//
+// A real *os.ProcessState is used for the ProcessState-status case rather
+// than a fabricated one -- the type has no public constructor, so the only
+// way to get one is to actually run a process to completion.
 func TestReportFailedStartMessage(t *testing.T) {
-	t.Run("with a real exit status", func(t *testing.T) {
-		cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 3")
-		require.Error(t, cmd.Run(), "the command must exit non-zero")
-		require.NotNil(t, cmd.ProcessState)
-
+	t.Run("with a reaped status", func(t *testing.T) {
 		var buf bytes.Buffer
-		reportFailedStart(&buf, 4242, cmd.ProcessState)
+		reportFailedStart(&buf, 4242, syscall.WaitStatus(3<<8), true, nil)
 
 		got := buf.String()
 		require.Contains(t, got, "new worker 4242 seems to have failed to start")
@@ -74,13 +70,65 @@ func TestReportFailedStartMessage(t *testing.T) {
 		require.NotContains(t, got, removedPlaceholder)
 	})
 
-	t.Run("without a process state", func(t *testing.T) {
+	t.Run("with a process state", func(t *testing.T) {
+		cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 3")
+		require.Error(t, cmd.Run(), "the command must exit non-zero")
+		require.NotNil(t, cmd.ProcessState)
+
+		var buf bytes.Buffer
+		reportFailedStart(&buf, 4242, syscall.WaitStatus(0), false, cmd.ProcessState)
+
+		got := buf.String()
+		require.Contains(t, got, "new worker 4242 seems to have failed to start")
+		require.Contains(t, got, "status:")
+		require.NotContains(t, got, removedPlaceholder)
+	})
+
+	t.Run("without a status", func(t *testing.T) {
 		var buf bytes.Buffer
 		require.NotPanics(t, func() {
-			reportFailedStart(&buf, 4242, nil)
+			reportFailedStart(&buf, 4242, syscall.WaitStatus(0), false, nil)
 		})
 		require.Equal(t, "new worker 4242 seems to have failed to start\n", buf.String())
 	})
+}
+
+// TestFailedStartReportsReapedExitStatus covers the real end-to-end path on
+// Unix: a worker that exits non-zero before the startup interval elapses is
+// reaped by findWorker's own liveness probe, so the exit status must come
+// from findWorker's reaped return value, not from cmd.ProcessState (which
+// stays nil in this case -- see the doc comment on findWorker in
+// worker_unix.go). Before the fix, this diagnostic never carried a status
+// on Unix.
+func TestFailedStartReportsReapedExitStatus(t *testing.T) {
+	var buf syncBuffer
+	sd, err := NewStarter(&config{
+		command:  "/bin/false",
+		interval: 1,
+		stderr:   &buf,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(buf.String(), "seems to have failed to start") {
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-ctrl.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for Run() to return")
+	}
+
+	got := buf.String()
+	require.Contains(t, got, "seems to have failed to start, status:")
 }
 
 // TestHangupReportsRealOldWorkerCount covers supervisor.go's two
