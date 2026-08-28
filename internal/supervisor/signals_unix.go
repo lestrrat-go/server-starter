@@ -22,6 +22,6 @@ func addPlatformDependentNiceSigNames(v map[syscall.Signal]string) map[syscall.S
 	v[syscall.SIGVTALRM] = "VTALRM"
 	v[syscall.SIGWINCH] = "WINCH"
 	v[syscall.SIGXCPU] = "XCPU"
-	v[syscall.SIGXFSZ] = "GXFSZ"
+	v[syscall.SIGXFSZ] = "XFSZ"
 	return v
 }

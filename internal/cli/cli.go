@@ -36,6 +36,10 @@ func Run() int {
 		fmt.Fprintf(os.Stdout, "%s\n", version)
 		return 0
 	}
+	if err := opts.validateSignals(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		return 1
+	}
 
 	if opts.OptInterval < 0 {
 		opts.OptInterval = 1
