@@ -47,7 +47,7 @@ func TestAcquirePIDFileRejectsLegacyWindowsLock(t *testing.T) {
 	contender, err := Acquire(path)
 	require.Nil(t, contender)
 	require.ErrorContains(t, err, path)
-	require.ErrorContains(t, err, "already locked")
+	require.ErrorContains(t, err, "locked by process "+strconv.Itoa(cmd.Process.Pid))
 
 	require.NoError(t, stdin.Close())
 	require.NoError(t, cmd.Wait(), stderr.String())

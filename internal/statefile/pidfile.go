@@ -66,7 +66,7 @@ func acquire(path string, lock func(*os.File) error) (*PIDFile, error) {
 
 func readOwnerPID(f *os.File) (int, bool) {
 	var data [pidTextSize]byte
-	n, err := f.ReadAt(data[:], 0)
+	n, err := readPIDText(f, data[:])
 	if err != nil && err != io.EOF {
 		return 0, false
 	}

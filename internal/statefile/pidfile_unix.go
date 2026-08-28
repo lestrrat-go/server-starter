@@ -47,6 +47,10 @@ func openPIDFile(path string) (*os.File, error) {
 	return f, nil
 }
 
+func readPIDText(f *os.File, data []byte) (int, error) {
+	return f.ReadAt(data, 0)
+}
+
 func lockFile(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 }

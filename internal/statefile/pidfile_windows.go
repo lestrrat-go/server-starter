@@ -3,6 +3,7 @@ package statefile
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -64,6 +65,55 @@ func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
 		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
 		0,
 	)
+}
+
+func readPIDText(f *os.File, data []byte) (int, error) {
+	n, err := f.ReadAt(data, 0)
+	if !errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+		return n, err
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := min(int64(len(data)), info.Size())
+	if size == 0 {
+		return 0, io.EOF
+	}
+
+	// Windows byte-range locks do not apply to mapped views. A read-only
+	// mapping can therefore inspect PID text protected by a legacy lock.
+	mapping, err := windows.CreateFileMapping(
+		windows.Handle(f.Fd()),
+		nil,
+		windows.PAGE_READONLY,
+		0,
+		0,
+		nil,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(mapping)
+
+	address, err := windows.MapViewOfFile(mapping, windows.FILE_MAP_READ, 0, 0, uintptr(size))
+	if err != nil {
+		return 0, err
+	}
+	defer windows.UnmapViewOfFile(address)
+
+	var bytesRead uintptr
+	if err := windows.ReadProcessMemory(
+		windows.CurrentProcess(),
+		address,
+		&data[0],
+		uintptr(size),
+		&bytesRead,
+	); err != nil {
+		return 0, err
+	}
+	return int(bytesRead), nil
 }
 
 func lockFile(f *os.File) error {
