@@ -30,3 +30,39 @@ go install github.com/lestrrat-go/server-starter/v2/cmd/start_server@v2.0.0-2026
 ```
 
 Replace the pinned version with `@latest` after v2 is tagged.
+
+`start_server` is a binary, not a Go library: you install and run it, you
+do not import it. The Go module `github.com/lestrrat-go/server-starter/v2`
+gives you only the worker-facing side of the protocol, described below.
+
+Coming from the v0 line of this module (the `listener` subpackage and the
+importable supervisor)? See [MIGRATION.md](./MIGRATION.md).
+
+## WORKER-SIDE USAGE
+
+A program that runs under `start_server` checks whether it was launched
+that way, recovers the listening sockets the supervisor already bound, and
+serves on them instead of opening its own listener:
+
+```go
+if !starter.IsUnderStartServer() {
+	log.Fatal("this program must be run under start_server")
+}
+
+listeners, err := starter.ListenAll()
+if err != nil {
+	log.Fatal(err)
+}
+
+// listeners[0], listeners[1], ... are net.Listener, ready to Serve on.
+http.Serve(listeners[0], handler)
+```
+
+See the `examples/` directory for complete, runnable programs.
+
+## WINDOWS
+
+`start_server` runs on Windows, with two limitations: `--daemonize` is not
+supported, and `--stop` / `--restart` are not supported because Windows has
+no way to deliver a signal to a process by pid. All three fail with an
+explicit error rather than doing nothing silently.
