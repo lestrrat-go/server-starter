@@ -299,6 +299,18 @@ func (s *Starter) Run() error {
 	oldWorkers := make(map[int]int)
 	var sigReceived os.Signal
 	var sigToSend os.Signal
+	var restartTimer *time.Timer
+	var restartC <-chan time.Time
+	var autoRestartForced bool
+	if autoRestartEnabled() {
+		restartTimer = time.NewTimer(autoRestartInterval())
+		restartC = restartTimer.C
+	}
+	defer func() {
+		if restartTimer != nil {
+			restartTimer.Stop()
+		}
+	}()
 
 	defer func() {
 		if p != nil {
@@ -339,7 +351,6 @@ func (s *Starter) Run() error {
 		fmt.Fprintf(os.Stderr, "exiting\n")
 	}()
 
-	//	var lastRestartTime time.Time
 	for { // outer loop
 		setEnv()
 
@@ -371,7 +382,10 @@ func (s *Starter) Run() error {
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
 					p = s.StartWorker(sigCh, workerCh)
-					// lastRestartTime = time.Now()
+					if restartTimer != nil {
+						autoRestartForced = false
+						restartTimer.Reset(autoRestartInterval())
+					}
 				} else {
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "old worker %d died, status:%d\n", st.Pid(), exitSt)
@@ -399,6 +413,19 @@ func (s *Starter) Run() error {
 					sigToSend = syscall.SIGTERM
 					return nil
 				}
+			case <-restartC:
+				if len(oldWorkers) == 0 {
+					restart = 1
+					autoRestartForced = false
+				} else if autoRestartForced {
+					restart = 2
+					autoRestartForced = false
+				} else {
+					autoRestartForced = true
+					if restartTimer != nil {
+						restartTimer.Reset(autoRestartInterval())
+					}
+				}
 			}
 
 			if restart > 1 || restart > 0 && len(oldWorkers) == 0 {
@@ -407,6 +434,10 @@ func (s *Starter) Run() error {
 					oldWorkers[p.Pid] = s.generation
 				}
 				p = s.StartWorker(sigCh, workerCh)
+				if restartTimer != nil {
+					autoRestartForced = false
+					restartTimer.Reset(autoRestartInterval())
+				}
 				fmt.Fprintf(os.Stderr, "new worker is now running, sending %s to old workers:", signame(sigToSend))
 				size := len(oldWorkers)
 				if size == 0 {
@@ -441,6 +472,25 @@ func (s *Starter) Run() error {
 			}
 		}
 	}
+}
+
+func autoRestartEnabled() bool {
+	value, ok := os.LookupEnv("ENABLE_AUTO_RESTART")
+	if !ok {
+		return false
+	}
+	enabled, _ := strconv.ParseBool(value)
+	return enabled || value == "1"
+}
+
+func autoRestartInterval() time.Duration {
+	interval := 360
+	if value, ok := os.LookupEnv("AUTO_RESTART_INTERVAL"); ok {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			interval = parsed
+		}
+	}
+	return time.Duration(interval) * time.Second
 }
 
 func getKillOldDelay() time.Duration {
