@@ -6,13 +6,40 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	starter "github.com/lestrrat-go/server-starter/v2"
 )
 
 type listener struct {
 	listener net.Listener
 	packet   net.PacketConn
 	fd       int
-	spec     string // path or port spec
+
+	// network, host, and port describe a TCP/UDP listener's bind target
+	// (network is "tcp4"/"tcp6"/"udp4"/"udp6"); path describes a unix
+	// listener's socket path, with network set to "unix". Captured at bind
+	// time in Run so startWorker can format the SERVER_STARTER_PORT entry
+	// for this listener through the root package's List/Listener types
+	// instead of an inline format string.
+	network string
+	host    string
+	port    int
+	path    string
+}
+
+// starterListener converts l, bound to fd, into the root package's Listener
+// representation. Formatting the port spec this way (String()) rather than
+// with an inline fmt.Sprintf keeps the supervisor's writer and the worker's
+// reader (starter.ParsePorts) built from the same constructors.
+func (l listener) starterListener(fd int) starter.Listener {
+	switch {
+	case l.network == "unix":
+		return starter.NewUnixListener(l.path, uintptr(fd))
+	case strings.HasPrefix(l.network, "udp"):
+		return starter.NewUDPListener(l.host, l.port, uintptr(fd))
+	default:
+		return starter.NewTCPListener(l.host, l.port, uintptr(fd))
+	}
 }
 
 type portTarget struct {

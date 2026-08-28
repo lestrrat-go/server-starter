@@ -6,39 +6,27 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 var errNoEnv = errors.New("no ENVDIR specified, or ENVDIR does not exist")
-var envMu sync.Mutex
-var managedEnv = make(map[string]struct{})
 
-func setEnv() {
-	envMu.Lock()
-	defer envMu.Unlock()
-
-	m, err := reloadEnv()
-	if err != nil && err != errNoEnv {
+// loadEnvdir reads the envdir at dn and returns the resulting variable map
+// for the caller to overlay onto a spawned worker's environment. Unlike the
+// old setEnv, it is a pure function: it never touches the supervisor's own
+// process environment, so the caller decides what, if anything, to do with
+// the result.
+func loadEnvdir(dn string) map[string]string {
+	m, err := reloadEnv(dn)
+	if err != nil && !errors.Is(err, errNoEnv) {
 		fmt.Fprintf(os.Stderr, "failed to load from envdir: %s\n", err)
 	}
-	for name := range managedEnv {
-		if _, ok := m[name]; !ok {
-			_ = os.Unsetenv(name)
-		}
-	}
-	for name, value := range m {
-		_ = os.Setenv(name, value)
-		managedEnv[name] = struct{}{}
-	}
-	for name := range managedEnv {
-		if _, ok := m[name]; !ok {
-			delete(managedEnv, name)
-		}
-	}
+	return m
 }
 
-func reloadEnv() (map[string]string, error) {
-	dn := os.Getenv("ENVDIR")
+// reloadEnv reads dn (one file per variable; a file's value is the first
+// line of its contents) into a map. It returns errNoEnv when dn is empty,
+// does not exist, or contains no usable entries.
+func reloadEnv(dn string) (map[string]string, error) {
 	if dn == "" {
 		return nil, errNoEnv
 	}

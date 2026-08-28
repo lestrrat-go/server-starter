@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -31,6 +32,17 @@ import (
 )
 
 func main() {
+	// The first arg, when present, is a file this worker writes its own
+	// SERVER_STARTER_PORT into. Tests use this to observe the child's view
+	// of the environment without relying on the supervisor process's own
+	// environment, which the supervisor must never mutate.
+	if len(os.Args) > 1 {
+		if err := os.WriteFile(os.Args[1], []byte(os.Getenv("SERVER_STARTER_PORT")), 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to write port file: %s\n", err)
+			os.Exit(1)
+		}
+	}
+
 	listeners, err := starter.ListenAll()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to listen: %s\n", err)
@@ -69,6 +81,11 @@ type config struct {
 	sigonhup   string
 	sigonterm  string
 	statusfile string
+
+	envdir              string
+	enableAutoRestart   bool
+	autoRestartInterval time.Duration
+	killOldDelay        time.Duration
 }
 
 func (c config) Args() []string          { return c.args }
@@ -81,6 +98,11 @@ func (c config) Paths() []string         { return c.paths }
 func (c config) SignalOnHUP() os.Signal  { return SigFromName(c.sigonhup) }
 func (c config) SignalOnTERM() os.Signal { return SigFromName(c.sigonterm) }
 func (c config) StatusFile() string      { return c.statusfile }
+
+func (c config) Envdir() string                     { return c.envdir }
+func (c config) EnableAutoRestart() bool            { return c.enableAutoRestart }
+func (c config) AutoRestartInterval() time.Duration { return c.autoRestartInterval }
+func (c config) KillOldDelay() time.Duration        { return c.killOldDelay }
 
 func TestRun(t *testing.T) {
 	dir := t.TempDir()
@@ -134,14 +156,23 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 	}
 
 	ports := []string{"9090", "8080"}
+	portFile := filepath.Join(t.TempDir(), "worker-port.txt")
 	sd, err := NewStarter(&config{
 		ports:   ports,
 		command: filepath.Join(dir, "echod"),
+		args:    []string{portFile},
 	})
 	if err != nil {
 		t.Errorf("Failed to create starter: %s", err)
 		return
 	}
+
+	// The supervisor must never mutate its own process environment (two
+	// concurrent supervisors would otherwise race on SERVER_STARTER_PORT).
+	// Snapshotting here and comparing after the run proves that: it is a
+	// stronger check than merely asserting the two variables are absent,
+	// since it also catches anything unexpected being added or changed.
+	before := os.Environ()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -166,6 +197,10 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 	}
 	t.Logf("Exiting...")
 
+	if got := os.Environ(); !slices.Equal(got, before) {
+		t.Errorf("supervisor's own environment changed during Run(): before=%v after=%v", before, got)
+	}
+
 	log.Printf("Checking ports...")
 
 	patterns := make([]string, len(ports))
@@ -174,8 +209,67 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 	}
 	pattern := regexp.MustCompile(strings.Join(patterns, ";"))
 
-	if envPort := os.Getenv("SERVER_STARTER_PORT"); !pattern.MatchString(envPort) {
-		t.Errorf("SERVER_STARTER_PORT: Expected '%s', but got '%s'", pattern, envPort)
+	// The child's view, not the supervisor's: the worker wrote its own
+	// SERVER_STARTER_PORT to portFile at startup.
+	childPort, err := os.ReadFile(portFile)
+	if err != nil {
+		t.Fatalf("failed to read worker port file: %s", err)
+	}
+	if !pattern.Match(childPort) {
+		t.Errorf("child SERVER_STARTER_PORT: expected '%s', but got '%s'", pattern, childPort)
+	}
+}
+
+// TestRunDoesNotMutateSupervisorEnvironment proves a full Run/Wait cycle
+// -- including one that loads an envdir -- leaves the supervisor's own
+// process environment untouched: no SERVER_STARTER_PORT, no
+// SERVER_STARTER_GENERATION, and no envdir key leaks in. Those variables
+// only ever land on the spawned worker's cmd.Env (see startWorker); the
+// supervisor process itself must never carry them.
+func TestRunDoesNotMutateSupervisorEnvironment(t *testing.T) {
+	envdir := t.TempDir()
+	leakKey := "SERVER_STARTER_TEST_LEAK"
+	if err := os.WriteFile(filepath.Join(envdir, leakKey), []byte("leaked\n"), 0600); err != nil {
+		t.Fatalf("failed to write envdir entry: %s", err)
+	}
+
+	sd, err := NewStarter(&config{
+		command: "/bin/sh",
+		args:    []string{"-c", "exec sleep 30"},
+		ports:   []string{"0"},
+		envdir:  envdir,
+	})
+	if err != nil {
+		t.Fatalf("failed to create starter: %s", err)
+	}
+
+	before := os.Environ()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	if err != nil {
+		t.Fatalf("sd.Run() failed: %s", err)
+	}
+
+	cancel()
+	select {
+	case <-ctrl.Done():
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out waiting for Run() to return")
+	}
+	if err := ctrl.Err(); err != nil && !errors.Is(err, ErrServerClosed) {
+		t.Errorf("sd.Run() failed: %s", err)
+	}
+
+	if got := os.Environ(); !slices.Equal(got, before) {
+		t.Errorf("supervisor's own environment changed during Run(): before=%v after=%v", before, got)
+	}
+	for _, key := range []string{"SERVER_STARTER_PORT", "SERVER_STARTER_GENERATION", leakKey} {
+		if _, ok := os.LookupEnv(key); ok {
+			t.Errorf("%s leaked into the supervisor's own environment", key)
+		}
 	}
 }
 

@@ -30,15 +30,9 @@ func TestEnvdir(t *testing.T) {
 		io.WriteString(f, fn)
 		f.Close()
 		closed = true
-
-		// save old values and restore later, if any
-		if old := os.Getenv(fn); old != "" {
-			t.Setenv(fn, "")
-		}
 	}
 
-	t.Setenv("ENVDIR", dir)
-	m, err := reloadEnv()
+	m, err := reloadEnv(dir)
 	if err != nil {
 		t.Errorf("reloadEnv failed: %s", err)
 		return
@@ -71,9 +65,8 @@ func TestReloadEnvdirCompatibility(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "LONG"), []byte(strings.Repeat("x", 128*1024)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ENVDIR", dir)
 
-	got, err := reloadEnv()
+	got, err := reloadEnv(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,22 +84,31 @@ func TestReloadEnvdirCompatibility(t *testing.T) {
 	}
 }
 
-func TestSetEnvRemovesDeletedValues(t *testing.T) {
+// TestLoadEnvdirDropsDeletedValues proves loadEnvdir's map reflects the
+// envdir's current contents on every call, with no leftover bookkeeping
+// from a previous call: a key removed from the envdir is simply absent
+// from the next map, rather than needing to be explicitly unset anywhere.
+// This replaces the old managedEnv tracking in setEnv, which existed only
+// because that function mutated the supervisor's own process environment;
+// loadEnvdir never does, so there is nothing to unset (see env.go).
+func TestLoadEnvdirDropsDeletedValues(t *testing.T) {
 	dir := t.TempDir()
 	name := "SERVER_STARTER_TEST_ENV"
-	t.Setenv("ENVDIR", dir)
 	if err := os.WriteFile(filepath.Join(dir, name), []byte("first\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	setEnv()
-	if got := os.Getenv(name); got != "first" {
+
+	m := loadEnvdir(dir)
+	if got := m[name]; got != "first" {
 		t.Fatalf("initial envdir value = %q", got)
 	}
+
 	if err := os.Remove(filepath.Join(dir, name)); err != nil {
 		t.Fatal(err)
 	}
-	setEnv()
-	if _, ok := os.LookupEnv(name); ok {
-		t.Fatal("deleted envdir value remained in the worker environment")
+
+	m = loadEnvdir(dir)
+	if _, ok := m[name]; ok {
+		t.Fatal("deleted envdir entry remained in the reloaded map")
 	}
 }

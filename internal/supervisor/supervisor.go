@@ -28,6 +28,12 @@ type runState struct {
 
 	generation int
 
+	// envOverlay holds the most recently loaded envdir variables. It is
+	// refreshed on every (re)load point that used to call setEnv(), and is
+	// overlaid onto each spawned worker's environment in startWorker; it is
+	// never applied to the supervisor's own process environment.
+	envOverlay map[string]string
+
 	oldWorkers map[int]int
 
 	restartTimer      *time.Timer
@@ -36,8 +42,8 @@ type runState struct {
 }
 
 // Run acquires the pid file, binds every listener, and performs the initial
-// setEnv() synchronously; any failure here is returned directly. Once setup
-// succeeds, Run spawns the supervisor loop in a background goroutine and
+// envdir load synchronously; any failure here is returned directly. Once
+// setup succeeds, Run spawns the supervisor loop in a background goroutine and
 // returns immediately. Runtime errors are never returned from Run: they are
 // recorded on the returned Controller and observed via Wait/Err.
 //
@@ -101,7 +107,14 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 			fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", target.spec, err)
 			return nil, err
 		}
-		rs.listeners = append(rs.listeners, listener{listener: l, packet: pc, fd: target.fd, spec: target.spec})
+		rs.listeners = append(rs.listeners, listener{
+			listener: l,
+			packet:   pc,
+			fd:       target.fd,
+			network:  target.network,
+			host:     target.host,
+			port:     target.port,
+		})
 	}
 
 	for _, path := range s.paths {
@@ -121,14 +134,16 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
 			return nil, err
 		}
-		rs.listeners = append(rs.listeners, listener{listener: l, spec: path})
+		rs.listeners = append(rs.listeners, listener{listener: l, network: "unix", path: path})
 	}
 
 	rs.generation = 0
-	os.Setenv("SERVER_STARTER_GENERATION", fmt.Sprintf("%d", rs.generation))
 
-	// Okay, ready to launch the program now...
-	setEnv()
+	// Okay, ready to launch the program now... Nothing in-process reads
+	// SERVER_STARTER_GENERATION, and the supervisor must not mutate its own
+	// environment, so it is only ever set on the worker's cmd.Env in
+	// startWorker.
+	rs.envOverlay = loadEnvdir(rs.cfg.envdir)
 
 	ctrl := newController()
 	go rs.loop(ctx, ctrl)
@@ -154,8 +169,8 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 	p := rs.startWorker(ctx, workerCh)
 	rs.oldWorkers = make(map[int]int)
 	var sigToSend os.Signal
-	if autoRestartEnabled() {
-		rs.restartTimer = time.NewTimer(autoRestartInterval())
+	if rs.cfg.enableAutoRestart {
+		rs.restartTimer = time.NewTimer(rs.cfg.autoRestartInterval)
 		rs.restartC = rs.restartTimer.C
 	}
 	defer func() {
@@ -200,7 +215,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 		fmt.Fprintf(os.Stderr, "exiting\n")
 	}()
 
-	setEnv()
+	rs.envOverlay = loadEnvdir(rs.cfg.envdir)
 
 	// Just wait for the worker to exit, for a restart request, or for ctx
 	// to be cancelled.
@@ -230,11 +245,11 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			if p != nil && p.Pid == st.Pid() { // current worker
 				exitSt := grabExitStatus(st)
 				fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
-				setEnv()
+				rs.envOverlay = loadEnvdir(rs.cfg.envdir)
 				p = rs.startWorker(ctx, workerCh)
 				if rs.restartTimer != nil {
 					rs.autoRestartForced = false
-					rs.restartTimer.Reset(autoRestartInterval())
+					rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 				}
 			} else {
 				exitSt := grabExitStatus(st)
@@ -268,7 +283,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			} else {
 				rs.autoRestartForced = true
 				if rs.restartTimer != nil {
-					rs.restartTimer.Reset(autoRestartInterval())
+					rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 				}
 			}
 		}
@@ -278,11 +293,11 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			if p != nil {
 				rs.oldWorkers[p.Pid] = rs.generation
 			}
-			setEnv()
+			rs.envOverlay = loadEnvdir(rs.cfg.envdir)
 			p = rs.startWorker(ctx, workerCh)
 			if rs.restartTimer != nil {
 				rs.autoRestartForced = false
-				rs.restartTimer.Reset(autoRestartInterval())
+				rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 			}
 			fmt.Fprintf(os.Stderr, "new worker is now running, sending %s to old workers:", signame(sigToSend))
 			size := len(rs.oldWorkers)
@@ -299,7 +314,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 				}
 				fmt.Fprintf(os.Stderr, "\n")
 
-				killOldDelay := getKillOldDelay()
+				killOldDelay := rs.cfg.killOldDelay
 				fmt.Fprintf(os.Stderr, "sleep %d secs\n", int(killOldDelay/time.Second))
 				if killOldDelay > 0 {
 					timer := time.NewTimer(killOldDelay)
