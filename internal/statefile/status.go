@@ -3,6 +3,7 @@ package statefile
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,9 +28,9 @@ func StatusMap(oldWorkers map[int]int, currentPID int, generation int) map[int]i
 // "generation:pid" line per entry, sorted ascending by generation. An empty
 // fn means "write nothing" and is a no-op.
 //
-// The file is written to a temporary path alongside fn and then renamed into
-// place, so a concurrent reader of fn never observes a partially written
-// file.
+// The file is written through a private, exclusively created temporary file
+// alongside fn and then renamed into place, so a concurrent reader of fn never
+// observes a partially written file.
 func WriteStatus(fn string, generations map[int]int) error {
 	if fn == "" {
 		return nil
@@ -41,11 +42,11 @@ func WriteStatus(fn string, generations map[int]int) error {
 	}
 	sort.Ints(gens)
 
-	tmpfn := fmt.Sprintf("%s.%d", fn, os.Getpid())
-	f, err := os.OpenFile(tmpfn, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	f, err := os.CreateTemp(filepath.Dir(fn), filepath.Base(fn)+".*")
 	if err != nil {
-		return fmt.Errorf("failed to create temporary status file %q: %w", tmpfn, err)
+		return fmt.Errorf("failed to create temporary status file alongside %q: %w", fn, err)
 	}
+	tmpfn := f.Name()
 
 	for _, gen := range gens {
 		if _, err := fmt.Fprintf(f, "%d:%d\n", gen, generations[gen]); err != nil {
@@ -53,6 +54,12 @@ func WriteStatus(fn string, generations map[int]int) error {
 			os.Remove(tmpfn)
 			return fmt.Errorf("failed to write temporary status file %q: %w", tmpfn, err)
 		}
+	}
+
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmpfn)
+		return fmt.Errorf("failed to sync temporary status file %q: %w", tmpfn, err)
 	}
 
 	if err := f.Close(); err != nil {
