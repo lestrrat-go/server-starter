@@ -3,6 +3,7 @@
 package supervisor
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -26,7 +27,7 @@ func TestRemoveExistingUnixSocketAllowsAbstractAddress(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, contents, 0600))
 	require.NoError(t, removeExistingUnixSocket(path))
 
-	l, err := net.Listen("unix", path)
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", path)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, l.Close())
