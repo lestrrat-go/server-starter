@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -78,14 +79,19 @@ func Run() int {
 		opts.OptArgs = args[1:]
 	}
 
+	// stderr is where cli's own diagnostics below go. With --log-file it is
+	// the opened file (so those messages land in the log, matching the
+	// pre-existing behaviour of swapping the global os.Stderr); otherwise
+	// it stays the process's real stderr.
+	stderr := io.Writer(os.Stderr)
 	if opts.OptLogFile != "" {
 		f, err := os.OpenFile(opts.OptLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)
 			return 1
 		}
-		os.Stdout = f
-		os.Stderr = f
+		opts.logWriter = f
+		stderr = f
 	}
 
 	// Resolve envdir/auto-restart/kill-old-delay once, here, instead of
@@ -101,7 +107,7 @@ func Run() int {
 
 	s, err := supervisor.NewStarter(opts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
 	}
 
@@ -113,7 +119,7 @@ func Run() int {
 
 	ctrl, err := s.Run(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
 	}
 
@@ -137,7 +143,7 @@ func Run() int {
 	// A clean, ctx-driven shutdown is success, not failure: report only a
 	// genuine runtime error.
 	if err := ctrl.Wait(); err != nil && !errors.Is(err, supervisor.ErrServerClosed) {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 1
 	}
 	return 0

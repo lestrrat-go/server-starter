@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"os"
@@ -19,12 +20,12 @@ import (
 var successStatus syscall.WaitStatus
 var failureStatus syscall.WaitStatus
 
-func grabExitStatus(st processState) syscall.WaitStatus {
+func grabExitStatus(w io.Writer, st processState) syscall.WaitStatus {
 	// Note: POSSIBLY non portable. seems to work on Unix/Windows
 	// When/if this blows up, we will look for a cure
 	exitSt, ok := st.Sys().(syscall.WaitStatus)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Oh no, you are running on a platform where ProcessState.Sys().(syscall.WaitStatus) doesn't work! We're doomed! Temporarily setting status to 255. Please contact the author about this\n")
+		fmt.Fprintf(w, "Oh no, you are running on a platform where ProcessState.Sys().(syscall.WaitStatus) doesn't work! We're doomed! Temporarily setting status to 255. Please contact the author about this\n")
 		exitSt = failureStatus
 	}
 	return exitSt
@@ -47,11 +48,48 @@ func (d dummyProcessState) Sys() any {
 	return d.status
 }
 
+// reportFailedStart writes the "worker failed to start" diagnostic to w.
+//
+// The status can come from two places, tried in this order:
+//
+//  1. reapedStatus, when reapedOK is true. On Unix, findWorker's liveness
+//     probe reaps a worker that has already died as a side effect of
+//     checking it, consuming its exit status before anything else (in
+//     particular the caller's cmd.Wait()) can collect it. That reap is the
+//     only place this status is ever observable, so the caller passes it
+//     through here.
+//  2. ps, when reapedOK is false and ps is non-nil. This is the path that
+//     covers platforms without the reap race (Windows), where cmd.Wait()
+//     still collects the exit status normally.
+//
+// ps is nil when the spawn itself failed (exec never produced a process, so
+// there is no exit status to report) or when the worker vanished before its
+// exit status could be collected; either way, dereferencing it would panic.
+// When neither source has a status, the message falls back to the pid
+// alone.
+func reportFailedStart(w io.Writer, pid int, reapedStatus syscall.WaitStatus, reapedOK bool, ps *os.ProcessState) {
+	switch {
+	case reapedOK:
+		fmt.Fprintf(w, "new worker %d seems to have failed to start, status:%d\n", pid, reapedStatus)
+	case ps != nil:
+		fmt.Fprintf(w, "new worker %d seems to have failed to start, status:%d\n", pid, grabExitStatus(w, ps))
+	default:
+		fmt.Fprintf(w, "new worker %d seems to have failed to start\n", pid)
+	}
+}
+
 // startWorker starts the actual command.
 func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.Process {
 	// Don't give up until we're running.
 	for {
 		pid := -1
+		// reapedStatus/reapedOK carry findWorker's reaped exit status (set
+		// below, once the worker has actually been started) out to the
+		// reportFailedStart call after this block: on Unix, that reap is
+		// the only place the status is ever observable. See findWorker's
+		// doc comment in worker_unix.go.
+		var reapedStatus syscall.WaitStatus
+		reapedOK := false
 		// The supervisor owns worker termination: on shutdown it sends
 		// signalOnTERM and drains, so context cancellation must not kill
 		// workers out from under that. WithoutCancel keeps the call
@@ -60,8 +98,8 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 		if rs.cfg.dir != "" {
 			cmd.Dir = rs.cfg.dir
 		}
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = rs.cfg.stdout
+		cmd.Stderr = rs.cfg.stderr
 
 		// This whole section here basically sets up the env
 		// var and the file descriptors that are inherited by the
@@ -150,11 +188,11 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 			}
 		}
 		if startErr != nil {
-			fmt.Fprintf(os.Stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
+			fmt.Fprintf(rs.cfg.stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
 		} else {
 			// Save pid...
 			pid = cmd.Process.Pid
-			fmt.Fprintf(os.Stderr, "starting new worker %d\n", pid)
+			fmt.Fprintf(rs.cfg.stderr, "starting new worker %d\n", pid)
 
 			// Wait for interval before checking if the process is alive. A
 			// cancelled ctx bails out early too: it means a shutdown was
@@ -169,7 +207,8 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 			}
 
 			// Check if we can find a process by its pid
-			p := findWorker(pid)
+			var p *os.Process
+			p, reapedStatus, reapedOK = findWorker(pid)
 			if ctxDone || p != nil {
 				// No error? We were successful! Make sure we capture
 				// the program exiting
@@ -195,7 +234,7 @@ func (rs *runState) startWorker(ctx context.Context, ch chan processState) *os.P
 			f.Close()
 		}
 
-		fmt.Fprintf(os.Stderr, "new worker %d seems to have failed to start\n", pid)
+		reportFailedStart(rs.cfg.stderr, pid, reapedStatus, reapedOK, cmd.ProcessState)
 	}
 }
 

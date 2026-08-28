@@ -86,6 +86,9 @@ type config struct {
 	enableAutoRestart   bool
 	autoRestartInterval time.Duration
 	killOldDelay        time.Duration
+
+	stdout io.Writer
+	stderr io.Writer
 }
 
 func (c config) Args() []string          { return c.args }
@@ -103,6 +106,8 @@ func (c config) Envdir() string                     { return c.envdir }
 func (c config) EnableAutoRestart() bool            { return c.enableAutoRestart }
 func (c config) AutoRestartInterval() time.Duration { return c.autoRestartInterval }
 func (c config) KillOldDelay() time.Duration        { return c.killOldDelay }
+func (c config) Stdout() io.Writer                  { return c.stdout }
+func (c config) Stderr() io.Writer                  { return c.stderr }
 
 func TestRun(t *testing.T) {
 	dir := t.TempDir()

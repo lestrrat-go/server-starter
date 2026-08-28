@@ -98,7 +98,7 @@ func TestLoadEnvdirDropsDeletedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := loadEnvdir(dir)
+	m := loadEnvdir(dir, io.Discard)
 	if got := m[name]; got != "first" {
 		t.Fatalf("initial envdir value = %q", got)
 	}
@@ -107,7 +107,7 @@ func TestLoadEnvdirDropsDeletedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m = loadEnvdir(dir)
+	m = loadEnvdir(dir, io.Discard)
 	if _, ok := m[name]; ok {
 		t.Fatal("deleted envdir entry remained in the reloaded map")
 	}

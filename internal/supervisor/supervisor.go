@@ -81,7 +81,7 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 	for _, addr := range s.ports {
 		target, err := parsePortTarget(addr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to parse addr spec '%s': %s", addr, err)
+			fmt.Fprintf(s.stderr, "failed to parse addr spec '%s': %s", addr, err)
 			return nil, err
 		}
 		if target.fd >= 0 {
@@ -104,7 +104,7 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 			l, err = lc.Listen(ctx, target.network, net.JoinHostPort(target.host, strconv.Itoa(target.port)))
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", target.spec, err)
+			fmt.Fprintf(s.stderr, "failed to listen to %s:%s\n", target.spec, err)
 			return nil, err
 		}
 		rs.listeners = append(rs.listeners, listener{
@@ -120,10 +120,10 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 	for _, path := range s.paths {
 		var l net.Listener
 		if fl, err := os.Lstat(path); err == nil && fl.Mode()&os.ModeSocket == os.ModeSocket {
-			fmt.Fprintf(os.Stderr, "removing existing socket file:%s\n", path)
+			fmt.Fprintf(s.stderr, "removing existing socket file:%s\n", path)
 			err = os.Remove(path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to remove existing socket file:%s:%s\n", path, err)
+				fmt.Fprintf(s.stderr, "failed to remove existing socket file:%s:%s\n", path, err)
 				return nil, err
 			}
 		}
@@ -131,7 +131,7 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 		lc := listenConfig("unix")
 		l, err := lc.Listen(ctx, "unix", path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to listen file:%s:%s\n", path, err)
+			fmt.Fprintf(s.stderr, "failed to listen file:%s:%s\n", path, err)
 			return nil, err
 		}
 		rs.listeners = append(rs.listeners, listener{listener: l, network: "unix", path: path})
@@ -143,7 +143,7 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 	// SERVER_STARTER_GENERATION, and the supervisor must not mutate its own
 	// environment, so it is only ever set on the worker's cmd.Env in
 	// startWorker.
-	rs.envOverlay = loadEnvdir(rs.cfg.envdir)
+	rs.envOverlay = loadEnvdir(rs.cfg.envdir, s.stderr)
 
 	ctrl := newController()
 	go rs.loop(ctx, ctrl)
@@ -184,17 +184,17 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			rs.oldWorkers[p.Pid] = rs.generation
 		}
 
-		fmt.Fprintf(os.Stderr, "sending %s to all workers:", signame(sigToSend))
+		fmt.Fprintf(rs.cfg.stderr, "sending %s to all workers:", signame(sigToSend))
 		size := len(rs.oldWorkers)
 		i := 0
 		for pid := range rs.oldWorkers {
 			i++
-			fmt.Fprintf(os.Stderr, "%d", pid)
+			fmt.Fprintf(rs.cfg.stderr, "%d", pid)
 			if i < size {
-				fmt.Fprintf(os.Stderr, ",")
+				fmt.Fprintf(rs.cfg.stderr, ",")
 			}
 		}
-		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Fprintf(rs.cfg.stderr, "\n")
 
 		for pid := range rs.oldWorkers {
 			worker, err := os.FindProcess(pid)
@@ -206,16 +206,16 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 
 		for len(rs.oldWorkers) > 0 {
 			st := <-workerCh
-			fmt.Fprintf(os.Stderr, "worker %d died, status:%d\n", st.Pid(), grabExitStatus(st))
+			fmt.Fprintf(rs.cfg.stderr, "worker %d died, status:%d\n", st.Pid(), grabExitStatus(rs.cfg.stderr, st))
 			delete(rs.oldWorkers, st.Pid())
 			if err := statefile.WriteStatus(rs.cfg.statusFile, statefile.StatusMap(rs.oldWorkers, 0, rs.generation)); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to write status file: %s\n", err)
+				fmt.Fprintf(rs.cfg.stderr, "failed to write status file: %s\n", err)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "exiting\n")
+		fmt.Fprintf(rs.cfg.stderr, "exiting\n")
 	}()
 
-	rs.envOverlay = loadEnvdir(rs.cfg.envdir)
+	rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
 
 	// Just wait for the worker to exit, for a restart request, or for ctx
 	// to be cancelled.
@@ -227,7 +227,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			currentPID = p.Pid
 		}
 		if err := statefile.WriteStatus(rs.cfg.statusFile, statefile.StatusMap(rs.oldWorkers, currentPID, rs.generation)); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to write status file: %s\n", err)
+			fmt.Fprintf(rs.cfg.stderr, "failed to write status file: %s\n", err)
 		}
 		// restart == 2: respawn unconditionally
 		// restart == 1: respawn only if no old workers are still alive
@@ -243,17 +243,17 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 		case st := <-workerCh:
 			// oops, the worker exited? check for its pid
 			if p != nil && p.Pid == st.Pid() { // current worker
-				exitSt := grabExitStatus(st)
-				fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
-				rs.envOverlay = loadEnvdir(rs.cfg.envdir)
+				exitSt := grabExitStatus(rs.cfg.stderr, st)
+				fmt.Fprintf(rs.cfg.stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
+				rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
 				p = rs.startWorker(ctx, workerCh)
 				if rs.restartTimer != nil {
 					rs.autoRestartForced = false
 					rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 				}
 			} else {
-				exitSt := grabExitStatus(st)
-				fmt.Fprintf(os.Stderr, "old worker %d died, status:%d\n", st.Pid(), exitSt)
+				exitSt := grabExitStatus(rs.cfg.stderr, st)
+				fmt.Fprintf(rs.cfg.stderr, "old worker %d died, status:%d\n", st.Pid(), exitSt)
 				delete(rs.oldWorkers, st.Pid())
 			}
 		case <-ctx.Done():
@@ -270,7 +270,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			// Using level 1 here made a HUP a no-op whenever an earlier
 			// worker was still shutting down, so repeated HUPs never
 			// re-signalled it. See #9.
-			fmt.Fprintf(os.Stderr, "received hangup request (num_old_workers=TODO)\n")
+			fmt.Fprintf(rs.cfg.stderr, "received hangup request (num_old_workers=%d)\n", len(rs.oldWorkers))
 			restart = 2
 			sigToSend = rs.cfg.signalOnHUP
 		case <-rs.restartC:
@@ -289,33 +289,33 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 		}
 
 		if restart > 1 || restart > 0 && len(rs.oldWorkers) == 0 {
-			fmt.Fprintf(os.Stderr, "spawning a new worker (num_old_workers=TODO)\n")
+			fmt.Fprintf(rs.cfg.stderr, "spawning a new worker (num_old_workers=%d)\n", len(rs.oldWorkers))
 			if p != nil {
 				rs.oldWorkers[p.Pid] = rs.generation
 			}
-			rs.envOverlay = loadEnvdir(rs.cfg.envdir)
+			rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
 			p = rs.startWorker(ctx, workerCh)
 			if rs.restartTimer != nil {
 				rs.autoRestartForced = false
 				rs.restartTimer.Reset(rs.cfg.autoRestartInterval)
 			}
-			fmt.Fprintf(os.Stderr, "new worker is now running, sending %s to old workers:", signame(sigToSend))
+			fmt.Fprintf(rs.cfg.stderr, "new worker is now running, sending %s to old workers:", signame(sigToSend))
 			size := len(rs.oldWorkers)
 			if size == 0 {
-				fmt.Fprintf(os.Stderr, "none\n")
+				fmt.Fprintf(rs.cfg.stderr, "none\n")
 			} else {
 				i := 0
 				for pid := range rs.oldWorkers {
 					i++
-					fmt.Fprintf(os.Stderr, "%d", pid)
+					fmt.Fprintf(rs.cfg.stderr, "%d", pid)
 					if i < size {
-						fmt.Fprintf(os.Stderr, ",")
+						fmt.Fprintf(rs.cfg.stderr, ",")
 					}
 				}
-				fmt.Fprintf(os.Stderr, "\n")
+				fmt.Fprintf(rs.cfg.stderr, "\n")
 
 				killOldDelay := rs.cfg.killOldDelay
-				fmt.Fprintf(os.Stderr, "sleep %d secs\n", int(killOldDelay/time.Second))
+				fmt.Fprintf(rs.cfg.stderr, "sleep %d secs\n", int(killOldDelay/time.Second))
 				if killOldDelay > 0 {
 					timer := time.NewTimer(killOldDelay)
 					select {
@@ -327,7 +327,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 					}
 				}
 
-				fmt.Fprintf(os.Stderr, "killing old workers\n")
+				fmt.Fprintf(rs.cfg.stderr, "killing old workers\n")
 
 				for pid := range rs.oldWorkers {
 					worker, err := os.FindProcess(pid)
