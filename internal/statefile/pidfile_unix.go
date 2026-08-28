@@ -93,7 +93,8 @@ func closePIDFile(f *os.File, path string) error {
 // TryLock attempts to take an exclusive, non-blocking lock on f. It is used
 // by control.Stop to poll for the supervisor having exited: once the
 // supervisor process dies, its lock on the pid file is released and this call
-// starts succeeding.
+// starts succeeding. It returns syscall.EWOULDBLOCK while another process
+// holds the lock; any other error means the lock check failed.
 func TryLock(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 }
