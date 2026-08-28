@@ -4,7 +4,9 @@ package cli
 // resolveSettings and its helpers are unexported.
 
 import (
+	"math"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -89,6 +91,9 @@ func TestResolveEnableAutoRestart(t *testing.T) {
 }
 
 func TestResolveAutoRestartInterval(t *testing.T) {
+	maxSeconds := int64(math.MaxInt64) / int64(time.Second)
+	maxInterval := time.Duration(maxSeconds) * time.Second
+
 	testCases := []struct {
 		name     string
 		isSet    bool
@@ -101,6 +106,20 @@ func TestResolveAutoRestartInterval(t *testing.T) {
 		{name: "flag zero falls back to default", isSet: true, flagVal: 0, expected: defaultAutoRestartInterval},
 		{name: "flag negative falls back to default", isSet: true, flagVal: -1, expected: defaultAutoRestartInterval},
 		{name: "ambient positive", isSet: false, envSet: true, envVal: "7", expected: 7 * time.Second},
+		{
+			name:     "ambient maximum duration",
+			isSet:    false,
+			envSet:   true,
+			envVal:   strconv.FormatInt(maxSeconds, 10),
+			expected: maxInterval,
+		},
+		{
+			name:     "ambient above maximum falls back to default",
+			isSet:    false,
+			envSet:   true,
+			envVal:   strconv.FormatInt(maxSeconds+1, 10),
+			expected: defaultAutoRestartInterval,
+		},
 		{name: "ambient zero falls back to default", isSet: false, envSet: true, envVal: "0", expected: defaultAutoRestartInterval},
 		{name: "ambient unparseable falls back to default", isSet: false, envSet: true, envVal: "nope", expected: defaultAutoRestartInterval},
 		{name: "ambient unset defaults", isSet: false, envSet: false, expected: defaultAutoRestartInterval},
@@ -113,6 +132,15 @@ func TestResolveAutoRestartInterval(t *testing.T) {
 				setEnvUnset(t, "AUTO_RESTART_INTERVAL")
 			}
 			require.Equal(t, tc.expected, resolveAutoRestartInterval(tc.isSet, tc.flagVal))
+		})
+	}
+
+	if strconv.IntSize == 64 {
+		t.Run("flag maximum duration", func(t *testing.T) {
+			require.Equal(t, maxInterval, resolveAutoRestartInterval(true, int(maxSeconds)))
+		})
+		t.Run("flag above maximum falls back to default", func(t *testing.T) {
+			require.Equal(t, defaultAutoRestartInterval, resolveAutoRestartInterval(true, int(maxSeconds+1)))
 		})
 	}
 }
