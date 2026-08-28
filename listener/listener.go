@@ -11,6 +11,7 @@ import (
 )
 
 const ServerStarterEnvVarName = "SERVER_STARTER_PORT"
+const wildcardIPv4 = "0.0.0.0"
 
 var (
 	ErrNoListeningTarget = errors.New("no listening target")
@@ -47,6 +48,13 @@ type TCPListener struct {
 	fd   uintptr
 }
 
+// UDPListener is a UDP endpoint passed through SERVER_STARTER_PORT.
+type UDPListener struct {
+	Addr string
+	Port int
+	fd   uintptr
+}
+
 // UnixListener is a listener for unix sockets.
 type UnixListener struct {
 	Path string
@@ -54,10 +62,10 @@ type UnixListener struct {
 }
 
 func (l TCPListener) String() string {
-	if l.Addr == "0.0.0.0" {
+	if l.Addr == wildcardIPv4 {
 		return fmt.Sprintf("%d=%d", l.Port, l.fd)
 	}
-	return fmt.Sprintf("%s:%d=%d", l.Addr, l.Port, l.fd)
+	return fmt.Sprintf("%s=%d", net.JoinHostPort(l.Addr, strconv.Itoa(l.Port)), l.fd)
 }
 
 // Fd returns the underlying file descriptor
@@ -67,7 +75,30 @@ func (l TCPListener) Fd() uintptr {
 
 // Listen creates a new Listener
 func (l TCPListener) Listen() (net.Listener, error) {
-	return net.FileListener(os.NewFile(l.Fd(), fmt.Sprintf("%s:%d", l.Addr, l.Port)))
+	return net.FileListener(os.NewFile(l.Fd(), net.JoinHostPort(l.Addr, strconv.Itoa(l.Port))))
+}
+
+func (l UDPListener) String() string {
+	address := strconv.Itoa(l.Port)
+	if l.Addr != wildcardIPv4 {
+		address = net.JoinHostPort(l.Addr, strconv.Itoa(l.Port))
+	}
+	return fmt.Sprintf("u%s=%d", address, l.fd)
+}
+
+// Fd returns the underlying file descriptor.
+func (l UDPListener) Fd() uintptr {
+	return l.fd
+}
+
+// Listen returns an error because UDP endpoints are packet connections.
+func (l UDPListener) Listen() (net.Listener, error) {
+	return nil, fmt.Errorf("UDP listener requires ListenPacket")
+}
+
+// ListenPacket creates a packet connection from the inherited descriptor.
+func (l UDPListener) ListenPacket() (net.PacketConn, error) {
+	return net.FilePacketConn(os.NewFile(l.Fd(), net.JoinHostPort(l.Addr, strconv.Itoa(l.Port))))
 }
 
 func (l UnixListener) String() string {
@@ -108,16 +139,25 @@ func parseListenTargets(str string) ([]Listener, error) {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: %s", pairString, err)
 		}
 
+		udp := strings.HasPrefix(hostPort, "u")
+		if udp {
+			hostPort = strings.TrimPrefix(hostPort, "u")
+		}
+		if i := strings.LastIndexByte(hostPort, ':'); i >= 0 && strings.HasPrefix(hostPort[i+1:], "u") {
+			udp = true
+			hostPort = hostPort[:i+1] + strings.TrimPrefix(hostPort[i+1:], "u")
+		}
+
 		if matches := reLooksLikeHostPort.FindStringSubmatch(hostPort); matches != nil {
 			port, err := strconv.ParseInt(matches[2], 10, 0)
 			if err != nil {
 				return nil, err
 			}
 
-			ret[i] = TCPListener{
-				Addr: matches[1],
-				Port: int(port),
-				fd:   uintptr(fd),
+			if udp {
+				ret[i] = UDPListener{Addr: strings.Trim(matches[1], "[]"), Port: int(port), fd: uintptr(fd)}
+			} else {
+				ret[i] = TCPListener{Addr: strings.Trim(matches[1], "[]"), Port: int(port), fd: uintptr(fd)}
 			}
 		} else if match := reLooksLikePort.FindString(hostPort); match != "" {
 			port, err := strconv.ParseInt(match, 10, 0)
@@ -125,10 +165,10 @@ func parseListenTargets(str string) ([]Listener, error) {
 				return nil, err
 			}
 
-			ret[i] = TCPListener{
-				Addr: "0.0.0.0",
-				Port: int(port),
-				fd:   uintptr(fd),
+			if udp {
+				ret[i] = UDPListener{Addr: wildcardIPv4, Port: int(port), fd: uintptr(fd)}
+			} else {
+				ret[i] = TCPListener{Addr: wildcardIPv4, Port: int(port), fd: uintptr(fd)}
 			}
 		} else {
 			ret[i] = UnixListener{
@@ -165,6 +205,34 @@ func ListenAll() ([]net.Listener, error) {
 		ret[i], err = target.Listen()
 		if err != nil {
 			// Close everything up to this listener
+			for x := range i {
+				ret[x].Close()
+			}
+			return nil, err
+		}
+	}
+	return ret, nil
+}
+
+// ListenPacketAll creates UDP connections from SERVER_STARTER_PORT. It
+// rejects TCP entries because callers must choose the appropriate API for a
+// mixed TCP and UDP configuration.
+func ListenPacketAll() ([]net.PacketConn, error) {
+	targets, err := parseListenTargets(GetPortsSpecification())
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]net.PacketConn, len(targets))
+	for i, target := range targets {
+		udp, ok := target.(UDPListener)
+		if !ok {
+			for x := range i {
+				ret[x].Close()
+			}
+			return nil, fmt.Errorf("listen target %q is not UDP", target.String())
+		}
+		ret[i], err = udp.ListenPacket()
+		if err != nil {
 			for x := range i {
 				ret[x].Close()
 			}

@@ -9,7 +9,7 @@ import (
 func TestPort(t *testing.T) {
 	expect := List{
 		TCPListener{Addr: "127.0.0.1", Port: 9090, fd: 4},
-		TCPListener{Addr: "0.0.0.0", Port: 8080, fd: 5},
+		TCPListener{Addr: wildcardIPv4, Port: 8080, fd: 5},
 		UnixListener{Path: "/foo/bar/baz.sock", fd: 6},
 	}
 
@@ -37,7 +37,7 @@ func TestParseListenTargets(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		require.IsType(t, TCPListener{}, got[0])
-		require.Equal(t, TCPListener{Addr: "0.0.0.0", Port: 8080, fd: 3}, got[0])
+		require.Equal(t, TCPListener{Addr: wildcardIPv4, Port: 8080, fd: 3}, got[0])
 	})
 
 	t.Run("host and port", func(t *testing.T) {
@@ -46,6 +46,32 @@ func TestParseListenTargets(t *testing.T) {
 		require.Len(t, got, 1)
 		require.IsType(t, TCPListener{}, got[0])
 		require.Equal(t, TCPListener{Addr: "127.0.0.1", Port: 9090, fd: 4}, got[0])
+	})
+
+	t.Run("IPv6 host and port", func(t *testing.T) {
+		got, err := parseListenTargets("[::1]:9090=4")
+		require.NoError(t, err)
+		require.Equal(t, TCPListener{Addr: "::1", Port: 9090, fd: 4}, got[0])
+		require.Equal(t, "[::1]:9090=4", got[0].String())
+	})
+
+	t.Run("UDP host and port", func(t *testing.T) {
+		got, err := parseListenTargets("u127.0.0.1:9090=4")
+		require.NoError(t, err)
+		require.Equal(t, UDPListener{Addr: "127.0.0.1", Port: 9090, fd: 4}, got[0])
+	})
+
+	t.Run("UDP port suffix", func(t *testing.T) {
+		got, err := parseListenTargets("127.0.0.1:u9090=4")
+		require.NoError(t, err)
+		require.Equal(t, UDPListener{Addr: "127.0.0.1", Port: 9090, fd: 4}, got[0])
+	})
+
+	t.Run("UDP IPv6 host and port", func(t *testing.T) {
+		got, err := parseListenTargets("u[::1]:9090=4")
+		require.NoError(t, err)
+		require.Equal(t, UDPListener{Addr: "::1", Port: 9090, fd: 4}, got[0])
+		require.Equal(t, "u[::1]:9090=4", got[0].String())
 	})
 
 	t.Run("unix socket path", func(t *testing.T) {

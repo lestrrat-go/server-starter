@@ -1,6 +1,7 @@
 package starter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -54,7 +55,17 @@ func init() {
 
 type listener struct {
 	listener net.Listener
+	packet   net.PacketConn
+	fd       int
 	spec     string // path or port spec
+}
+
+type portTarget struct {
+	host    string
+	port    int
+	network string
+	spec    string
+	fd      int
 }
 
 type Config interface {
@@ -177,39 +188,78 @@ func SigFromName(n string) os.Signal {
 	return nil
 }
 
-func setEnv() {
-	if os.Getenv("ENVDIR") == "" {
-		return
+func parsePortTarget(raw string) (portTarget, error) {
+	target := strings.TrimSpace(raw)
+	fd := -1
+	if i := strings.LastIndexByte(target, '='); i >= 0 {
+		value, err := strconv.Atoi(strings.TrimSpace(target[i+1:]))
+		if err != nil || value < 0 {
+			return portTarget{}, fmt.Errorf("invalid file descriptor in %q", raw)
+		}
+		fd = value
+		target = strings.TrimSpace(target[:i])
 	}
 
-	m, err := reloadEnv()
-	if err != nil && err != errNoEnv {
-		// do something
-		fmt.Fprintf(os.Stderr, "failed to load from envdir: %s\n", err)
+	udp := strings.HasPrefix(target, "u")
+	if udp {
+		target = strings.TrimPrefix(target, "u")
 	}
 
-	for k, v := range m {
-		os.Setenv(k, v)
+	host := ""
+	portText := target
+	if strings.HasPrefix(target, "[") {
+		var err error
+		host, portText, err = net.SplitHostPort(target)
+		if err != nil {
+			return portTarget{}, fmt.Errorf("invalid address %q: %w", raw, err)
+		}
+	} else if i := strings.LastIndexByte(target, ':'); i >= 0 {
+		host = target[:i]
+		portText = target[i+1:]
 	}
+	if strings.HasPrefix(portText, "u") {
+		udp = true
+		portText = strings.TrimPrefix(portText, "u")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 0 || port > 65535 {
+		return portTarget{}, fmt.Errorf("invalid port in %q", raw)
+	}
+
+	network := "tcp4"
+	if udp {
+		network = "udp4"
+	}
+	if strings.Contains(host, ":") {
+		if udp {
+			network = "udp6"
+		} else {
+			network = "tcp6"
+		}
+	}
+	spec := strconv.Itoa(port)
+	if host != "" {
+		spec = net.JoinHostPort(host, strconv.Itoa(port))
+	}
+	if udp {
+		spec = "u" + spec
+	}
+	return portTarget{host: host, port: port, network: network, spec: spec, fd: fd}, nil
 }
 
-func parsePortSpec(addr string) (string, int, error) {
-	i := strings.IndexByte(addr, ':')
-	portPart := ""
-	if i < 0 {
-		portPart = addr
-		addr = ""
-	} else {
-		portPart = addr[i+1:]
-		addr = addr[:i]
-	}
-
-	port, err := strconv.ParseInt(portPart, 10, 64)
-	if err != nil {
-		return "", -1, err
-	}
-
-	return addr, int(port), nil
+func listenConfig(network string) net.ListenConfig {
+	return net.ListenConfig{Control: func(_, _ string, conn syscall.RawConn) error {
+		var controlErr error
+		if err := conn.Control(func(fd uintptr) {
+			controlErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+			if controlErr == nil && strings.HasSuffix(network, "6") {
+				controlErr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_V6ONLY, 1)
+			}
+		}); err != nil {
+			return err
+		}
+		return controlErr
+	}}
 }
 
 func (s *Starter) Run() error {
@@ -217,45 +267,45 @@ func (s *Starter) Run() error {
 	defer s.Teardown()
 
 	if s.pidFile != "" {
-		f, err := os.OpenFile(s.pidFile, os.O_EXCL|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		f, err := acquirePIDFile(s.pidFile)
 		if err != nil {
 			return err
 		}
-
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-			return err
-		}
-		fmt.Fprintf(f, "%d", os.Getpid())
-		defer func() {
-			os.Remove(f.Name())
-			f.Close()
-		}()
+		defer f.Close()
 	}
 
+	requestedFDs := make(map[int]struct{})
 	for _, addr := range s.ports {
-		var l net.Listener
-
-		host, port, err := parsePortSpec(addr)
+		target, err := parsePortTarget(addr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to parse addr spec '%s': %s", addr, err)
 			return err
 		}
+		if target.fd >= 0 {
+			if target.fd < 3 {
+				return fmt.Errorf("listener descriptor %d conflicts with standard streams", target.fd)
+			}
+			if _, ok := requestedFDs[target.fd]; ok {
+				return fmt.Errorf("listener descriptor %d is specified more than once", target.fd)
+			}
+			requestedFDs[target.fd] = struct{}{}
+		}
 
-		hostport := fmt.Sprintf("%s:%d", host, port)
-		l, err = net.Listen("tcp4", hostport)
+		var l net.Listener
+		var pc net.PacketConn
+		if strings.HasPrefix(target.network, "udp") {
+			lc := listenConfig(target.network)
+			pc, err = lc.ListenPacket(context.Background(), target.network, net.JoinHostPort(target.host, strconv.Itoa(target.port)))
+		} else {
+			lc := listenConfig(target.network)
+			l, err = lc.Listen(context.Background(), target.network, net.JoinHostPort(target.host, strconv.Itoa(target.port)))
+		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", hostport, err)
+			fmt.Fprintf(os.Stderr, "failed to listen to %s:%s\n", target.spec, err)
 			return err
 		}
-
-		spec := ""
-		if host == "" {
-			spec = fmt.Sprintf("%d", port)
-		} else {
-			spec = fmt.Sprintf("%s:%d", host, port)
-		}
 		s.mu.Lock()
-		s.listeners = append(s.listeners, listener{listener: l, spec: spec})
+		s.listeners = append(s.listeners, listener{listener: l, packet: pc, fd: target.fd, spec: target.spec})
 		s.mu.Unlock()
 	}
 
@@ -299,6 +349,19 @@ func (s *Starter) Run() error {
 	oldWorkers := make(map[int]int)
 	var sigReceived os.Signal
 	var sigToSend os.Signal
+	var restartTimer *time.Timer
+	var restartC <-chan time.Time
+	var autoRestartForced bool
+	autoRestart := autoRestartEnabled()
+	if autoRestart {
+		restartTimer = time.NewTimer(autoRestartInterval())
+		restartC = restartTimer.C
+	}
+	defer func() {
+		if restartTimer != nil {
+			restartTimer.Stop()
+		}
+	}()
 
 	defer func() {
 		if p != nil {
@@ -339,7 +402,6 @@ func (s *Starter) Run() error {
 		fmt.Fprintf(os.Stderr, "exiting\n")
 	}()
 
-	//	var lastRestartTime time.Time
 	for { // outer loop
 		setEnv()
 
@@ -370,8 +432,12 @@ func (s *Starter) Run() error {
 				if p != nil && p.Pid == st.Pid() { // current worker
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
+					setEnv()
 					p = s.StartWorker(sigCh, workerCh)
-					// lastRestartTime = time.Now()
+					if restartTimer != nil {
+						autoRestartForced = false
+						restartTimer.Reset(autoRestartInterval())
+					}
 				} else {
 					exitSt := grabExitStatus(st)
 					fmt.Fprintf(os.Stderr, "old worker %d died, status:%d\n", st.Pid(), exitSt)
@@ -399,6 +465,19 @@ func (s *Starter) Run() error {
 					sigToSend = syscall.SIGTERM
 					return nil
 				}
+			case <-restartC:
+				if len(oldWorkers) == 0 {
+					restart = 1
+					autoRestartForced = false
+				} else if autoRestartForced {
+					restart = 2
+					autoRestartForced = false
+				} else {
+					autoRestartForced = true
+					if restartTimer != nil {
+						restartTimer.Reset(autoRestartInterval())
+					}
+				}
 			}
 
 			if restart > 1 || restart > 0 && len(oldWorkers) == 0 {
@@ -406,7 +485,12 @@ func (s *Starter) Run() error {
 				if p != nil {
 					oldWorkers[p.Pid] = s.generation
 				}
+				setEnv()
 				p = s.StartWorker(sigCh, workerCh)
+				if restartTimer != nil {
+					autoRestartForced = false
+					restartTimer.Reset(autoRestartInterval())
+				}
 				fmt.Fprintf(os.Stderr, "new worker is now running, sending %s to old workers:", signame(sigToSend))
 				size := len(oldWorkers)
 				if size == 0 {
@@ -441,6 +525,25 @@ func (s *Starter) Run() error {
 			}
 		}
 	}
+}
+
+func autoRestartEnabled() bool {
+	value, ok := os.LookupEnv("ENABLE_AUTO_RESTART")
+	if !ok {
+		return false
+	}
+	enabled, _ := strconv.ParseBool(value)
+	return enabled || value == "1"
+}
+
+func autoRestartInterval() time.Duration {
+	interval := 360
+	if value, ok := os.LookupEnv("AUTO_RESTART_INTERVAL"); ok {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			interval = parsed
+		}
+	}
+	return time.Duration(interval) * time.Second
 }
 
 func getKillOldDelay() time.Duration {
@@ -484,28 +587,91 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		// This whole section here basically sets up the env
 		// var and the file descriptors that are inherited by the
 		// external process
-		files := make([]*os.File, len(s.ports)+len(s.paths))
-		ports := make([]string, len(s.ports)+len(s.paths))
 		s.mu.RLock()
+		descriptors := make([]int, len(s.listeners))
+		used := make(map[int]struct{}, len(s.listeners))
+		for i, l := range s.listeners {
+			if l.fd >= 0 {
+				if l.fd < 3 {
+					s.mu.RUnlock()
+					panic(fmt.Sprintf("listener descriptor %d conflicts with standard streams", l.fd))
+				}
+				if _, ok := used[l.fd]; ok {
+					s.mu.RUnlock()
+					panic(fmt.Sprintf("listener descriptor %d is specified more than once", l.fd))
+				}
+				descriptors[i] = l.fd
+				used[l.fd] = struct{}{}
+			}
+		}
+		nextFD := 3
+		for i := range descriptors {
+			if descriptors[i] != 0 {
+				continue
+			}
+			for {
+				if _, ok := used[nextFD]; !ok {
+					descriptors[i] = nextFD
+					used[nextFD] = struct{}{}
+					nextFD++
+					break
+				}
+				nextFD++
+			}
+		}
+		maxFD := 2
+		for _, fd := range descriptors {
+			if fd > maxFD {
+				maxFD = fd
+			}
+		}
+		files := make([]*os.File, maxFD-2)
+		ports := make([]string, len(s.listeners))
+		var err error
+		for slot := range files {
+			files[slot], err = os.OpenFile(os.DevNull, os.O_RDONLY, 0)
+			if err != nil {
+				s.mu.RUnlock()
+				for _, file := range files {
+					if file != nil {
+						file.Close()
+					}
+				}
+				panic(err)
+			}
+		}
 		for i, l := range s.listeners {
 			// file descriptor numbers in ExtraFiles turn out to be
 			// index + 3, so we can just hard code it
 			var f *os.File
-			var err error
 			switch listener := l.listener.(type) {
 			case *net.TCPListener:
 				f, err = listener.File()
 			case *net.UnixListener:
 				f, err = listener.File()
 			default:
-				panic("Unknown listener type")
+				if l.packet != nil {
+					if packet, ok := l.packet.(*net.UDPConn); ok {
+						f, err = packet.File()
+					} else {
+						err = fmt.Errorf("unknown packet listener type")
+					}
+				} else {
+					err = fmt.Errorf("unknown listener type")
+				}
 			}
 			if err != nil {
+				s.mu.RUnlock()
+				for _, file := range files {
+					if file != nil {
+						file.Close()
+					}
+				}
 				panic(err)
 			}
-			defer f.Close()
-			ports[i] = fmt.Sprintf("%s=%d", l.spec, i+3)
-			files[i] = f
+			files[descriptors[i]-3].Close()
+			files[descriptors[i]-3] = f
+			ports[i] = fmt.Sprintf("%s=%d", l.spec, descriptors[i])
 		}
 		s.mu.RUnlock()
 		cmd.ExtraFiles = files
@@ -515,8 +681,16 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		os.Setenv("SERVER_STARTER_GENERATION", fmt.Sprintf("%d", s.generation))
 
 		// Now start!
-		if err := cmd.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to exec %s: %s\n", cmd.Path, err)
+		startErr := cmd.Start()
+		s.mu.RLock()
+		for _, f := range files {
+			if f != nil {
+				f.Close()
+			}
+		}
+		s.mu.RUnlock()
+		if startErr != nil {
+			fmt.Fprintf(os.Stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
 		} else {
 			// Save pid...
 			pid = cmd.Process.Pid
@@ -574,10 +748,6 @@ func (s *Starter) StartWorker(sigCh chan os.Signal, ch chan processState) *os.Pr
 		// If we fall through here, we prematurely exited :/
 		// Make sure to wait to release resources
 		_ = cmd.Wait()
-		for _, f := range cmd.ExtraFiles {
-			f.Close()
-		}
-
 		fmt.Fprintf(os.Stderr, "new worker %d seems to have failed to start\n", pid)
 	}
 }
@@ -589,7 +759,12 @@ func (s *Starter) Teardown() error {
 
 	s.mu.RLock()
 	for _, l := range s.listeners {
-		l.listener.Close()
+		if l.listener != nil {
+			l.listener.Close()
+		}
+		if l.packet != nil {
+			l.packet.Close()
+		}
 	}
 	s.mu.RUnlock()
 

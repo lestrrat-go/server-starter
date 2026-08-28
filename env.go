@@ -1,14 +1,41 @@
 package starter
 
 import (
-	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 var errNoEnv = errors.New("no ENVDIR specified, or ENVDIR does not exist")
+var envMu sync.Mutex
+var managedEnv = make(map[string]struct{})
+
+func setEnv() {
+	envMu.Lock()
+	defer envMu.Unlock()
+
+	m, err := reloadEnv()
+	if err != nil && err != errNoEnv {
+		fmt.Fprintf(os.Stderr, "failed to load from envdir: %s\n", err)
+	}
+	for name := range managedEnv {
+		if _, ok := m[name]; !ok {
+			_ = os.Unsetenv(name)
+		}
+	}
+	for name, value := range m {
+		_ = os.Setenv(name, value)
+		managedEnv[name] = struct{}{}
+	}
+	for name := range managedEnv {
+		if _, ok := m[name]; !ok {
+			delete(managedEnv, name)
+		}
+	}
+}
 
 func reloadEnv() (map[string]string, error) {
 	dn := os.Getenv("ENVDIR")
@@ -16,48 +43,30 @@ func reloadEnv() (map[string]string, error) {
 		return nil, errNoEnv
 	}
 
-	fi, err := os.Stat(dn)
+	entries, err := os.ReadDir(dn)
 	if err != nil {
-		return nil, err
+		return nil, errNoEnv
 	}
 
-	if !fi.IsDir() {
-		return nil, err
+	m := make(map[string]string)
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || entry.IsDir() {
+			continue
+		}
+
+		data, err := os.ReadFile(filepath.Join(dn, name))
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		value := string(data)
+		if i := strings.IndexByte(value, '\n'); i >= 0 {
+			value = value[:i]
+		}
+		m[name] = value
 	}
 
-	var m map[string]string
-
-	_ = filepath.Walk(dn, func(path string, fi os.FileInfo, err error) error {
-		// Ignore errors
-		if err != nil {
-			return nil
-		}
-
-		// Don't go into directories
-		if fi.IsDir() && dn != path {
-			return filepath.SkipDir
-		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-
-		envName := filepath.Base(path)
-		scanner := bufio.NewScanner(f)
-		if scanner.Scan() {
-			if m == nil {
-				m = make(map[string]string)
-			}
-			l := scanner.Text()
-			m[envName] = strings.TrimSpace(l)
-		}
-
-		return nil
-	})
-
-	if m == nil {
+	if len(m) == 0 {
 		return nil, errNoEnv
 	}
 
