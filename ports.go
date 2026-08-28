@@ -148,6 +148,56 @@ func ParsePorts(spec string) (List, error) {
 	return ret, nil
 }
 
+// FormatPorts encodes ls into the "spec=fd;spec=fd;..." wire format read
+// by ParsePorts and carried by SERVER_STARTER_PORT. It is the authoritative
+// encoder for that format: each Listener's own String() method is a
+// display form for humans and does not validate its receiver, so a
+// TCPListener, UDPListener, or UnixListener built directly as a struct
+// literal (bypassing New*Listener's normalisation) can render into a spec
+// that ParsePorts reads back as something else entirely, with no error
+// anywhere in the chain. FormatPorts closes that gap by rejecting a
+// malformed listener instead of silently encoding it.
+//
+// ls is variadic so a single listener can be formatted ad-hoc, and so a
+// List can be passed directly as FormatPorts(list...).
+//
+// FormatPorts rejects, by returning an error naming the offending listener:
+//
+//   - a TCPListener or UDPListener with an empty Addr
+//   - a UnixListener with an empty Path
+//   - a UnixListener whose Path contains ';' (the spec separator) or '='
+//     (the spec/fd separator), either of which ParsePorts would misread
+//   - any Listener whose concrete type is not TCPListener, UDPListener, or
+//     UnixListener; FormatPorts has no way to validate an implementation
+//     it does not know, so it refuses to guess rather than risk emitting
+//     a spec ParsePorts cannot read back correctly
+func FormatPorts(ls ...Listener) (string, error) {
+	specs := make([]string, len(ls))
+	for i, l := range ls {
+		switch v := l.(type) {
+		case TCPListener:
+			if v.Addr == "" {
+				return "", fmt.Errorf("starter: cannot format TCPListener (port %d): Addr is empty", v.Port)
+			}
+		case UDPListener:
+			if v.Addr == "" {
+				return "", fmt.Errorf("starter: cannot format UDPListener (port %d): Addr is empty", v.Port)
+			}
+		case UnixListener:
+			if v.Path == "" {
+				return "", fmt.Errorf("starter: cannot format UnixListener: Path is empty")
+			}
+			if strings.ContainsAny(v.Path, ";=") {
+				return "", fmt.Errorf("starter: cannot format UnixListener (path %q): Path must not contain ';' or '='", v.Path)
+			}
+		default:
+			return "", fmt.Errorf("starter: cannot format listener of type %T: unsupported Listener implementation", l)
+		}
+		specs[i] = l.String()
+	}
+	return strings.Join(specs, ";"), nil
+}
+
 // Ports parses environment variable SERVER_STARTER_PORT (see PortEnvName).
 func Ports() (List, error) {
 	return ParsePorts(os.Getenv(PortEnvName))

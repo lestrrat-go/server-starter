@@ -80,79 +80,70 @@ func TestNewUnixListenerNoNormalisation(t *testing.T) {
 	require.Equal(t, "relative.sock=1", l.String())
 }
 
-func TestListString(t *testing.T) {
+func TestListFormatPorts(t *testing.T) {
 	list := starter.List{
 		starter.NewTCPListener("10.0.0.5", 9090, 3),
 		starter.NewUDPListener("192.168.1.20", 9092, 4),
 		starter.NewUnixListener("/var/run/app.sock", 5),
 	}
-	require.Equal(t, "10.0.0.5:9090=3;u192.168.1.20:9092=4;/var/run/app.sock=5", list.String())
+	spec, err := starter.FormatPorts(list...)
+	require.NoError(t, err)
+	require.Equal(t, "10.0.0.5:9090=3;u192.168.1.20:9092=4;/var/run/app.sock=5", spec)
 }
 
-// TestListStringParsePortsRoundTrip checks that List.String() and ParsePorts
-// are inverses of each other, scoped to the shapes the supervisor can
-// actually emit: a bare TCP port, "host:port", "[ipv6]:port" (each with and
-// without the UDP "u" prefix), and an absolute unix socket path.
+// TestListFormatPortsParsePortsRoundTrip checks that FormatPorts and
+// ParsePorts are inverses of each other, scoped to the shapes the
+// supervisor can actually emit: a bare TCP port, "host:port",
+// "[ipv6]:port" (each with and without the UDP "u" prefix), and an
+// absolute unix socket path.
 //
 // Two shapes are deliberately excluded, because they do not round-trip
 // today and fixing that is out of scope here:
-//   - an empty List: String() gives "", which ParsePorts rejects with
+//   - an empty List: FormatPorts gives "", which ParsePorts rejects with
 //     ErrNoListeningTarget instead of returning an empty List.
 //   - a relative unix socket path with no "/" that happens to parse as a
 //     port or "host:port" (e.g. "8080" or "db:5432"): ParsePorts reads it
 //     back as TCP/UDP, per the documented ambiguity on ParsePorts.
-func TestListStringParsePortsRoundTrip(t *testing.T) {
-	t.Run("bare TCP port", func(t *testing.T) {
-		list := starter.List{starter.NewTCPListener("", 8080, 3)}
-		got, err := starter.ParsePorts(list.String())
+func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
+	roundTrip := func(t *testing.T, list starter.List) {
+		t.Helper()
+		spec, err := starter.FormatPorts(list...)
+		require.NoError(t, err)
+		got, err := starter.ParsePorts(spec)
 		require.NoError(t, err)
 		require.Equal(t, list, got)
+	}
+
+	t.Run("bare TCP port", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewTCPListener("", 8080, 3)})
 	})
 
 	t.Run("TCP host and port", func(t *testing.T) {
-		list := starter.List{starter.NewTCPListener("10.0.0.5", 9090, 4)}
-		got, err := starter.ParsePorts(list.String())
-		require.NoError(t, err)
-		require.Equal(t, list, got)
+		roundTrip(t, starter.List{starter.NewTCPListener("10.0.0.5", 9090, 4)})
 	})
 
 	t.Run("TCP ipv6 host and port", func(t *testing.T) {
-		list := starter.List{starter.NewTCPListener("::1", 9090, 5)}
-		got, err := starter.ParsePorts(list.String())
-		require.NoError(t, err)
-		require.Equal(t, list, got)
+		roundTrip(t, starter.List{starter.NewTCPListener("::1", 9090, 5)})
 	})
 
 	t.Run("bare UDP port", func(t *testing.T) {
-		list := starter.List{starter.NewUDPListener("", 8080, 6)}
-		got, err := starter.ParsePorts(list.String())
-		require.NoError(t, err)
-		require.Equal(t, list, got)
+		roundTrip(t, starter.List{starter.NewUDPListener("", 8080, 6)})
 	})
 
 	t.Run("UDP host and port", func(t *testing.T) {
-		list := starter.List{starter.NewUDPListener("192.168.1.20", 9092, 7)}
-		got, err := starter.ParsePorts(list.String())
-		require.NoError(t, err)
-		require.Equal(t, list, got)
+		roundTrip(t, starter.List{starter.NewUDPListener("192.168.1.20", 9092, 7)})
 	})
 
 	t.Run("UDP ipv6 host and port", func(t *testing.T) {
-		list := starter.List{starter.NewUDPListener("2001:db8::1", 9093, 8)}
-		got, err := starter.ParsePorts(list.String())
-		require.NoError(t, err)
-		require.Equal(t, list, got)
+		roundTrip(t, starter.List{starter.NewUDPListener("2001:db8::1", 9093, 8)})
 	})
 
 	t.Run("absolute unix socket path", func(t *testing.T) {
-		list := starter.List{starter.NewUnixListener("/var/run/app.sock", 9)}
-		got, err := starter.ParsePorts(list.String())
-		require.NoError(t, err)
-		require.Equal(t, list, got)
+		roundTrip(t, starter.List{starter.NewUnixListener("/var/run/app.sock", 9)})
 	})
 
 	t.Run("mixed multi-target list", func(t *testing.T) {
-		list := starter.List{
+		roundTrip(t, starter.List{
 			starter.NewTCPListener("", 8080, 3),
 			starter.NewTCPListener("10.0.0.5", 9090, 4),
 			starter.NewTCPListener("::1", 9091, 5),
@@ -160,9 +151,6 @@ func TestListStringParsePortsRoundTrip(t *testing.T) {
 			starter.NewUDPListener("192.168.1.20", 9092, 7),
 			starter.NewUDPListener("2001:db8::1", 9093, 8),
 			starter.NewUnixListener("/var/run/app.sock", 9),
-		}
-		got, err := starter.ParsePorts(list.String())
-		require.NoError(t, err)
-		require.Equal(t, list, got)
+		})
 	})
 }

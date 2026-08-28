@@ -24,7 +24,7 @@ gone; everything it exported now lives at the module root, in package
 | `listener.ServerStarterEnvVarName` | `starter.PortEnvName` |
 | `listener.ErrNoListeningTarget` | `starter.ErrNoListeningTarget` |
 | `listener.Listener` / `List` / `TCPListener` / `UnixListener` | same names, module root |
-| — | new: `UDPListener`, `ParsePorts`, `NewTCPListener`, `NewUDPListener`, `NewUnixListener`, `Generation`, `IsUnderStartServer` |
+| — | new: `UDPListener`, `ParsePorts`, `FormatPorts`, `NewTCPListener`, `NewUDPListener`, `NewUnixListener`, `Generation`, `GenerationEnvName`, `IsUnderStartServer` |
 
 Two things to check when you move code over:
 

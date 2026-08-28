@@ -15,7 +15,7 @@ import (
 // TestPortSpecWireFormatUnchanged guards startWorker's switch from an
 // inline fmt.Sprintf("%s=%d", spec, fd) to a starter.List built from typed
 // Listener values (NewTCPListener/NewUDPListener/NewUnixListener) and
-// formatted through List.String(). SERVER_STARTER_PORT is the wire
+// formatted through starter.FormatPorts. SERVER_STARTER_PORT is the wire
 // protocol between this supervisor and every worker, including ones built
 // with a different version of this module; the two formatting paths must
 // stay byte-identical for every shape the supervisor can emit, or a future
@@ -42,7 +42,8 @@ func TestPortSpecWireFormatUnchanged(t *testing.T) {
 			want := fmt.Sprintf("%s=%d", target.spec, fd)
 
 			l := listener{network: target.network, host: target.host, port: target.port}
-			got := starter.List{l.starterListener(fd)}.String()
+			got, err := starter.FormatPorts(l.starterListener(fd))
+			require.NoError(t, err)
 
 			require.Equal(t, want, got)
 		})
@@ -63,7 +64,8 @@ func TestPortSpecWireFormatUnchanged(t *testing.T) {
 			want := fmt.Sprintf("%s=%d", tc.path, unixFD)
 
 			l := listener{network: "unix", path: tc.path}
-			got := starter.List{l.starterListener(unixFD)}.String()
+			got, err := starter.FormatPorts(l.starterListener(unixFD))
+			require.NoError(t, err)
 
 			require.Equal(t, want, got)
 		})

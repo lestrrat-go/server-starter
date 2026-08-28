@@ -1,12 +1,25 @@
 package starter_test
 
 import (
+	"errors"
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	starter "github.com/lestrrat-go/server-starter/v2"
 )
+
+// fakeListener is a starter.Listener implementation that is neither
+// TCPListener, UDPListener, nor UnixListener, used to exercise
+// FormatPorts's handling of an unknown Listener implementation.
+type fakeListener struct{}
+
+func (fakeListener) Fd() uintptr { return 0 }
+func (fakeListener) Listen() (net.Listener, error) {
+	return nil, errors.New("fakeListener: Listen not implemented")
+}
+func (fakeListener) String() string { return "fake" }
 
 func TestPorts(t *testing.T) {
 	expect := starter.List{
@@ -15,7 +28,9 @@ func TestPorts(t *testing.T) {
 		starter.NewUnixListener("/foo/bar/baz.sock", 6),
 	}
 
-	t.Setenv(starter.PortEnvName, expect.String())
+	spec, err := starter.FormatPorts(expect...)
+	require.NoError(t, err)
+	t.Setenv(starter.PortEnvName, spec)
 	ports, err := starter.Ports()
 	require.NoError(t, err)
 	require.Len(t, ports, len(expect))
@@ -143,5 +158,60 @@ func TestParsePorts(t *testing.T) {
 		require.Equal(t, starter.NewUDPListener("", 8080, 3), got[1])
 		require.Equal(t, starter.NewTCPListener("10.0.0.5", 9090, 4), got[2])
 		require.Equal(t, starter.NewUnixListener("/foo/bar.sock", 6), got[3])
+	})
+}
+
+func TestFormatPorts(t *testing.T) {
+	t.Run("rejects empty TCP Addr", func(t *testing.T) {
+		_, err := starter.FormatPorts(starter.TCPListener{Addr: "", Port: 8080})
+		require.Error(t, err)
+		require.ErrorContains(t, err, "TCPListener")
+		require.ErrorContains(t, err, "Addr")
+	})
+
+	t.Run("rejects empty UDP Addr", func(t *testing.T) {
+		_, err := starter.FormatPorts(starter.UDPListener{Addr: "", Port: 8080})
+		require.Error(t, err)
+		require.ErrorContains(t, err, "UDPListener")
+		require.ErrorContains(t, err, "Addr")
+	})
+
+	t.Run("rejects empty unix Path", func(t *testing.T) {
+		_, err := starter.FormatPorts(starter.UnixListener{Path: ""})
+		require.Error(t, err)
+		require.ErrorContains(t, err, "UnixListener")
+		require.ErrorContains(t, err, "Path")
+	})
+
+	t.Run("rejects unix Path containing a semicolon", func(t *testing.T) {
+		_, err := starter.FormatPorts(starter.UnixListener{Path: "/tmp/a;b.sock"})
+		require.Error(t, err)
+		require.ErrorContains(t, err, "Path")
+	})
+
+	t.Run("rejects unix Path containing an equals sign", func(t *testing.T) {
+		_, err := starter.FormatPorts(starter.UnixListener{Path: "has=equals.sock"})
+		require.Error(t, err)
+		require.ErrorContains(t, err, "Path")
+	})
+
+	t.Run("rejects an unknown Listener implementation", func(t *testing.T) {
+		_, err := starter.FormatPorts(fakeListener{})
+		require.Error(t, err)
+	})
+
+	// Round-trip coverage against ParsePorts for every valid shape the
+	// supervisor can emit (bare port, host:port, bracketed IPv6, unix
+	// path, and the UDP variants) lives in
+	// TestListFormatPortsParsePortsRoundTrip in listener_test.go.
+
+	t.Run("formats a List via variadic unpacking", func(t *testing.T) {
+		list := starter.List{
+			starter.NewTCPListener("127.0.0.1", 9090, 4),
+			starter.NewUnixListener("/tmp/app.sock", 5),
+		}
+		spec, err := starter.FormatPorts(list...)
+		require.NoError(t, err)
+		require.Equal(t, "127.0.0.1:9090=4;/tmp/app.sock=5", spec)
 	})
 }
