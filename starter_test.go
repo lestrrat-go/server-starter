@@ -115,7 +115,13 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 
 	// -buildvcs=false: the scratch module is not a checkout, and VCS stamping
 	// fails outright when the build walks up into an unrelated repository.
-	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(dir, "echod"), ".")
+	// -mod=mod: the scratch go.mod has no go.sum and only a bare require for
+	// this module, so in the default readonly mode the build refuses to run
+	// ("go: updates to go.mod needed") once this module's own dependency
+	// graph gains entries (e.g. golang.org/x/sys) that the scratch module's
+	// go.mod/go.sum haven't recorded yet. -mod=mod lets it resolve those on
+	// the fly instead of requiring a manual "go mod tidy" here.
+	cmd := exec.Command("go", "build", "-mod=mod", "-buildvcs=false", "-o", filepath.Join(dir, "echod"), ".")
 	cmd.Dir = dir
 	// GOWORK=off keeps a go.work anywhere above $TMPDIR from pulling the
 	// scratch module into an unrelated workspace.
