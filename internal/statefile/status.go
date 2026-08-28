@@ -1,12 +1,19 @@
 package statefile
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+)
+
+const (
+	maxPIDFileSize    = 64
+	maxStatusFileSize = 64 * 1024
 )
 
 // StatusMap builds the generation-to-pid map that mirrors the current
@@ -75,9 +82,10 @@ func WriteStatus(fn string, generations map[int]int) error {
 	return nil
 }
 
-// ReadPID reads and parses the pid stored in the pid file at path.
-func ReadPID(path string) (int, error) {
-	data, err := os.ReadFile(path)
+// ReadPID reads and parses the pid stored in the pid file at path. It rejects
+// non-regular files and payloads larger than the PID format requires.
+func ReadPID(ctx context.Context, path string) (int, error) {
+	data, err := readStateFile(ctx, path, maxPIDFileSize)
 	if err != nil {
 		return 0, err
 	}
@@ -90,9 +98,10 @@ func ReadPID(path string) (int, error) {
 }
 
 // ReadStatus reads and parses the status file at path into a
-// generation-to-pid map, one entry per "generation:pid" line.
-func ReadStatus(path string) (map[int]int, error) {
-	data, err := os.ReadFile(path)
+// generation-to-pid map, one entry per "generation:pid" line. It rejects
+// non-regular files and oversized payloads.
+func ReadStatus(ctx context.Context, path string) (map[int]int, error) {
+	data, err := readStateFile(ctx, path, maxStatusFileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -116,4 +125,39 @@ func ReadStatus(path string) (map[int]int, error) {
 		status[generation] = pid
 	}
 	return status, nil
+}
+
+func readStateFile(ctx context.Context, path string, maxSize int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	f, err := openStateFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open state file %q: %w", path, err)
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect state file %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("state file %q is not a regular file", path)
+	}
+	if info.Size() > maxSize {
+		return nil, fmt.Errorf("state file %q is too large", path)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(f, maxSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read state file %q: %w", path, err)
+	}
+	if int64(len(data)) > maxSize {
+		return nil, fmt.Errorf("state file %q is too large", path)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return data, nil
 }

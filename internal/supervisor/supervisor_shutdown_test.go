@@ -41,7 +41,7 @@ func TestShutdownForcesStubbornWorkerAndCompletesTeardown(t *testing.T) {
 
 	waitForPath(t, readyPath)
 	waitForGenerations(t, statusPath, 1)
-	status, err := statefile.ReadStatus(statusPath)
+	status, err := statefile.ReadStatus(ctx, statusPath)
 	require.NoError(t, err)
 	require.Len(t, status, 1)
 	workerPID := 0

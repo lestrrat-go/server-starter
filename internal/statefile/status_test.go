@@ -1,6 +1,7 @@
 package statefile
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -107,7 +108,7 @@ func TestReadStatus(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status")
 	require.NoError(t, os.WriteFile(path, []byte("2:200\n1:100\n"), 0600))
 
-	status, err := ReadStatus(path)
+	status, err := ReadStatus(context.Background(), path)
 	require.NoError(t, err)
 	require.Equal(t, map[int]int{1: 100, 2: 200}, status)
 }

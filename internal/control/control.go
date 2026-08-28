@@ -19,7 +19,7 @@ const pollInterval = 20 * time.Millisecond
 // to exit. The caller controls how long to wait via ctx; a typical caller
 // wraps ctx with a timeout.
 func Stop(ctx context.Context, pidPath string) error {
-	pid, err := statefile.ReadPID(pidPath)
+	pid, err := statefile.ReadPID(ctx, pidPath)
 	if err != nil {
 		return err
 	}
@@ -77,11 +77,11 @@ func Restart(ctx context.Context, pidPath, statusPath string) error {
 	if statusPath == "" {
 		return fmt.Errorf("--status-file is required with --restart")
 	}
-	pid, err := statefile.ReadPID(pidPath)
+	pid, err := statefile.ReadPID(ctx, pidPath)
 	if err != nil {
 		return err
 	}
-	previous, err := statefile.ReadStatus(statusPath)
+	previous, err := statefile.ReadStatus(ctx, statusPath)
 	if err != nil {
 		return fmt.Errorf("failed to read status file %q before restart: %w", statusPath, err)
 	}
@@ -101,7 +101,7 @@ func Restart(ctx context.Context, pidPath, statusPath string) error {
 			return fmt.Errorf("timed out waiting for restart: %w", ctx.Err())
 		case <-ticker.C:
 		}
-		current, err := statefile.ReadStatus(statusPath)
+		current, err := statefile.ReadStatus(ctx, statusPath)
 		if err != nil {
 			return fmt.Errorf("failed to read status file %q while waiting for restart: %w", statusPath, err)
 		}
