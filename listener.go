@@ -29,7 +29,8 @@ type List []Listener
 // String joins every Listener's display form with ";". It is retained for
 // compatibility with v0 and earlier v2 releases. Use FormatPorts when the
 // result will be passed through SERVER_STARTER_PORT, because String does not
-// validate that ParsePorts can read the result back as the same listeners.
+// validate that the result is safe for an environment variable or that
+// ParsePorts can read it back as the same listeners.
 func (ll List) String() string {
 	list := make([]string, len(ll))
 	for i, l := range ll {

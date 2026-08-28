@@ -166,6 +166,9 @@ func ParsePorts(spec string) (List, error) {
 //   - an empty list, because ParsePorts rejects an empty string
 //   - a TCPListener or UDPListener with an empty Addr
 //   - a UnixListener with an empty Path
+//   - a TCPListener or UDPListener whose Addr contains a NUL byte, or a
+//     UnixListener whose Path contains one; environment variables cannot
+//     carry NUL bytes
 //   - a UnixListener whose Path contains ';' (the spec separator) or '='
 //     (the spec/fd separator), either of which ParsePorts would misread
 //   - any Listener whose concrete type is not TCPListener, UDPListener, or
@@ -187,13 +190,28 @@ func FormatPorts(ls ...Listener) (string, error) {
 			if v.Addr == "" {
 				return "", fmt.Errorf("starter: cannot format TCPListener (port %d): Addr is empty", v.Port)
 			}
+			if strings.ContainsRune(v.Addr, '\x00') {
+				return "", fmt.Errorf(
+					"starter: cannot format TCPListener (port %d): Addr contains a NUL byte",
+					v.Port,
+				)
+			}
 		case UDPListener:
 			if v.Addr == "" {
 				return "", fmt.Errorf("starter: cannot format UDPListener (port %d): Addr is empty", v.Port)
 			}
+			if strings.ContainsRune(v.Addr, '\x00') {
+				return "", fmt.Errorf(
+					"starter: cannot format UDPListener (port %d): Addr contains a NUL byte",
+					v.Port,
+				)
+			}
 		case UnixListener:
 			if v.Path == "" {
 				return "", fmt.Errorf("starter: cannot format UnixListener: Path is empty")
+			}
+			if strings.ContainsRune(v.Path, '\x00') {
+				return "", fmt.Errorf("starter: cannot format UnixListener: Path contains a NUL byte")
 			}
 			if strings.ContainsAny(v.Path, ";=") {
 				return "", fmt.Errorf("starter: cannot format UnixListener (path %q): Path must not contain ';' or '='", v.Path)

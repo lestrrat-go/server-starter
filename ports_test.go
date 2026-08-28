@@ -188,6 +188,39 @@ func TestFormatPorts(t *testing.T) {
 		require.ErrorContains(t, err, "Path")
 	})
 
+	t.Run("rejects NUL bytes", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			listener starter.Listener
+			field    string
+		}{
+			{
+				name:     "TCP Addr",
+				listener: starter.NewTCPListener("127.0.0.1\x00bad", 8080, 3),
+				field:    "Addr",
+			},
+			{
+				name:     "UDP Addr",
+				listener: starter.NewUDPListener("127.0.0.1\x00bad", 8080, 3),
+				field:    "Addr",
+			},
+			{
+				name:     "unix Path",
+				listener: starter.NewUnixListener("/tmp/app\x00bad.sock", 3),
+				field:    "Path",
+			},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				_, err := starter.FormatPorts(test.listener)
+				require.Error(t, err)
+				require.ErrorContains(t, err, test.field)
+				require.ErrorContains(t, err, "NUL")
+			})
+		}
+	})
+
 	t.Run("rejects unix Path containing a semicolon", func(t *testing.T) {
 		_, err := starter.FormatPorts(starter.UnixListener{Path: "/tmp/a;b.sock"})
 		require.Error(t, err)
