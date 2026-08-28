@@ -54,8 +54,17 @@ if err != nil {
 	log.Fatal(err)
 }
 
-// listeners[0], listeners[1], ... are net.Listener, ready to Serve on.
-http.Serve(listeners[0], handler)
+var wg sync.WaitGroup
+for _, listener := range listeners {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := http.Serve(listener, handler); err != nil {
+			log.Printf("failed to serve %s: %s", listener.Addr(), err)
+		}
+	}()
+}
+wg.Wait()
 ```
 
 See the `examples/` directory for complete, runnable programs.
