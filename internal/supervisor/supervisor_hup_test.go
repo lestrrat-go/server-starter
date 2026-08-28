@@ -25,7 +25,7 @@ func TestHangupFailsWhenEnvdirReloadFails(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(envdir, "VALUE"), []byte("first\n"), 0600))
 
 	sd, err := NewStarter(&config{
-		command: "/bin/sh",
+		command: testShellPath,
 		args:    []string{"-c", "exec sleep 30"},
 		envdir:  envdir,
 	})
