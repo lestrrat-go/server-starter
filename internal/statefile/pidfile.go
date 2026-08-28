@@ -1,6 +1,7 @@
 package statefile
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,9 @@ import (
 )
 
 const pidTextSize = 64
+
+// ErrPIDFileLocked means a live supervisor already holds the pid-file lock.
+var ErrPIDFileLocked = errors.New("pid file is already locked")
 
 // PIDFile is a pid file that has been acquired via Acquire. Closing it
 // releases the lock and, if this process still owns the file on disk,
@@ -19,7 +23,8 @@ type PIDFile struct {
 }
 
 // Acquire opens path, takes a non-blocking ownership lock on it, and writes
-// the current process's pid into it.
+// the current process's pid into it. It returns ErrPIDFileLocked when another
+// supervisor already holds the lock.
 func Acquire(path string) (*PIDFile, error) {
 	return acquire(path, lockFile)
 }
@@ -34,9 +39,9 @@ func acquire(path string, lock func(*os.File) error) (*PIDFile, error) {
 		f.Close()
 		if lockUnavailable(err) {
 			if ownerKnown {
-				return nil, fmt.Errorf("pid file %s is locked by process %d", path, ownerPID)
+				return nil, fmt.Errorf("%w: pid file %s is locked by process %d", ErrPIDFileLocked, path, ownerPID)
 			}
-			return nil, fmt.Errorf("pid file %s is already locked (owner pid unavailable)", path)
+			return nil, fmt.Errorf("%w: pid file %s (owner pid unavailable)", ErrPIDFileLocked, path)
 		}
 		return nil, fmt.Errorf("failed to lock pid file %s: %w", path, err)
 	}
