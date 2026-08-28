@@ -63,7 +63,8 @@ func terminalWorkerStartError(err error) bool {
 		errors.Is(err, syscall.ENOTDIR) ||
 		errors.Is(err, syscall.ELOOP) ||
 		errors.Is(err, syscall.ENAMETOOLONG) ||
-		errors.Is(err, syscall.E2BIG)
+		errors.Is(err, syscall.E2BIG) ||
+		platformTerminalWorkerStartError(err)
 }
 
 func workerStartRetryDelay(interval time.Duration) time.Duration {

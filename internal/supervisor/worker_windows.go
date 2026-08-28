@@ -1,9 +1,16 @@
 package supervisor
 
 import (
+	"errors"
 	"os"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
+
+func platformTerminalWorkerStartError(err error) bool {
+	return errors.Is(err, windows.ERROR_BAD_EXE_FORMAT)
+}
 
 func init() {
 	failureStatus = syscall.WaitStatus{ExitCode: 255}
