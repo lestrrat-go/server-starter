@@ -66,16 +66,23 @@ package still runs correctly under a v2 `start_server`, and a worker built
 against v2's `starter` package still runs correctly under a v0
 `start_server`.
 
-## The supervisor now validates listener specs
+## Listener-spec validation is stricter
 
 V0 joined each listener's `String()` result and passed it to the worker as
-`SERVER_STARTER_PORT` without validation. V2 formats the value with
-`FormatPorts` before starting a worker. It returns a worker-start error when
-a listener cannot be encoded as one environment variable and read back as
-the same listener. This includes Unix socket paths containing `;`, `=`, or a
-NUL byte, TCP and UDP addresses containing a NUL byte, ambiguous relative
-Unix socket paths, and malformed listener values built directly as struct
-literals. Valid listener specs keep the v0 wire format described above.
+`SERVER_STARTER_PORT` without validation. The public `FormatPorts` function
+now rejects values that cannot be encoded as one environment variable and
+read back as the same listener. This includes NUL bytes, Unix socket paths
+containing `;` or `=`, ambiguous relative Unix socket paths, and malformed
+listener values built directly as struct literals.
+
+The supervisor's `Config` accepts only string port and path metadata, so
+struct-literal listeners do not enter that API. The supervisor binds those
+strings before formatting worker metadata. TCP and UDP addresses containing
+a NUL byte therefore fail synchronously during `Run`. A Unix path containing
+a NUL byte can bind first and then fail asynchronously through the returned
+`Controller` when worker formatting begins. Unix paths containing delimiters
+or using an ambiguous relative form can fail at that same asynchronous stage.
+Valid listener specs keep the v0 wire format described above.
 
 ## Three deliberate divergences from Perl's Server::Starter
 
