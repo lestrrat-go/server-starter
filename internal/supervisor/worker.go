@@ -55,9 +55,15 @@ func (s workerStartupState) waitForProbe(ctx context.Context, interval time.Dura
 }
 
 func terminalWorkerStartError(err error) bool {
-	return errors.Is(err, os.ErrNotExist) ||
+	return errors.Is(err, exec.ErrNotFound) ||
+		errors.Is(err, os.ErrNotExist) ||
 		errors.Is(err, os.ErrPermission) ||
-		errors.Is(err, syscall.EINVAL)
+		errors.Is(err, syscall.EINVAL) ||
+		errors.Is(err, syscall.ENOEXEC) ||
+		errors.Is(err, syscall.ENOTDIR) ||
+		errors.Is(err, syscall.ELOOP) ||
+		errors.Is(err, syscall.ENAMETOOLONG) ||
+		errors.Is(err, syscall.E2BIG)
 }
 
 func workerStartRetryDelay(interval time.Duration) time.Duration {

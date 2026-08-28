@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -21,6 +22,12 @@ func TestTerminalWorkerStartError(t *testing.T) {
 		"missing executable or directory": {err: syscall.ENOENT, want: true},
 		"permission denied":               {err: syscall.EACCES, want: true},
 		"invalid launch argument":         {err: syscall.EINVAL, want: true},
+		"invalid executable format":       {err: syscall.ENOEXEC, want: true},
+		"path component is not directory": {err: syscall.ENOTDIR, want: true},
+		"symbolic link loop":              {err: syscall.ELOOP, want: true},
+		"path name too long":              {err: syscall.ENAMETOOLONG, want: true},
+		"argument list too long":          {err: syscall.E2BIG, want: true},
+		"executable absent from PATH":     {err: exec.ErrNotFound, want: true},
 		"temporary resource exhaustion":   {err: syscall.EAGAIN, want: false},
 	}
 
