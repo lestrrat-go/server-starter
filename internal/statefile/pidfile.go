@@ -16,7 +16,7 @@ type PIDFile struct {
 // Acquire opens path, takes a blocking exclusive lock on it, and writes the
 // current process's pid into it.
 func Acquire(path string) (*PIDFile, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+	f, err := openPIDFile(path)
 	if err != nil {
 		return nil, err
 	}

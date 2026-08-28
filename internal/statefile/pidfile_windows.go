@@ -1,11 +1,70 @@
 package statefile
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"golang.org/x/sys/windows"
 )
+
+func openPIDFile(path string) (*os.File, error) {
+	pathp, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pid file %q: %w", path, err)
+	}
+
+	handle, err := createPIDFile(pathp, windows.CREATE_NEW)
+	if errors.Is(err, windows.ERROR_FILE_EXISTS) || errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		handle, err = createPIDFile(pathp, windows.OPEN_EXISTING)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pid file %q: %w", path, err)
+	}
+
+	f := os.NewFile(uintptr(handle), path)
+	if f == nil {
+		windows.CloseHandle(handle)
+		return nil, fmt.Errorf("failed to open pid file %q", path)
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to inspect pid file %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("pid file %q is not a regular file", path)
+	}
+
+	var handleInfo windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &handleInfo); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to inspect pid file %q: %w", path, err)
+	}
+	if handleInfo.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		f.Close()
+		return nil, fmt.Errorf("pid file %q is a reparse point", path)
+	}
+	if handleInfo.NumberOfLinks != 1 {
+		f.Close()
+		return nil, fmt.Errorf("pid file %q has %d hard links, expected one", path, handleInfo.NumberOfLinks)
+	}
+
+	return f, nil
+}
+
+func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
+	return windows.CreateFile(
+		path,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		disposition,
+		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+}
 
 func lockFile(f *os.File) error {
 	// The file is truncated and rewritten after the lock is taken, so its
