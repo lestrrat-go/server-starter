@@ -1,7 +1,9 @@
 package supervisor
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,4 +58,35 @@ func TestAssignListenerDescriptors(t *testing.T) {
 		_, err := assignListenerDescriptors([]int{3, 3})
 		require.ErrorContains(t, err, "specified more than once")
 	})
+}
+
+func TestParsePortTargetPortBoundaries(t *testing.T) {
+	for _, spec := range []string{"0", "65535"} {
+		_, err := parsePortTarget(spec)
+		require.NoError(t, err)
+	}
+
+	for _, spec := range []string{"-1", "65536"} {
+		_, err := parsePortTarget(spec)
+		require.EqualError(t, err, "invalid port in \""+spec+"\"")
+	}
+}
+
+func TestRunRejectsStandardStreamDescriptors(t *testing.T) {
+	for _, test := range []struct {
+		spec string
+		fd   string
+	}{
+		{spec: "8080=0", fd: "0"},
+		{spec: "8080=1", fd: "1"},
+		{spec: "8080=2", fd: "2"},
+	} {
+		s := &Starter{ports: []string{test.spec}, stderr: io.Discard}
+		// testing.T.Context is unavailable at the module's Go 1.23 floor.
+		ctrl, err := s.Run(context.Background())
+		require.EqualError(t, err,
+			"invalid file descriptor in \""+test.spec+"\": listener descriptor "+test.fd+
+				" conflicts with standard streams")
+		require.Nil(t, ctrl)
+	}
 }
