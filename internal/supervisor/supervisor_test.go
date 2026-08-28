@@ -60,8 +60,13 @@ func TestRemoveExistingUnixSocketRejectsNonSocketEntries(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "server.sock")
 		require.NoError(t, os.Mkdir(path, 0700))
 
-		err := removeExistingUnixSocket(path)
+		renameCalled := false
+		err := removeExistingUnixSocketWithRename(path, func(string, string) error {
+			renameCalled = true
+			return nil
+		})
 		require.ErrorContains(t, err, "is not a socket")
+		require.False(t, renameCalled)
 		info, statErr := os.Stat(path)
 		require.NoError(t, statErr)
 		require.True(t, info.IsDir())

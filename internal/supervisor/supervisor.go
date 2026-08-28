@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -191,6 +192,21 @@ func removeExistingUnixSocket(path string) error {
 }
 
 func removeExistingUnixSocketWithRename(path string, renamePath func(string, string) error) error {
+	if runtime.GOOS == "linux" && strings.HasPrefix(path, "@") {
+		return nil
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect unix socket path %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("unix socket path %q is not a socket", path)
+	}
+
 	quarantineDir, err := os.MkdirTemp(filepath.Dir(path), ".server-starter-socket-")
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -210,7 +226,7 @@ func removeExistingUnixSocketWithRename(path string, renamePath func(string, str
 		return fmt.Errorf("move unix socket path %q: %w", path, err)
 	}
 
-	info, err := os.Lstat(quarantinePath)
+	info, err = os.Lstat(quarantinePath)
 	if err != nil {
 		return fmt.Errorf("inspect moved unix socket path %q, preserved at %q: %w", path, quarantinePath, err)
 	}
