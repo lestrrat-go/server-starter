@@ -25,7 +25,11 @@ func TestInvalidELFInterpreterStopsWorkerStartRetries(t *testing.T) {
 }
 
 func TestUnrelatedEIODoesNotStopWorkerStartRetries(t *testing.T) {
-	require.False(t, terminalWorkerStartError(syscall.EIO))
+	executable, err := os.Executable()
+	require.NoError(t, err)
+
+	startErr := &os.PathError{Op: "fork/exec", Path: executable, Err: syscall.EIO}
+	require.False(t, terminalWorkerStartError(executable, "", startErr))
 }
 
 func rewriteELFInterpreter(t *testing.T, source, destination, interpreter string) {

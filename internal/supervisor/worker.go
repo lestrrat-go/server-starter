@@ -54,7 +54,7 @@ func (s workerStartupState) waitForProbe(ctx context.Context, interval time.Dura
 	}
 }
 
-func terminalWorkerStartError(err error) bool {
+func terminalWorkerStartError(command, dir string, err error) bool {
 	return errors.Is(err, exec.ErrNotFound) ||
 		errors.Is(err, exec.ErrDot) ||
 		errors.Is(err, os.ErrNotExist) ||
@@ -65,7 +65,7 @@ func terminalWorkerStartError(err error) bool {
 		errors.Is(err, syscall.ELOOP) ||
 		errors.Is(err, syscall.ENAMETOOLONG) ||
 		errors.Is(err, syscall.E2BIG) ||
-		platformTerminalWorkerStartError(err)
+		platformTerminalWorkerStartError(command, dir, err)
 }
 
 func workerStartRetryDelay(interval time.Duration) time.Duration {
@@ -270,7 +270,7 @@ func (rs *runState) startWorker(
 		cmd.ExtraFiles = nil
 		if startErr != nil {
 			fmt.Fprintf(rs.cfg.stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
-			if terminalWorkerStartError(startErr) {
+			if terminalWorkerStartError(cmd.Path, cmd.Dir, startErr) {
 				return nil, fmt.Errorf("failed to start worker %s: %w", cmd.Path, startErr)
 			}
 			if !waitForWorkerStartRetry(ctx, rs.cfg.interval) {

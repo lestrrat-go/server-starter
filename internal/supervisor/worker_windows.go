@@ -8,7 +8,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func platformTerminalWorkerStartError(err error) bool {
+func platformTerminalWorkerStartError(_, _ string, err error) bool {
 	return errors.Is(err, windows.ERROR_BAD_EXE_FORMAT) ||
 		errors.Is(err, windows.ERROR_DIRECTORY) ||
 		errors.Is(err, windows.ERROR_INVALID_PARAMETER) ||

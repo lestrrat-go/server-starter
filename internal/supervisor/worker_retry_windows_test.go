@@ -27,7 +27,7 @@ func TestTerminalWorkerStartErrorRecognizesWindowsLaunchErrors(t *testing.T) {
 				Err:  startErr,
 			}
 
-			require.True(t, terminalWorkerStartError(err))
+			require.True(t, terminalWorkerStartError("worker.exe", "", err))
 		})
 	}
 }

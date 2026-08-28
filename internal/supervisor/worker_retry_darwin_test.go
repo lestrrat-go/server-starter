@@ -28,7 +28,7 @@ func TestTerminalWorkerStartErrorRecognizesDarwinLaunchErrors(t *testing.T) {
 				Err:  startErr,
 			}
 
-			require.True(t, terminalWorkerStartError(err))
+			require.True(t, terminalWorkerStartError("worker", "", err))
 		})
 	}
 }

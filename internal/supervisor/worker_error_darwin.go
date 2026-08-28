@@ -7,7 +7,7 @@ import (
 	"syscall"
 )
 
-func platformTerminalWorkerStartError(err error) bool {
+func platformTerminalWorkerStartError(_, _ string, err error) bool {
 	return errors.Is(err, syscall.EBADEXEC) ||
 		errors.Is(err, syscall.EBADARCH) ||
 		errors.Is(err, syscall.ESHLIBVERS) ||

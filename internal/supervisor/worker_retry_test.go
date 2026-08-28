@@ -34,7 +34,7 @@ func TestTerminalWorkerStartError(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, test.want, terminalWorkerStartError(test.err))
+			require.Equal(t, test.want, terminalWorkerStartError("", "", test.err))
 		})
 	}
 }

@@ -2,6 +2,6 @@
 
 package supervisor
 
-func platformTerminalWorkerStartError(error) bool {
+func platformTerminalWorkerStartError(string, string, error) bool {
 	return false
 }
