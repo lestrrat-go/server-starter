@@ -1,4 +1,4 @@
-package starter
+package supervisor
 
 import "golang.org/x/sys/windows"
 

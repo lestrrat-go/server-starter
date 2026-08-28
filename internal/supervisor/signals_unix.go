@@ -1,6 +1,6 @@
 //go:build !windows
 
-package starter
+package supervisor
 
 import (
 	"syscall"

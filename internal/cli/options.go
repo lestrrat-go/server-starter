@@ -4,7 +4,7 @@ import (
 	"os"
 	"time"
 
-	starter "github.com/lestrrat-go/server-starter/v2"
+	"github.com/lestrrat-go/server-starter/v2/internal/supervisor"
 )
 
 const version = "0.0.2"
@@ -39,6 +39,6 @@ func (o options) Interval() time.Duration { return time.Duration(o.OptInterval) 
 func (o options) PidFile() string         { return o.OptPidFile }
 func (o options) Ports() []string         { return o.OptPorts }
 func (o options) Paths() []string         { return o.OptPaths }
-func (o options) SignalOnHUP() os.Signal  { return starter.SigFromName(o.OptSignalOnHUP) }
-func (o options) SignalOnTERM() os.Signal { return starter.SigFromName(o.OptSignalOnTERM) }
+func (o options) SignalOnHUP() os.Signal  { return supervisor.SigFromName(o.OptSignalOnHUP) }
+func (o options) SignalOnTERM() os.Signal { return supervisor.SigFromName(o.OptSignalOnTERM) }
 func (o options) StatusFile() string      { return o.OptStatusFile }

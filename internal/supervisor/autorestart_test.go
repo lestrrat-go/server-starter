@@ -1,4 +1,4 @@
-package starter
+package supervisor
 
 // This test lives in the internal `starter` package (not `starter_test`)
 // because getKillOldDelay is unexported.
