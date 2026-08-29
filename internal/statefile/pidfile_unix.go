@@ -55,7 +55,7 @@ func (p *runningPIDPath) open() (*os.File, error) {
 	fd, err := unix.Openat(
 		int(p.parent.Fd()),
 		p.name,
-		unix.O_RDWR|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC,
+		unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC,
 		0,
 	)
 	if err != nil {
@@ -93,31 +93,69 @@ func prepareRunningPIDPath(path string) (*runningPIDPath, error) {
 		return nil, fmt.Errorf("failed to resolve pid file %q: %w", path, err)
 	}
 	parentPath := filepath.Dir(absPath)
-	resolvedParent, err := filepath.EvalSymlinks(parentPath)
+	parent, err := openDirectoryPath(parentPath, path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve pid file %q parent directory: %w", path, err)
-	}
-	parent, err := openDirectoryPath(resolvedParent)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open pid file %q parent directory %q: %w", path, resolvedParent, err)
-	}
-	if err := validatePIDControlDirectory(parent, path, resolvedParent); err != nil {
-		_ = parent.Close()
-		return nil, err
+		return nil, fmt.Errorf("failed to open pid file %q parent directory %q: %w", path, parentPath, err)
 	}
 	return &runningPIDPath{path: path, parent: parent, name: filepath.Base(absPath)}, nil
 }
 
-func openDirectoryPath(path string) (*os.File, error) {
+func openDirectoryPath(path, controlPath string) (*os.File, error) {
 	current, err := os.OpenFile(string(os.PathSeparator), os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}
-	cleanPath := strings.TrimPrefix(filepath.Clean(path), string(os.PathSeparator))
-	if cleanPath == "" {
-		return current, nil
+	directories := []*os.File{current}
+	closeDirectories := func() {
+		for _, directory := range directories {
+			_ = directory.Close()
+		}
 	}
-	for _, name := range strings.Split(cleanPath, string(os.PathSeparator)) {
+	components := pathComponents(path)
+	symlinks := 0
+	for len(components) > 0 {
+		name := components[0]
+		components = components[1:]
+		if name == ".." {
+			if len(directories) > 1 {
+				_ = directories[len(directories)-1].Close()
+				directories = directories[:len(directories)-1]
+				current = directories[len(directories)-1]
+			}
+			continue
+		}
+
+		var entry unix.Stat_t
+		if err := unix.Fstatat(int(current.Fd()), name, &entry, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			closeDirectories()
+			return nil, err
+		}
+		if err := validatePIDControlPathEntry(current, entry.Uid, controlPath, path); err != nil {
+			closeDirectories()
+			return nil, err
+		}
+		if entry.Mode&unix.S_IFMT == unix.S_IFLNK {
+			symlinks++
+			if symlinks > 40 {
+				closeDirectories()
+				return nil, fmt.Errorf("too many symbolic links in %q", path)
+			}
+			target, readErr := readDirectoryLink(current, name)
+			if readErr != nil {
+				closeDirectories()
+				return nil, readErr
+			}
+			if filepath.IsAbs(target) {
+				for len(directories) > 1 {
+					_ = directories[len(directories)-1].Close()
+					directories = directories[:len(directories)-1]
+				}
+				current = directories[0]
+			}
+			components = append(pathComponents(target), components...)
+			continue
+		}
+
 		fd, openErr := unix.Openat(
 			int(current.Fd()),
 			name,
@@ -125,30 +163,83 @@ func openDirectoryPath(path string) (*os.File, error) {
 			0,
 		)
 		if openErr != nil {
-			_ = current.Close()
+			closeDirectories()
 			return nil, openErr
 		}
 		next := os.NewFile(uintptr(fd), name)
 		if next == nil {
 			_ = unix.Close(fd)
-			_ = current.Close()
+			closeDirectories()
 			return nil, fmt.Errorf("failed to retain directory %q", name)
 		}
 		info, statErr := next.Stat()
 		if statErr != nil {
 			_ = next.Close()
-			_ = current.Close()
+			closeDirectories()
 			return nil, statErr
 		}
 		if !info.IsDir() {
 			_ = next.Close()
-			_ = current.Close()
+			closeDirectories()
 			return nil, fmt.Errorf("path component %q is not a directory", name)
 		}
-		_ = current.Close()
 		current = next
+		directories = append(directories, current)
+	}
+	if err := validatePIDControlDirectory(current, controlPath, path); err != nil {
+		closeDirectories()
+		return nil, err
+	}
+	for len(directories) > 1 {
+		_ = directories[0].Close()
+		directories = directories[1:]
 	}
 	return current, nil
+}
+
+func pathComponents(path string) []string {
+	parts := strings.Split(path, string(os.PathSeparator))
+	components := parts[:0]
+	for _, part := range parts {
+		if part != "" && part != "." {
+			components = append(components, part)
+		}
+	}
+	return components
+}
+
+func readDirectoryLink(parent *os.File, name string) (string, error) {
+	buffer := make([]byte, 4096)
+	n, err := unix.Readlinkat(int(parent.Fd()), name, buffer)
+	if err != nil {
+		return "", err
+	}
+	if n == len(buffer) {
+		return "", fmt.Errorf("symbolic link %q is too long", name)
+	}
+	return string(buffer[:n]), nil
+}
+
+func validatePIDControlPathEntry(parent *os.File, entryUID uint32, path, parentPath string) error {
+	info, err := parent.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to inspect pid file %q ancestor directory %q: %w", path, parentPath, err)
+	}
+	trustedUID := uint32(os.Geteuid())
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("failed to inspect owner of pid file %q ancestor directory %q", path, parentPath)
+	}
+	if stat.Uid != 0 && stat.Uid != trustedUID {
+		return fmt.Errorf("pid file %q has untrusted ancestor directory %q owned by uid %d", path, parentPath, stat.Uid)
+	}
+	if info.Mode().Perm()&0022 == 0 {
+		return nil
+	}
+	if info.Mode()&os.ModeSticky != 0 && (entryUID == 0 || entryUID == trustedUID) {
+		return nil
+	}
+	return fmt.Errorf("pid file %q ancestor directory %q allows untrusted replacement", path, parentPath)
 }
 
 // validatePIDControlDirectory requires the control pathname to live in a
@@ -236,13 +327,13 @@ func closePIDFile(f *os.File, path string) error {
 	return errors.Join(removeErr, f.Close())
 }
 
-// TryLock attempts to take an exclusive, non-blocking lock on f. It is used
+// TryLock attempts to take a shared, non-blocking lock on f. It is used
 // by control.Stop to poll for the supervisor having exited: once the
 // supervisor process dies, its lock on the pid file is released and this call
 // starts succeeding. It returns syscall.EWOULDBLOCK while another process
 // holds the lock; any other error means the lock check failed.
 func TryLock(f *os.File) error {
-	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
 }
 
 func processIsLive(pid int) bool {

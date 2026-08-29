@@ -111,3 +111,16 @@ func TestPreparedRunningPIDPathRetainsResolvedParent(t *testing.T) {
 	require.Equal(t, "101\n", string(data[:n]))
 	require.NoError(t, preparedPath.validate(f))
 }
+
+func TestPrepareRunningPIDPathRejectsReplaceableAncestor(t *testing.T) {
+	dir := t.TempDir()
+	replaceable := filepath.Join(dir, "replaceable")
+	parent := filepath.Join(replaceable, "supervisor")
+	require.NoError(t, os.Mkdir(replaceable, 0777))
+	require.NoError(t, os.Chmod(replaceable, 0777))
+	require.NoError(t, os.Mkdir(parent, 0700))
+
+	preparedPath, err := prepareRunningPIDPath(filepath.Join(parent, "server.pid"))
+	require.ErrorContains(t, err, "allows untrusted replacement")
+	require.Nil(t, preparedPath)
+}
