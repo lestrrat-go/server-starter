@@ -5,11 +5,15 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 const failingReplacementWorkerTxt = `package main
@@ -67,6 +71,46 @@ func waitForFile(t *testing.T, path string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", path)
+}
+
+func TestRunReturnsInitialWorkerStartError(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing")
+	var stderr syncBuffer
+	sd, err := NewStarter(&config{
+		command: "/bin/sh",
+		args:    []string{"-c", "exec sleep 30"},
+		dir:     dir,
+		stderr:  &stderr,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	if ctrl != nil {
+		// Let the historical retry loop finish before asserting, so a
+		// regression does not leave a busy goroutine behind in the suite.
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) && !strings.Contains(stderr.String(), "failed to exec") {
+			time.Sleep(20 * time.Millisecond)
+		}
+		require.Contains(t, stderr.String(), "failed to exec")
+		require.NoError(t, os.Mkdir(dir, 0700))
+		cancel()
+		select {
+		case <-ctrl.Done():
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for Run() to return")
+		}
+	}
+
+	require.Nil(t, ctrl)
+	var pathErr *os.PathError
+	require.ErrorAs(t, err, &pathErr)
+	require.Equal(t, "chdir", pathErr.Op)
+	require.Equal(t, dir, pathErr.Path)
+	require.ErrorIs(t, pathErr.Err, fs.ErrNotExist)
 }
 
 func TestSIGTERMDuringFailedReplacementDoesNotPanic(t *testing.T) {

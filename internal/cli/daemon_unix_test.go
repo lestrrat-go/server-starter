@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +56,7 @@ func TestRunDaemonizeReportsStartupFailures(t *testing.T) {
 	buildOutput, err := build.CombinedOutput()
 	require.NoError(t, err, string(buildOutput))
 
+	missingWorkerDir := filepath.Join(t.TempDir(), "missing")
 	testCases := []struct {
 		name string
 		args []string
@@ -74,6 +76,11 @@ func TestRunDaemonizeReportsStartupFailures(t *testing.T) {
 			name: "listener configuration is invalid",
 			args: []string{"--daemonize", "--port", "not-a-port", "--", os.Args[0]},
 			want: "daemon startup failed: invalid port",
+		},
+		{
+			name: "worker directory does not exist",
+			args: []string{"--daemonize", "--dir", missingWorkerDir, "--", "/bin/true"},
+			want: fmt.Sprintf("daemon startup failed: chdir %s: no such file or directory", missingWorkerDir),
 		},
 	}
 	for _, tc := range testCases {

@@ -264,8 +264,8 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Run's setup (binding every listener) is synchronous, so the ports are
-	// already live by the time Run returns; no readiness handshake needed.
+	// Run waits for listener binding and initial worker startup, so the ports
+	// and the worker are already live when it returns.
 	ctrl, err := sd.Run(ctx)
 	if err != nil {
 		t.Fatalf("sd.Run() failed: %s", err)

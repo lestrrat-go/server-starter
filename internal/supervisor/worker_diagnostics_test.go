@@ -48,13 +48,13 @@ func (b *syncBuffer) String() string {
 // have failed to start" diagnostic (issue #22).
 //
 // reportFailedStart is exercised directly, with the reaped-status and
-// ProcessState-status inputs supplied by hand, rather than through a full
-// supervisor Run(): TestFailedStartReportsReapedExitStatus below already
-// covers the real end-to-end path (the one that actually happens on Unix,
-// where findWorker's own WNOHANG wait4() reaps a worker that dies within
-// the startup interval, consuming the exit status before startWorker's
-// later cmd.Wait() can collect it -- see the doc comment on findWorker in
-// worker_unix.go and on reportFailedStart in worker.go).
+// ProcessState-status inputs supplied by hand, rather than through a real
+// startWorker call: TestFailedStartReportsReapedExitStatus below already covers
+// that path (the one that actually happens on Unix, where findWorker's own
+// WNOHANG wait4() reaps a worker that dies within the startup interval,
+// consuming the exit status before startWorker's later cmd.Wait() can collect
+// it -- see the doc comment on findWorker in worker_unix.go and on
+// reportFailedStart in worker.go).
 //
 // A real *os.ProcessState is used for the ProcessState-status case rather
 // than a fabricated one -- the type has no public constructor, so the only
@@ -112,8 +112,12 @@ func TestFailedStartReportsReapedExitStatus(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ctrl, err := sd.Run(ctx)
-	require.NoError(t, err)
+	done := make(chan struct{})
+	workerCh := make(chan processState, 1)
+	go func() {
+		defer close(done)
+		(&runState{cfg: sd}).startWorker(ctx, workerCh, nil, nil)
+	}()
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) && !strings.Contains(buf.String(), "seems to have failed to start") {
@@ -122,9 +126,9 @@ func TestFailedStartReportsReapedExitStatus(t *testing.T) {
 
 	cancel()
 	select {
-	case <-ctrl.Done():
+	case <-done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("timed out waiting for Run() to return")
+		t.Fatal("timed out waiting for startWorker() to return")
 	}
 
 	got := buf.String()
@@ -144,6 +148,7 @@ func TestHangupReportsRealOldWorkerCount(t *testing.T) {
 	var buf syncBuffer
 	sd, err := NewStarter(&config{
 		command:    buildStubbornWorker(t, dir),
+		interval:   1,
 		statusfile: statusFile,
 		// The worker ignores USR1, so the old worker survives the hangup
 		// and stays in rs.oldWorkers, giving num_old_workers something

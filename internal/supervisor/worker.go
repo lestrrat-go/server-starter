@@ -89,12 +89,14 @@ func reportFailedStart(w io.Writer, pid int, reapedStatus syscall.WaitStatus, re
 // startWorker starts the actual command. It returns a non-nil error only
 // when its non-empty listener set cannot be formatted into a valid
 // SERVER_STARTER_PORT spec (see starter.FormatPorts); that is a permanent
-// misconfiguration, not a transient exec failure, so it is reported instead
-// of retried.
+// misconfiguration, not a transient exec failure, so it is reported instead of
+// retried. startup is non-nil only for the initial worker: it receives the exact
+// command-start error, or nil after the worker passes its startup check.
 func (rs *runState) startWorker(
 	ctx context.Context,
 	ch chan<- processState,
 	done <-chan struct{},
+	startup chan<- error,
 ) (*os.Process, error) {
 	// Don't give up until we're running.
 	for {
@@ -196,6 +198,10 @@ func (rs *runState) startWorker(
 		}
 		if startErr != nil {
 			fmt.Fprintf(rs.cfg.stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
+			if startup != nil {
+				startup <- startErr
+				return nil, nil
+			}
 		} else {
 			// Save pid...
 			pid = cmd.Process.Pid
@@ -235,6 +241,9 @@ func (rs *runState) startWorker(
 					case <-done:
 					}
 				}()
+				if startup != nil {
+					startup <- nil
+				}
 				// Bail out
 				return p, nil
 			}

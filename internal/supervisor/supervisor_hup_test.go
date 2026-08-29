@@ -271,6 +271,7 @@ func TestHUPCoalescesEntireDrain(t *testing.T) {
 
 	sd, err := NewStarter(&config{
 		command:    buildStubbornWorker(t, dir),
+		interval:   1,
 		statusfile: statusFile,
 		// The worker ignores USR1, so the first old worker stays live while
 		// the second HUP is processed.
