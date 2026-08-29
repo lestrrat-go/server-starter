@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/lestrrat-go/server-starter/v2/internal/portwire"
 )
 
 // Being lazy here...
@@ -82,6 +84,9 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 // that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")
 // is read as TCP, not as a unix socket. Pass such sockets as absolute
 // paths, or prefix them with "./" to disambiguate.
+//
+// TCP and UDP ports must be between 0 and 65535. Inherited file descriptors
+// must be at least 3 so they do not overlap the standard streams.
 func ParsePorts(spec string) (List, error) {
 	if spec == "" {
 		return nil, ErrNoListeningTarget
@@ -100,6 +105,9 @@ func ParsePorts(spec string) (List, error) {
 		fd, err := strconv.ParseUint(fdString, 10, 0)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: %s", pairString, err)
+		}
+		if !portwire.ValidInheritedFD(fd) {
+			return nil, fmt.Errorf("failed to parse '%s' as listen target: file descriptor must be at least 3", pairString)
 		}
 
 		if strings.ContainsRune(hostPort, '/') {
@@ -122,6 +130,9 @@ func ParsePorts(spec string) (List, error) {
 			if err != nil {
 				return nil, err
 			}
+			if !portwire.ValidPort(port) {
+				return nil, fmt.Errorf("invalid port in %q", pairString)
+			}
 
 			if udp {
 				ret[i] = UDPListener{Addr: strings.Trim(matches[1], "[]"), Port: int(port), fd: uintptr(fd)}
@@ -132,6 +143,9 @@ func ParsePorts(spec string) (List, error) {
 			port, err := strconv.ParseInt(match, 10, 0)
 			if err != nil {
 				return nil, err
+			}
+			if !portwire.ValidPort(port) {
+				return nil, fmt.Errorf("invalid port in %q", pairString)
 			}
 
 			if udp {

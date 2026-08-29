@@ -2,6 +2,7 @@ package starter_test
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 
@@ -160,6 +161,31 @@ func TestParsePorts(t *testing.T) {
 		require.Equal(t, starter.NewUDPListener("", 8080, 3), got[1])
 		require.Equal(t, starter.NewTCPListener("10.0.0.5", 9090, 4), got[2])
 		require.Equal(t, starter.NewUnixListener("/foo/bar.sock", 6), got[3])
+	})
+
+	t.Run("port boundaries", func(t *testing.T) {
+		for _, spec := range []string{"0=3", "65535=3"} {
+			got, err := starter.ParsePorts(spec)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+		}
+	})
+
+	t.Run("port above range", func(t *testing.T) {
+		for _, spec := range []string{"65536=3", "99999=3", "127.0.0.1:65536=3"} {
+			got, err := starter.ParsePorts(spec)
+			require.EqualError(t, err, fmt.Sprintf("invalid port in %q", spec))
+			require.Nil(t, got)
+		}
+	})
+
+	t.Run("descriptor overlaps standard streams", func(t *testing.T) {
+		for _, spec := range []string{"8080=0", "8080=1", "8080=2"} {
+			got, err := starter.ParsePorts(spec)
+			require.EqualError(t, err,
+				fmt.Sprintf("failed to parse '%s' as listen target: file descriptor must be at least 3", spec))
+			require.Nil(t, got)
+		}
 	})
 }
 

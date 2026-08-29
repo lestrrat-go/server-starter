@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	starter "github.com/lestrrat-go/server-starter/v2"
+	"github.com/lestrrat-go/server-starter/v2/internal/portwire"
 )
 
 const (
@@ -99,7 +100,7 @@ func parsePortTarget(raw string) (portTarget, error) {
 		portText = strings.TrimPrefix(portText, "u")
 	}
 	port, err := strconv.Atoi(portText)
-	if err != nil || port < 0 || port > 65535 {
+	if err != nil || !portwire.ValidPort(int64(port)) {
 		return portTarget{}, fmt.Errorf("invalid port in %q", raw)
 	}
 	network := "tcp4"
@@ -150,7 +151,7 @@ func validateListenerWireFormat(targets []portTarget, paths []string, descriptor
 }
 
 func validateExplicitListenerFD(fd int) error {
-	if fd < 3 {
+	if fd < 0 || !portwire.ValidInheritedFD(uint64(fd)) {
 		return fmt.Errorf("listener descriptor %d conflicts with standard streams", fd)
 	}
 	if fd > maxInheritedListenerFD {
