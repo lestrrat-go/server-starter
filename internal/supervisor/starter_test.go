@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -35,21 +36,31 @@ import (
 )
 
 func main() {
-	// The first arg, when present, is a file this worker writes its own
-	// SERVER_STARTER_PORT into. Tests use this to observe the child's view
-	// of the environment without relying on the supervisor process's own
-	// environment, which the supervisor must never mutate.
-	if len(os.Args) > 1 {
-		if err := os.WriteFile(os.Args[1], []byte(os.Getenv("SERVER_STARTER_PORT")), 0600); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to write port file: %s\n", err)
-			os.Exit(1)
-		}
-	}
-
 	listeners, err := starter.ListenAll()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to listen: %s\n", err)
 		os.Exit(1)
+	}
+
+	// The first arg, when present, is a report containing this worker's
+	// SERVER_STARTER_PORT followed by each inherited listener's actual
+	// address. Writing through a rename lets the parent treat the file as a
+	// readiness signal without observing partial contents.
+	if len(os.Args) > 1 {
+		var report strings.Builder
+		fmt.Fprintln(&report, os.Getenv("SERVER_STARTER_PORT"))
+		for _, listener := range listeners {
+			fmt.Fprintln(&report, listener.Addr().String())
+		}
+		tmp := os.Args[1] + ".tmp"
+		if err := os.WriteFile(tmp, []byte(report.String()), 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to write listener report: %s\n", err)
+			os.Exit(1)
+		}
+		if err := os.Rename(tmp, os.Args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to publish listener report: %s\n", err)
+			os.Exit(1)
+		}
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +131,25 @@ func (c config) KillOldDelay() time.Duration        { return c.killOldDelay }
 func (c config) Stdout() io.Writer                  { return c.stdout }
 func (c config) Stderr() io.Writer                  { return c.stderr }
 
+func readFileEventually(t *testing.T, path string) []byte {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return data
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed to read %s: %s", path, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for %s", path)
+	return nil
+}
+
 func TestRun(t *testing.T) {
 	dir := t.TempDir()
 
@@ -171,29 +201,7 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 		return
 	}
 
-	reservations := make([]net.Listener, 0, 2)
-	defer func() {
-		for _, listener := range reservations {
-			_ = listener.Close()
-		}
-	}()
-
-	ports := make([]string, 0, cap(reservations))
-	for range cap(reservations) {
-		listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp4", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("failed to reserve loopback port: %s", err)
-		}
-		reservations = append(reservations, listener)
-		ports = append(ports, listener.Addr().String())
-	}
-	for _, listener := range reservations {
-		if err := listener.Close(); err != nil {
-			t.Fatalf("failed to release loopback port: %s", err)
-		}
-	}
-	reservations = nil
-
+	ports := []string{"127.0.0.1:0", "127.0.0.1:0"}
 	portFile := filepath.Join(t.TempDir(), "worker-port.txt")
 	sd, err := NewStarter(&config{
 		ports:   ports,
@@ -222,10 +230,19 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 		t.Fatalf("sd.Run() failed: %s", err)
 	}
 
-	for _, port := range ports {
-		conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", port)
+	workerReport := strings.Split(strings.TrimSpace(string(readFileEventually(t, portFile))), "\n")
+	if len(workerReport) != len(ports)+1 {
+		t.Fatalf("worker report has %d lines, want %d: %q", len(workerReport), len(ports)+1, workerReport)
+	}
+	seenAddresses := make(map[string]struct{}, len(ports))
+	for _, address := range workerReport[1:] {
+		if _, exists := seenAddresses[address]; exists {
+			t.Fatalf("worker reported duplicate listener address %q", address)
+		}
+		seenAddresses[address] = struct{}{}
+		conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", address)
 		if err != nil {
-			t.Errorf("error connecting to port %q: %s", port, err)
+			t.Errorf("error connecting to listener %q: %s", address, err)
 			continue
 		}
 		_ = conn.Close()
@@ -251,11 +268,8 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 
 	// The child's view, not the supervisor's: the worker wrote its own
 	// SERVER_STARTER_PORT to portFile at startup.
-	childPort, err := os.ReadFile(portFile)
-	if err != nil {
-		t.Fatalf("failed to read worker port file: %s", err)
-	}
-	if !pattern.Match(childPort) {
+	childPort := workerReport[0]
+	if !pattern.MatchString(childPort) {
 		t.Errorf("child SERVER_STARTER_PORT: expected '%s', but got '%s'", pattern, childPort)
 	}
 }
