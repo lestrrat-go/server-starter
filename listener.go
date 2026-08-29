@@ -110,7 +110,30 @@ func (l TCPListener) Fd() uintptr {
 
 // Listen creates a new Listener
 func (l TCPListener) Listen() (net.Listener, error) {
-	return net.FileListener(os.NewFile(l.Fd(), net.JoinHostPort(l.Addr, strconv.Itoa(l.Port))))
+	fd := l.Fd()
+	file := os.NewFile(fd, net.JoinHostPort(l.Addr, strconv.Itoa(l.Port)))
+	if file == nil {
+		return nil, fmt.Errorf("invalid TCP listener file descriptor %d", fd)
+	}
+
+	listener, err := net.FileListener(file)
+	closeErr := closeSourceDescriptor(file, fd)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to create TCP listener from file descriptor %d: %w",
+			fd,
+			errors.Join(err, closeErr),
+		)
+	}
+	if closeErr != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf(
+			"failed to close TCP listener file descriptor %d after conversion: %w",
+			fd,
+			closeErr,
+		)
+	}
+	return listener, nil
 }
 
 // String returns a human-readable "uspec=fd" rendering of l. It is a
@@ -138,7 +161,30 @@ func (l UDPListener) Listen() (net.Listener, error) {
 
 // ListenPacket creates a packet connection from the inherited descriptor.
 func (l UDPListener) ListenPacket() (net.PacketConn, error) {
-	return net.FilePacketConn(os.NewFile(l.Fd(), net.JoinHostPort(l.Addr, strconv.Itoa(l.Port))))
+	fd := l.Fd()
+	file := os.NewFile(fd, net.JoinHostPort(l.Addr, strconv.Itoa(l.Port)))
+	if file == nil {
+		return nil, fmt.Errorf("invalid UDP listener file descriptor %d", fd)
+	}
+
+	packetConn, err := net.FilePacketConn(file)
+	closeErr := closeSourceDescriptor(file, fd)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to create UDP listener from file descriptor %d: %w",
+			fd,
+			errors.Join(err, closeErr),
+		)
+	}
+	if closeErr != nil {
+		_ = packetConn.Close()
+		return nil, fmt.Errorf(
+			"failed to close UDP listener file descriptor %d after conversion: %w",
+			fd,
+			closeErr,
+		)
+	}
+	return packetConn, nil
 }
 
 // String returns a human-readable "path=fd" rendering of l. It is a
@@ -157,5 +203,28 @@ func (l UnixListener) Fd() uintptr {
 
 // Listen creates a new Listener
 func (l UnixListener) Listen() (net.Listener, error) {
-	return net.FileListener(os.NewFile(l.Fd(), l.Path))
+	fd := l.Fd()
+	file := os.NewFile(fd, l.Path)
+	if file == nil {
+		return nil, fmt.Errorf("invalid unix listener file descriptor %d", fd)
+	}
+
+	listener, err := net.FileListener(file)
+	closeErr := closeSourceDescriptor(file, fd)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to create unix listener from file descriptor %d: %w",
+			fd,
+			errors.Join(err, closeErr),
+		)
+	}
+	if closeErr != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf(
+			"failed to close unix listener file descriptor %d after conversion: %w",
+			fd,
+			closeErr,
+		)
+	}
+	return listener, nil
 }

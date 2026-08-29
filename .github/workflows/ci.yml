@@ -82,6 +82,23 @@ jobs:
       - name: Run PID file tests
         run: go test -timeout 1m -run '^(TestAcquirePIDFile|TestCurrentWindowsLock)' ./internal/statefile
 
+  windows-listener-conversion:
+    needs: lint
+    runs-on: windows-latest
+    name: Test listener conversion (Windows)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Run Windows listener conversion tests
+        run: go test -timeout 5m -run '^TestWindowsListenerConversionClosesSourceSocket$' .
+
   verify:
     needs: lint
     runs-on: ubuntu-latest
@@ -118,8 +135,8 @@ jobs:
           go build ./cmd/start_server
           rm start_server
 
-      # These compile-only checks cover the whole module on Windows and macOS.
-      # The focused Windows PID file test above executes its platform lock path.
+      # Compile-only checks preserve whole-package build coverage beyond the
+      # focused Windows tests above. There is no macOS test runner here.
       - name: Cross-compile check (windows)
         run: GOOS=windows go build ./...
 
