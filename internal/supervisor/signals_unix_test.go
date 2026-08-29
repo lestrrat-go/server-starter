@@ -16,4 +16,5 @@ func TestSIGXFSZCanonicalName(t *testing.T) {
 func TestSigFromNameRecognizesXFSZ(t *testing.T) {
 	require.Equal(t, syscall.SIGXFSZ, SigFromName("XFSZ"))
 	require.Equal(t, syscall.SIGXFSZ, SigFromName("SIGXFSZ"))
+	require.Equal(t, syscall.SIGXFSZ, SigFromName("GXFSZ"))
 }
