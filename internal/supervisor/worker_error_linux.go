@@ -39,13 +39,28 @@ func platformTerminalWorkerStartError(command, dir string, err error) bool {
 }
 
 func malformedELF(reader io.ReaderAt) bool {
-	_, err := elf.NewFile(reader)
-	if err == nil {
+	trackedReader := &elfReaderAt{ReaderAt: reader}
+	_, err := elf.NewFile(trackedReader)
+	if err == nil || trackedReader.readFailed {
 		return false
 	}
 
 	var formatErr *elf.FormatError
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &formatErr)
+}
+
+type elfReaderAt struct {
+	io.ReaderAt
+	readFailed bool
+}
+
+func (r *elfReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	n, err := r.ReaderAt.ReadAt(p, off)
+	// EOF reports readable truncation. Other errors make the inspection inconclusive.
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		r.readFailed = true
+	}
+	return n, err
 }
 
 // workerELFInterpreter returns the interpreter path recorded in a readable
