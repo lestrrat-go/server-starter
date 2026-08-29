@@ -19,10 +19,15 @@ const pollInterval = 20 * time.Millisecond
 // to exit. The caller controls how long to wait via ctx; a typical caller
 // wraps ctx with a timeout.
 func Stop(ctx context.Context, pidPath string) error {
-	pid, err := statefile.ReadPID(ctx, pidPath)
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("stop cancelled before signalling supervisor: %w", err)
+	}
+	running, err := statefile.OpenRunningPID(pidPath)
 	if err != nil {
 		return err
 	}
+	defer running.Close()
+	pid := running.PID()
 	if err := signalProcess(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
 	}
@@ -39,16 +44,18 @@ func Stop(ctx context.Context, pidPath string) error {
 			return fmt.Errorf("timed out waiting for process %d to stop: %w", pid, ctx.Err())
 		case <-ticker.C:
 		}
-		stopped, err := processStopped(pidPath, statefile.TryLock)
+		exited, err := running.Exited()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to check process %d: %w", pid, err)
 		}
-		if stopped {
+		if exited {
 			return nil
 		}
 	}
 }
 
+// processStopped is retained for the polling unit tests and for callers that
+// need to check a legacy lock without opening a RunningPID handle.
 func processStopped(pidPath string, tryLock func(*os.File) error) (bool, error) {
 	f, err := os.OpenFile(pidPath, os.O_RDWR, 0)
 	if errors.Is(err, os.ErrNotExist) {
@@ -57,7 +64,6 @@ func processStopped(pidPath string, tryLock func(*os.File) error) (bool, error) 
 	if err != nil {
 		return false, fmt.Errorf("failed to open pid file %q while waiting for process to stop: %w", pidPath, err)
 	}
-
 	lockErr := tryLock(f)
 	closeErr := f.Close()
 	if lockErr != nil && !errors.Is(lockErr, syscall.EWOULDBLOCK) {
@@ -77,10 +83,15 @@ func Restart(ctx context.Context, pidPath, statusPath string) error {
 	if statusPath == "" {
 		return fmt.Errorf("--status-file is required with --restart")
 	}
-	pid, err := statefile.ReadPID(ctx, pidPath)
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("restart cancelled before signalling supervisor: %w", err)
+	}
+	running, err := statefile.OpenRunningPID(pidPath)
 	if err != nil {
 		return err
 	}
+	defer running.Close()
+	pid := running.PID()
 	previous, err := statefile.ReadStatus(ctx, statusPath)
 	if err != nil {
 		return fmt.Errorf("failed to read status file %q before restart: %w", statusPath, err)
