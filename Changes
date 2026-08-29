@@ -25,6 +25,9 @@ Changes
      SERVER_STARTER_PORT. The parser keeps unambiguous legacy UDP forms, but
      treats ordinary hostnames beginning with "u" as TCP targets and preserves
      that leading "u" when the legacy host:uPORT suffix marks a UDP target
+   - NewUnixListener and UnixListener.String prefix relative Unix paths that
+     look like TCP or UDP targets with "./", preserving their listener type
+     across SERVER_STARTER_PORT round trips
    - Three deliberate behavior changes, introduced in v2, relative to the
      original Perl Server::Starter:
      * On receiving INT or QUIT, the supervisor now sends the worker the

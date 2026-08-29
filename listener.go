@@ -88,10 +88,12 @@ type UnixListener struct {
 }
 
 // NewUnixListener creates a UnixListener for path and the inherited file
-// descriptor fd. path is taken verbatim, with no normalisation. FormatPorts
-// rejects path values containing the reserved wire delimiters ';' or '='.
+// descriptor fd. Relative paths that ParsePorts would otherwise classify as
+// TCP or UDP are prefixed with "./" so their type and filesystem location
+// survive a wire-format round trip. FormatPorts rejects path values containing
+// the reserved wire delimiters ';' or '='.
 func NewUnixListener(path string, fd uintptr) UnixListener {
-	return UnixListener{Path: path, fd: fd}
+	return UnixListener{Path: canonicalUnixPath(path), fd: fd}
 }
 
 // String returns a human-readable "spec=fd" rendering of l. It is a
@@ -195,10 +197,11 @@ func (l UDPListener) ListenPacket() (net.PacketConn, error) {
 // String returns a human-readable "path=fd" rendering of l. It is a
 // display form: it does not validate l, so it can render an empty Path, or
 // one containing ';' or '=', into a spec that ParsePorts cannot read back
-// correctly. For the authoritative SERVER_STARTER_PORT encoder, see
+// correctly. It canonicalises ambiguous relative paths even when l was built
+// as a struct literal. For the authoritative SERVER_STARTER_PORT encoder, see
 // FormatPorts.
 func (l UnixListener) String() string {
-	return fmt.Sprintf("%s=%d", l.Path, l.fd)
+	return fmt.Sprintf("%s=%d", canonicalUnixPath(l.Path), l.fd)
 }
 
 // Fd returns the underlying file descriptor

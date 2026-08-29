@@ -6,7 +6,6 @@ package supervisor
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,7 +20,8 @@ import (
 // between the supervisor's parser and FormatPorts. TCP and Unix formatting
 // must remain compatible with v0 workers, while v2-only UDP formatting must
 // remain stable for v2 workers, including canonicalising legacy UDP spellings
-// to the explicit udp:// marker.
+// to the explicit udp:// marker. Ambiguous relative Unix paths are
+// canonicalised so workers keep their listener type.
 func TestPortSpecWireFormat(t *testing.T) {
 	const fd = 3
 
@@ -59,21 +59,30 @@ func TestPortSpecWireFormat(t *testing.T) {
 	unixCases := []struct {
 		name string
 		path string
+		want string
 	}{
-		{name: "unix absolute", path: "/tmp/app.sock"},
-		{name: "unix relative", path: "rel.sock"},
+		{name: "unix absolute", path: "/tmp/app.sock", want: "/tmp/app.sock=5"},
+		{name: "unix relative", path: "rel.sock", want: "rel.sock=5"},
+		{name: "unix numeric", path: "8080", want: "./8080=5"},
+		{name: "unix host and port", path: "db:5432", want: "./db:5432=5"},
+		{name: "unix legacy UDP", path: "u8080", want: "./u8080=5"},
+		{name: "unix explicit UDP", path: "udp://8080", want: "./udp://8080=5"},
+		{name: "unix path with spaces", path: "  relative.sock  ", want: "  relative.sock  =5"},
 	}
 	for _, tc := range unixCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// old code: fmt.Sprintf("%s=%d", l.spec, descriptors[i]), where
-			// a unix listener's spec was the raw path, unmodified.
-			want := fmt.Sprintf("%s=%d", tc.path, unixFD)
+			// Unix listener paths are formatted through the public encoder so the
+			// supervisor and workers share the same wire representation.
+			want := tc.want
 
 			l := listener{network: unixNetwork, path: tc.path}
 			got, err := starter.FormatPorts(l.starterListener(unixFD))
 			require.NoError(t, err)
 
 			require.Equal(t, want, got)
+			parsed, err := starter.ParsePorts(got)
+			require.NoError(t, err)
+			require.Equal(t, starter.List{starter.NewUnixListener(tc.path, unixFD)}, parsed)
 		})
 	}
 }
