@@ -140,6 +140,21 @@ func TestRunRejectsConflictingControlActions(t *testing.T) {
 	require.Equal(t, "--stop and --restart cannot be used together; choose one action\n", string(stderr))
 }
 
+func TestRunRejectsInvalidSettingsBeforeDaemonize(t *testing.T) {
+	t.Setenv("ENABLE_AUTO_RESTART", "banana")
+
+	daemonizeCalled := false
+	exitCode, stdout, stderr := runCLIWithDaemonize(t, func() error {
+		daemonizeCalled = true
+		return nil
+	}, "--daemonize", "/bin/true")
+
+	require.Equal(t, 1, exitCode)
+	require.Empty(t, stdout)
+	require.Contains(t, stderr, `error: invalid ENABLE_AUTO_RESTART value "banana"`)
+	require.False(t, daemonizeCalled)
+}
+
 func TestRunInformationalAndParseExitCodes(t *testing.T) {
 	testCases := []struct {
 		name       string
@@ -193,6 +208,14 @@ func TestRunInformationalAndParseExitCodes(t *testing.T) {
 }
 
 func runCLI(t *testing.T, args ...string) (int, string, string) {
+	return runCLIWithDaemonize(t, daemonize, args...)
+}
+
+func runCLIWithDaemonize(
+	t *testing.T,
+	daemonizeFn func() error,
+	args ...string,
+) (int, string, string) {
 	t.Helper()
 
 	stdoutReader, stdoutWriter, err := os.Pipe()
@@ -212,7 +235,7 @@ func runCLI(t *testing.T, args ...string) (int, string, string) {
 		os.Stderr = originalStderr
 	})
 
-	exitCode := Run()
+	exitCode := run(daemonizeFn)
 	require.NoError(t, stdoutWriter.Close())
 	require.NoError(t, stderrWriter.Close())
 
