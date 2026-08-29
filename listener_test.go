@@ -45,6 +45,11 @@ func TestUDPListenerString(t *testing.T) {
 		l := starter.NewUDPListener("2001:db8::1", 9093, 6)
 		require.Equal(t, "udp://[2001:db8::1]:9093=6", l.String())
 	})
+
+	t.Run("hostname", func(t *testing.T) {
+		l := starter.NewUDPListener("upstream", 9094, 7)
+		require.Equal(t, "udp://upstream:9094=7", l.String())
+	})
 }
 
 func TestUDPListenerFd(t *testing.T) {
@@ -142,6 +147,10 @@ func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 
 	t.Run("UDP host and port", func(t *testing.T) {
 		roundTrip(t, starter.List{starter.NewUDPListener("192.168.1.20", 9092, 7)})
+	})
+
+	t.Run("UDP hostname and port", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewUDPListener("upstream", 9092, 7)})
 	})
 
 	t.Run("UDP ipv6 host and port", func(t *testing.T) {

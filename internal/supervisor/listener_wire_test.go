@@ -34,7 +34,10 @@ func TestPortSpecWireFormat(t *testing.T) {
 		{name: "tcp ipv6", raw: "[::1]:9090", want: "[::1]:9090=3"},
 		{name: "udp bare port", raw: "udp://8080", want: "udp://8080=3"},
 		{name: "udp host:port", raw: "udp://127.0.0.1:9090", want: "udp://127.0.0.1:9090=3"},
+		{name: "udp hostname", raw: "udp://upstream:9090", want: "udp://upstream:9090=3"},
 		{name: "legacy udp bare port", raw: "u8080", want: "udp://8080=3"},
+		{name: "legacy udp IP host:port", raw: "u127.0.0.1:9090", want: "udp://127.0.0.1:9090=3"},
+		{name: "legacy udp hostname suffix", raw: "upstream:u9090", want: "udp://upstream:9090=3"},
 	}
 	for _, tc := range tcpUDPCases {
 		t.Run(tc.name, func(t *testing.T) {

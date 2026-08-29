@@ -3,6 +3,7 @@ package starter
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"regexp"
 	"strconv"
@@ -27,11 +28,31 @@ func looksLikeTCPGrammar(s string) bool {
 	return err == nil && host != "" && reLooksLikePort.MatchString(port)
 }
 
-// stripLeadingUDPMarker strips a leading "u" from s, reporting whether s
-// had one.
+func isIPLiteral(host string) bool {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	_, err := netip.ParseAddr(host)
+	return err == nil
+}
+
+// stripLeadingUDPMarker accepts the leading "u" marker only when the
+// remainder is a bare port or an IP literal with a port. Restricting the
+// marker this way keeps ordinary TCP hostnames such as "upstream" from
+// being consumed as UDP.
 func stripLeadingUDPMarker(s string) (string, bool) {
-	stripped := strings.TrimPrefix(s, "u")
-	return stripped, stripped != s
+	stripped, ok := strings.CutPrefix(s, "u")
+	if !ok {
+		return s, false
+	}
+	if reLooksLikePort.MatchString(stripped) {
+		return stripped, true
+	}
+	matches := reLooksLikeHostPort.FindStringSubmatch(stripped)
+	if matches == nil || !isIPLiteral(matches[1]) {
+		return s, false
+	}
+	return stripped, true
 }
 
 // stripTrailingUDPMarker strips a "u" immediately after the last ":" in s,
@@ -52,17 +73,12 @@ type udpCandidate struct {
 }
 
 // classifyUDPMarker returns, in priority order, the candidate transport
-// interpretations of hostPort. The explicit "udp://" marker wins. An
-// ordinary TCP target is otherwise tried before the legacy UDP forms, so a
-// TCP hostname beginning with "u" cannot be consumed as a UDP marker. Within
-// the legacy forms, a trailing marker is tried first so it does not consume a
-// leading "u" from a valid hostname.
+// interpretations of hostPort. The explicit "udp://" marker wins. A trailing
+// legacy marker is authoritative, then a constrained leading marker is tried
+// for bare ports and IP literals. An unmarked TCP target is tried last.
 func classifyUDPMarker(hostPort string) []udpCandidate {
 	if target, ok := strings.CutPrefix(hostPort, udpTransportMarker); ok {
 		return []udpCandidate{{udp: true, target: target}}
-	}
-	if looksLikeTCPGrammar(hostPort) {
-		return []udpCandidate{{udp: false, target: hostPort}}
 	}
 
 	var candidates []udpCandidate
@@ -71,9 +87,6 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 		candidates = append(candidates, udpCandidate{udp: true, target: trailingStripped})
 	}
 	if leadingStripped, hasLeading := stripLeadingUDPMarker(hostPort); hasLeading {
-		if bothStripped, hasTrailing := stripTrailingUDPMarker(leadingStripped); hasTrailing {
-			candidates = append(candidates, udpCandidate{udp: true, target: bothStripped})
-		}
 		candidates = append(candidates, udpCandidate{udp: true, target: leadingStripped})
 	}
 
@@ -84,14 +97,15 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 // SERVER_STARTER_PORT (see PortEnvName) into concrete Listener values.
 //
 // Each spec is classified in this order: a spec beginning with "udp://" is
-// a UDP target; otherwise a spec that parses as a port/host:port is a TCP
-// target; otherwise the unambiguous legacy UDP forms "uPORT",
-// "u[ipv6]:port", and "host:uPORT" are accepted; otherwise the spec is a
-// unix socket path, taken verbatim. In the "host:uPORT" form, the suffix is
-// the marker, so a leading "u" remains part of the hostname. A spec containing
-// "/" is always a unix socket path unless it begins with "udp://". TCP/UDP
-// addresses and unix socket paths cannot contain ";" or "=" because those
-// characters delimit entries and file descriptors in the wire format.
+// a UDP target; otherwise the legacy UDP form "host:uPORT" is considered;
+// otherwise the constrained leading-marker forms "uPORT", "uIPv4:PORT", and
+// "u[IPv6]:PORT" are considered; otherwise a spec that parses as a
+// port/host:port is a TCP target; otherwise the spec is a unix socket path,
+// taken verbatim. In the "host:uPORT" form, the suffix is the marker, so a
+// leading "u" remains part of the hostname. A spec containing "/" is always a
+// unix socket path unless it begins with "udp://". TCP/UDP addresses and unix
+// socket paths cannot contain ";" or "=" because those characters delimit
+// entries and file descriptors in the wire format.
 //
 // This leaves one shape ambiguous: a relative unix socket path with no "/"
 // that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")
