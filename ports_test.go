@@ -149,8 +149,9 @@ func TestParsePorts(t *testing.T) {
 
 	t.Run("empty string", func(t *testing.T) {
 		got, err := starter.ParsePorts("")
-		require.ErrorIs(t, err, starter.ErrNoListeningTarget)
-		require.Nil(t, got)
+		require.NoError(t, err)
+		var want starter.List
+		require.Equal(t, want, got)
 	})
 
 	t.Run("relative unix path starting with u is not stripped", func(t *testing.T) {
@@ -214,9 +215,10 @@ func TestParsePorts(t *testing.T) {
 }
 
 func TestFormatPorts(t *testing.T) {
-	t.Run("rejects an empty List", func(t *testing.T) {
-		_, err := starter.FormatPorts(starter.List{}...)
-		require.ErrorIs(t, err, starter.ErrNoListeningTarget)
+	t.Run("formats an empty List", func(t *testing.T) {
+		spec, err := starter.FormatPorts(starter.List{}...)
+		require.NoError(t, err)
+		require.Empty(t, spec)
 	})
 
 	t.Run("rejects empty TCP Addr", func(t *testing.T) {

@@ -106,8 +106,9 @@ func TestListStringCompatibility(t *testing.T) {
 // "[ipv6]:port" (each with and without the UDP "udp://" prefix), and an
 // absolute unix socket path.
 //
-// Empty lists and ambiguous listener display forms are covered separately as
-// FormatPorts errors because ParsePorts cannot read them back unchanged.
+// A relative unix socket path with no "/" that happens to parse as a port
+// or "host:port" (e.g. "8080" or "db:5432") is deliberately excluded:
+// ParsePorts reads it back as TCP/UDP, per its documented ambiguity.
 func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 	roundTrip := func(t *testing.T, list starter.List) {
 		t.Helper()
@@ -117,6 +118,11 @@ func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, list, got)
 	}
+
+	t.Run("empty list", func(t *testing.T) {
+		var list starter.List
+		roundTrip(t, list)
+	})
 
 	t.Run("bare TCP port", func(t *testing.T) {
 		roundTrip(t, starter.List{starter.NewTCPListener("", 8080, 3)})
