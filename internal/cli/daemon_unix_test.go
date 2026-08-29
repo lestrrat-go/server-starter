@@ -4,11 +4,13 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,30 @@ func TestDaemonizeReturnsChildStartupFailure(t *testing.T) {
 		runDaemonizeTest(t, "TestDaemonizeReturnsChildStartupFailure"),
 		"daemon startup failed: invalid listener configuration",
 	)
+}
+
+func TestDaemonizeReturnsCompleteLargeChildStartupFailure(t *testing.T) {
+	mode := os.Getenv(daemonTestModeEnv)
+	if strings.HasPrefix(mode, "failed-size-") && os.Getenv(daemonizedEnv) == "1" {
+		size, err := strconv.Atoi(strings.TrimPrefix(mode, "failed-size-"))
+		require.NoError(t, err)
+		readiness, err := childDaemonReadiness()
+		require.NoError(t, err)
+		readiness.failed(errors.New(strings.Repeat("x", size)))
+		return
+	}
+
+	for _, size := range []int{64 * 1024, 70_000} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			t.Setenv(daemonTestModeEnv, "failed-size-"+strconv.Itoa(size))
+			message := strings.Repeat("x", size)
+			statusErr := runDaemonizeTest(t, "TestDaemonizeReturnsCompleteLargeChildStartupFailure")
+			require.Error(t, statusErr)
+			want := "daemon startup failed: " + message
+			require.Len(t, statusErr.Error(), len(want))
+			require.Equal(t, sha256.Sum256([]byte(want)), sha256.Sum256([]byte(statusErr.Error())))
+		})
+	}
 }
 
 func runDaemonizeTest(t *testing.T, name string) error {

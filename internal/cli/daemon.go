@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -12,12 +13,12 @@ import (
 )
 
 const (
-	daemonizedEnv       = "SERVER_STARTER_DAEMONIZED"
-	daemonReadinessEnv  = "SERVER_STARTER_DAEMON_READY_FD"
-	daemonReadinessFD   = 3
-	daemonReady         = byte(1)
-	daemonFailed        = byte(2)
-	maxDaemonStatusSize = 64 * 1024
+	daemonizedEnv          = "SERVER_STARTER_DAEMONIZED"
+	daemonReadinessEnv     = "SERVER_STARTER_DAEMON_READY_FD"
+	daemonReadinessFD      = 3
+	daemonReady            = byte(1)
+	daemonFailed           = byte(2)
+	daemonStatusHeaderSize = 1 + 8
 )
 
 func daemonize() error {
@@ -105,51 +106,103 @@ func (r *daemonReadiness) ready() error {
 	if r.file == nil {
 		return nil
 	}
-	return r.report([]byte{daemonReady})
+	return r.report(daemonReady, nil)
 }
 
 func (r *daemonReadiness) failed(err error) {
 	if r.file == nil {
 		return
 	}
-	message := err.Error()
-	if len(message) >= maxDaemonStatusSize {
-		message = message[:maxDaemonStatusSize-1]
-	}
-	payload := append([]byte{daemonFailed}, message...)
-	_ = r.report(payload)
+	_ = r.report(daemonFailed, []byte(err.Error()))
 }
 
-func (r *daemonReadiness) report(payload []byte) error {
-	_, writeErr := r.file.Write(payload)
+func (r *daemonReadiness) report(status byte, body []byte) error {
+	writeErr := writeDaemonStatus(r.file, status, body)
 	closeErr := r.file.Close()
 	r.file = nil
 	return errors.Join(writeErr, closeErr)
 }
 
+func writeDaemonStatus(writer io.Writer, status byte, body []byte) error {
+	// A fixed-width length distinguishes a complete body from a pipe that
+	// closes while the child is still reporting its startup result.
+	header := [daemonStatusHeaderSize]byte{status}
+	binary.BigEndian.PutUint64(header[1:], uint64(len(body)))
+	if err := writeDaemonStatusBytes(writer, header[:]); err != nil {
+		return err
+	}
+	return writeDaemonStatusBytes(writer, body)
+}
+
+func writeDaemonStatusBytes(writer io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := writer.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
+}
+
 func readDaemonStatus(reader io.Reader) error {
-	payload, err := io.ReadAll(io.LimitReader(reader, maxDaemonStatusSize+1))
+	var header [daemonStatusHeaderSize]byte
+	n, err := io.ReadFull(reader, header[:])
 	if err != nil {
+		if n == 0 && errors.Is(err, io.EOF) {
+			return fmt.Errorf("daemon exited before reporting startup status")
+		}
 		return fmt.Errorf("read daemon startup status: %w", err)
 	}
-	if len(payload) == 0 {
-		return fmt.Errorf("daemon exited before reporting startup status")
-	}
-	if len(payload) > maxDaemonStatusSize {
-		return fmt.Errorf("daemon startup status exceeds %d bytes", maxDaemonStatusSize)
-	}
-	switch payload[0] {
+	bodySize := binary.BigEndian.Uint64(header[1:])
+	switch header[0] {
 	case daemonReady:
-		if len(payload) != 1 {
+		if bodySize != 0 {
+			return fmt.Errorf("invalid daemon readiness response")
+		}
+		hasTrailingData, err := daemonStatusHasTrailingData(reader)
+		if err != nil {
+			return err
+		}
+		if hasTrailingData {
 			return fmt.Errorf("invalid daemon readiness response")
 		}
 		return nil
 	case daemonFailed:
-		if len(payload) == 1 {
+		if bodySize > uint64(^uint(0)>>1) {
+			return fmt.Errorf("daemon startup status length exceeds platform capacity")
+		}
+		body := make([]byte, int(bodySize))
+		if _, err := io.ReadFull(reader, body); err != nil {
+			return fmt.Errorf("read daemon startup status: %w", err)
+		}
+		hasTrailingData, err := daemonStatusHasTrailingData(reader)
+		if err != nil {
+			return err
+		}
+		if hasTrailingData {
+			return fmt.Errorf("invalid daemon startup response")
+		}
+		if len(body) == 0 {
 			return fmt.Errorf("daemon startup failed")
 		}
-		return fmt.Errorf("daemon startup failed: %s", payload[1:])
+		return fmt.Errorf("daemon startup failed: %s", body)
 	default:
 		return fmt.Errorf("invalid daemon startup response")
 	}
+}
+
+func daemonStatusHasTrailingData(reader io.Reader) (bool, error) {
+	var extra [1]byte
+	n, err := io.ReadFull(reader, extra[:])
+	if n > 0 {
+		return true, nil
+	}
+	if errors.Is(err, io.EOF) {
+		return false, nil
+	}
+	return false, fmt.Errorf("read daemon startup status: %w", err)
 }
