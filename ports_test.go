@@ -104,6 +104,12 @@ func TestParsePorts(t *testing.T) {
 		require.Equal(t, starter.NewUDPListener("", 8080, 4), got[0])
 	})
 
+	t.Run("legacy UDP IPv4 host and port", func(t *testing.T) {
+		got, err := starter.ParsePorts("u127.0.0.1:8080=4")
+		require.NoError(t, err)
+		require.Equal(t, starter.NewUDPListener("127.0.0.1", 8080, 4), got[0])
+	})
+
 	t.Run("UDP port suffix", func(t *testing.T) {
 		got, err := starter.ParsePorts("127.0.0.1:u9090=4")
 		require.NoError(t, err)

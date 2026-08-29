@@ -73,17 +73,12 @@ type udpCandidate struct {
 }
 
 // classifyUDPMarker returns, in priority order, the candidate transport
-// interpretations of hostPort. The explicit "udp://" marker wins. An
-// ordinary TCP target is otherwise tried before the legacy UDP forms, so a
-// TCP hostname beginning with "u" cannot be consumed as a UDP marker. Within
-// the legacy forms, a trailing marker is tried first so it does not consume a
-// leading "u" from a valid hostname.
+// interpretations of hostPort. The explicit "udp://" marker wins. A trailing
+// legacy marker is authoritative, then a constrained leading marker is tried
+// for bare ports and IP literals. An unmarked TCP target is tried last.
 func classifyUDPMarker(hostPort string) []udpCandidate {
 	if target, ok := strings.CutPrefix(hostPort, udpTransportMarker); ok {
 		return []udpCandidate{{udp: true, target: target}}
-	}
-	if looksLikeTCPGrammar(hostPort) {
-		return []udpCandidate{{udp: false, target: hostPort}}
 	}
 
 	var candidates []udpCandidate
@@ -92,9 +87,6 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 		candidates = append(candidates, udpCandidate{udp: true, target: trailingStripped})
 	}
 	if leadingStripped, hasLeading := stripLeadingUDPMarker(hostPort); hasLeading {
-		if bothStripped, hasTrailing := stripTrailingUDPMarker(leadingStripped); hasTrailing {
-			candidates = append(candidates, udpCandidate{udp: true, target: bothStripped})
-		}
 		candidates = append(candidates, udpCandidate{udp: true, target: leadingStripped})
 	}
 
