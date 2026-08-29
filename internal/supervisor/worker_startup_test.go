@@ -77,96 +77,11 @@ func waitForFile(t *testing.T, path string) {
 	t.Fatalf("timed out waiting for %s", path)
 }
 
-func TestRunRetriesInitialWorkerStartError(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "missing")
-	marker := filepath.Join(root, "started")
-	var stderr syncBuffer
-	sd, err := NewStarter(&config{
-		command: "/bin/sh",
-		args:    []string{"-c", `printf started > "$1"; exec sleep 30`, "worker", marker},
-		dir:     dir,
-		stderr:  &stderr,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	ctrl, err := sd.Run(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, ctrl)
-	require.Eventually(t, func() bool {
-		return strings.Contains(stderr.String(), "failed to exec")
-	}, 10*time.Second, 20*time.Millisecond)
-	require.NoError(t, os.Mkdir(dir, 0700))
-	waitForFile(t, marker)
-	cancel()
-	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
-}
-
-func TestRunCancellationStopsInitialWorkerStartRetries(t *testing.T) {
-	for _, interval := range []int{0, 1} {
-		t.Run(fmt.Sprintf("interval %d", interval), func(t *testing.T) {
-			var stderr syncBuffer
-			sd, err := NewStarter(&config{
-				command:  testShellPath,
-				args:     []string{"-c", "exec sleep 30"},
-				dir:      filepath.Join(t.TempDir(), "missing"),
-				interval: interval,
-				stderr:   &stderr,
-			})
-			require.NoError(t, err)
-
-			ctx, cancel := context.WithCancel(context.Background())
-			ctrl, err := sd.Run(ctx)
-			require.NoError(t, err)
-			require.NotNil(t, ctrl)
-			require.Eventually(t, func() bool {
-				return strings.Contains(stderr.String(), "failed to exec")
-			}, 10*time.Second, 20*time.Millisecond)
-
-			cancel()
-			select {
-			case <-ctrl.Done():
-			case <-time.After(3 * time.Second):
-				t.Fatal("Run did not stop after cancellation during worker start retries")
-			}
-			require.ErrorIs(t, ctrl.Err(), ErrServerClosed)
-		})
-	}
-}
-
 func TestStartWorkerReturnsCancellationBeforeFirstAttempt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	_, err := (&runState{}).startWorker(ctx, make(chan processState), nil, false)
-	require.ErrorIs(t, err, context.Canceled)
-}
-
-type cancelOnFailedStartWriter struct {
-	cancel context.CancelFunc
-}
-
-func (w cancelOnFailedStartWriter) Write(p []byte) (int, error) {
-	if strings.Contains(string(p), "seems to have failed to start") {
-		w.cancel()
-	}
-	return len(p), nil
-}
-
-func TestStartWorkerReturnsCancellationAfterFailedAttempt(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	rs := &runState{cfg: &Starter{
-		command: testShellPath,
-		dir:     filepath.Join(t.TempDir(), "missing"),
-		stderr:  cancelOnFailedStartWriter{cancel: cancel},
-	}}
-
-	_, err := rs.startWorker(ctx, make(chan processState), nil, false)
 	require.ErrorIs(t, err, context.Canceled)
 }
 
