@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -74,8 +75,19 @@ func hasPathSeparator(path string) bool {
 }
 
 func commandForValidation(command, dir string) string {
-	if command == "" || dir == "" || filepath.IsAbs(command) || filepath.VolumeName(command) != "" ||
-		os.IsPathSeparator(command[0]) || !hasPathSeparator(command) {
+	if command == "" || dir == "" || filepath.IsAbs(command) || os.IsPathSeparator(command[0]) {
+		return command
+	}
+
+	volume := filepath.VolumeName(command)
+	if volume != "" {
+		if !strings.EqualFold(volume, filepath.VolumeName(dir)) {
+			return command
+		}
+		return filepath.Join(dir, command[len(volume):])
+	}
+
+	if !hasPathSeparator(command) {
 		return command
 	}
 	return dir + string(os.PathSeparator) + command
