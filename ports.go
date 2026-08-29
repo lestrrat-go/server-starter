@@ -109,8 +109,9 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 //
 // This leaves one shape ambiguous: a relative unix socket path with no "/"
 // that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")
-// is read as TCP, not as a unix socket. Pass such sockets as absolute
-// paths, or prefix them with "./" to disambiguate.
+// is read as TCP, not as a unix socket. Pass such sockets as absolute paths,
+// prefix them with "./", or use NewUnixListener, which adds the prefix when
+// needed. UnixListener.String applies the same canonicalisation.
 //
 // TCP and UDP ports must be between 0 and 65535. Inherited file descriptors
 // must be at least 3 so they do not overlap the standard streams.
@@ -142,7 +143,7 @@ func ParsePorts(spec string) (List, error) {
 
 		explicitUDP := strings.HasPrefix(hostPort, udpTransportMarker)
 		if !explicitUDP && strings.ContainsRune(hostPort, '/') {
-			ret[i] = UnixListener{Path: hostPort, fd: uintptr(fd)}
+			ret[i] = NewUnixListener(hostPort, uintptr(fd))
 			continue
 		}
 
@@ -190,10 +191,7 @@ func ParsePorts(spec string) (List, error) {
 				ret[i] = TCPListener{Addr: wildcardIPv4, Port: int(port), fd: uintptr(fd)}
 			}
 		} else {
-			ret[i] = UnixListener{
-				Path: hostPort,
-				fd:   uintptr(fd),
-			}
+			ret[i] = NewUnixListener(hostPort, uintptr(fd))
 		}
 	}
 
@@ -231,7 +229,8 @@ func ParsePorts(spec string) (List, error) {
 //     it does not know, so it refuses to guess rather than risk emitting
 //     a spec ParsePorts cannot read back correctly
 //   - a listener whose String result ParsePorts would read back as a
-//     different listener, including ambiguous relative unix socket paths
+//     different listener, including an ambiguous relative Unix socket path
+//     built as a struct literal instead of with NewUnixListener
 func FormatPorts(ls ...Listener) (string, error) {
 	if len(ls) == 0 {
 		return "", nil

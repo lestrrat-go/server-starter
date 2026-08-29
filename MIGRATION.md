@@ -69,6 +69,12 @@ worker binary built against v0's `listener` package still handles those
 targets under a v2 `start_server`, and a worker built against v2's `starter`
 package handles them under a v0 `start_server`.
 
+V2 canonicalizes relative Unix socket paths that look like TCP or UDP
+targets. For example, `NewUnixListener("8080", fd).String()` emits
+`./8080=<fd>`. Both v0 and v2 workers recognize the added slash as a Unix
+path, while v2 also preserves the `UnixListener` wrapper when the value is
+parsed again.
+
 UDP targets are a v2 extension. V0 workers support TCP and Unix listeners,
 but not UDP listeners, so a v2 `start_server` configured with a UDP target
 requires a worker built against v2's `starter` package. Their canonical
@@ -87,8 +93,9 @@ V0 joined each listener's `String()` result and passed it to the worker as
 `SERVER_STARTER_PORT` without validation. The public `FormatPorts` function
 now rejects values that cannot be encoded as one environment variable and
 read back as the same listener. This includes NUL bytes, TCP/UDP addresses or
-Unix socket paths containing `;` or `=`, ambiguous relative Unix socket paths,
-and malformed listener values built directly as struct literals.
+Unix socket paths containing `;` or `=`, and malformed listener values built
+directly as struct literals. `NewUnixListener` makes ambiguous relative Unix
+socket paths safe by adding a `./` prefix when needed.
 
 The supervisor's `Config` accepts only string port and path metadata, so
 struct-literal listeners do not enter that API. Before acquiring its pid file

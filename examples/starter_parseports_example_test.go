@@ -10,9 +10,10 @@ import (
 // SERVER_STARTER_PORT without needing an environment variable or a real
 // supervisor: a literal spec is fed straight to ParsePorts. The spec below
 // covers the three listener kinds a worker can receive — a bare TCP port, a
-// UDP target on a specific host:port, and a unix socket path.
+// UDP target on a specific host:port, and a relative unix socket path whose
+// "./" prefix keeps its numeric name distinct from a TCP port.
 func Example_starter_parseports() {
-	spec := "upstream:8080=3;udp://127.0.0.1:8081=4;/tmp/app.sock=5"
+	spec := "upstream:8080=3;udp://127.0.0.1:8081=4;./9000=5"
 
 	list, err := starter.ParsePorts(spec)
 	if err != nil {
@@ -29,5 +30,5 @@ func Example_starter_parseports() {
 	// Output:
 	// upstream:8080=3 (fd=3)
 	// udp://127.0.0.1:8081=4 (fd=4)
-	// /tmp/app.sock=5 (fd=5)
+	// ./9000=5 (fd=5)
 }

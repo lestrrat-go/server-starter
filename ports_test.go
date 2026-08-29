@@ -79,6 +79,14 @@ func TestParsePorts(t *testing.T) {
 		require.Equal(t, starter.NewTCPListener("upstream", 8080, 3), got[0])
 	})
 
+	t.Run("hostname and port remains TCP", func(t *testing.T) {
+		got, err := starter.ParsePorts("db:5432=4")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, starter.TCPListener{}, got[0])
+		require.Equal(t, starter.NewTCPListener("db", 5432, 4), got[0])
+	})
+
 	t.Run("IPv6 host and port", func(t *testing.T) {
 		got, err := starter.ParsePorts("[::1]:9090=4")
 		require.NoError(t, err)
@@ -197,6 +205,14 @@ func TestParsePorts(t *testing.T) {
 		require.Len(t, got, 1)
 		require.IsType(t, starter.UnixListener{}, got[0])
 		require.Equal(t, starter.NewUnixListener("./8080", 5), got[0])
+	})
+
+	t.Run("canonical host-port path is a unix socket", func(t *testing.T) {
+		got, err := starter.ParsePorts("./db:5432=5")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, starter.UnixListener{}, got[0])
+		require.Equal(t, starter.NewUnixListener("db:5432", 5), got[0])
 	})
 
 	t.Run("mixed multi-target spec", func(t *testing.T) {
@@ -357,11 +373,16 @@ func TestFormatPorts(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("rejects an ambiguous relative unix socket path", func(t *testing.T) {
-		_, err := starter.FormatPorts(starter.NewUnixListener("8080", 3))
+	t.Run("accepts a canonical ambiguous relative unix socket path", func(t *testing.T) {
+		spec, err := starter.FormatPorts(starter.NewUnixListener("8080", 3))
+		require.NoError(t, err)
+		require.Equal(t, "./8080=3", spec)
+	})
+
+	t.Run("rejects an ambiguous UnixListener struct literal", func(t *testing.T) {
+		_, err := starter.FormatPorts(starter.UnixListener{Path: "8080"})
 		require.Error(t, err)
-		require.ErrorContains(t, err, "UnixListener")
-		require.ErrorContains(t, err, "TCPListener")
+		require.ErrorContains(t, err, "encoded value is not parseable")
 	})
 
 	t.Run("formats a TCP hostname beginning with u", func(t *testing.T) {

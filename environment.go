@@ -16,7 +16,9 @@ import (
 // it uses the UDP prefix. A relative unix socket path with no "/" that
 // happens to parse as a port or "host:port" (e.g. "8080" or "db:5432") is
 // indistinguishable from a TCP spec in this wire format and is interpreted
-// as TCP; pass such sockets as absolute paths, or prefix them with "./".
+// as TCP. Pass such sockets as absolute paths, prefix them with "./", or
+// encode them with NewUnixListener and FormatPorts, which add the prefix when
+// needed.
 const PortEnvName = "SERVER_STARTER_PORT"
 
 // GenerationEnvName is the environment variable the supervisor sets to the
