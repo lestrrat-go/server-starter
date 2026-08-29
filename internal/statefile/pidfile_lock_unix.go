@@ -8,8 +8,16 @@ import (
 	"syscall"
 )
 
-func lockReleased(f *os.File) (bool, error) {
-	err := TryLock(f)
+func lockNoLongerOwnedByPID(f *os.File, pid int) (bool, error) {
+	ownerPID, err := lockOwnerPID(f, "")
+	if err != nil {
+		return false, err
+	}
+	if ownerPID > 0 {
+		return ownerPID != pid, nil
+	}
+
+	err = TryLock(f)
 	if err == nil {
 		return true, nil
 	}

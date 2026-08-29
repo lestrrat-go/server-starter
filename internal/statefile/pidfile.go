@@ -173,9 +173,9 @@ func (p *RunningPID) PID() int {
 	return p.pid
 }
 
-// Exited reports whether the supervisor has released its lifetime lock.
+// Exited reports whether the validated supervisor no longer owns the lifetime lock.
 func (p *RunningPID) Exited() (bool, error) {
-	return lockReleased(p.file)
+	return lockNoLongerOwnedByPID(p.file, p.pid)
 }
 
 // Close releases the retained pid-file reference.

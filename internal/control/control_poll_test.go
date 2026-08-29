@@ -21,6 +21,7 @@ const (
 	controlHelperReadyEnv  = "SERVER_STARTER_CONTROL_HELPER_READY"
 	controlHelperSignalEnv = "SERVER_STARTER_CONTROL_HELPER_SIGNAL"
 	controlHelperPIDEnv    = "SERVER_STARTER_CONTROL_HELPER_PID"
+	controlHelperExitEnv   = "SERVER_STARTER_CONTROL_HELPER_EXIT"
 )
 
 func TestControlSignalHelper(t *testing.T) {
@@ -47,6 +48,9 @@ func TestControlSignalHelper(t *testing.T) {
 	sig := <-sigCh
 	if err := os.WriteFile(os.Getenv(controlHelperSignalEnv), []byte(sig.String()+"\n"), 0600); err != nil {
 		t.Fatal(err)
+	}
+	if os.Getenv(controlHelperExitEnv) == "1" {
+		return
 	}
 	select {}
 }
@@ -94,6 +98,14 @@ func TestRestartReturnsPollingParseError(t *testing.T) {
 }
 
 func startControlSignalHelper(t *testing.T, pidPaths ...string) (*exec.Cmd, string) {
+	return startControlSignalHelperWithExit(t, false, pidPaths...)
+}
+
+func startExitingControlSignalHelper(t *testing.T, pidPath string) (*exec.Cmd, string) {
+	return startControlSignalHelperWithExit(t, true, pidPath)
+}
+
+func startControlSignalHelperWithExit(t *testing.T, exitOnSignal bool, pidPaths ...string) (*exec.Cmd, string) {
 	t.Helper()
 	dir := t.TempDir()
 	readyPath := filepath.Join(dir, "ready")
@@ -107,6 +119,9 @@ func startControlSignalHelper(t *testing.T, pidPaths ...string) (*exec.Cmd, stri
 	)
 	if len(pidPaths) > 0 {
 		cmd.Env = append(cmd.Env, controlHelperPIDEnv+"="+pidPaths[0])
+	}
+	if exitOnSignal {
+		cmd.Env = append(cmd.Env, controlHelperExitEnv+"=1")
 	}
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
