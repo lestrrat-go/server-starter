@@ -365,10 +365,10 @@ func TestFormatPorts(t *testing.T) {
 	})
 
 	t.Run("formats a UDP hostname beginning with u", func(t *testing.T) {
-		listener := starter.NewUDPListener("upstream", 8080, 3)
+		listener := starter.NewUDPListener("u127.0.0.1", 8080, 3)
 		spec, err := starter.FormatPorts(listener)
 		require.NoError(t, err)
-		require.Equal(t, "udp://upstream:8080=3", spec)
+		require.Equal(t, "udp://u127.0.0.1:8080=3", spec)
 
 		got, err := starter.ParsePorts(spec)
 		require.NoError(t, err)
