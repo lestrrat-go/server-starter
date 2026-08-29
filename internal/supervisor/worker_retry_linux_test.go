@@ -24,6 +24,22 @@ func TestInvalidELFInterpreterStopsWorkerStartRetries(t *testing.T) {
 	requireSingleTerminalStartAttempt(t, config{command: worker, dir: dir}, nil, syscall.EIO)
 }
 
+func TestTruncatedELFInterpreterStopsWorkerStartRetries(t *testing.T) {
+	dir := t.TempDir()
+	const interpreterName = "truncated-loader"
+
+	interpreter := filepath.Join(dir, interpreterName)
+	require.NoError(t, os.WriteFile(interpreter, []byte(elf.ELFMAG), 0o700))
+
+	worker := filepath.Join(dir, "worker")
+	rewriteELFInterpreter(t, "/bin/sh", worker, interpreterName)
+	requireSingleTerminalStartAttempt(t, config{command: worker, dir: dir}, nil, syscall.EIO)
+}
+
+func TestELFReadFailureDoesNotStopWorkerStartRetries(t *testing.T) {
+	require.False(t, malformedELF(failingReaderAt{err: syscall.EIO}))
+}
+
 func TestUnrelatedEIODoesNotStopWorkerStartRetries(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)
@@ -57,4 +73,12 @@ func rewriteELFInterpreter(t *testing.T, source, destination, interpreter string
 	clear(data[start:end])
 	copy(data[start:end], interpreter)
 	require.NoError(t, os.WriteFile(destination, data, 0o700))
+}
+
+type failingReaderAt struct {
+	err error
+}
+
+func (r failingReaderAt) ReadAt([]byte, int64) (int, error) {
+	return 0, r.err
 }

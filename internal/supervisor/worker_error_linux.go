@@ -35,12 +35,17 @@ func platformTerminalWorkerStartError(command, dir string, err error) bool {
 	}
 	defer file.Close()
 
-	header := make([]byte, len(elf.ELFMAG))
-	_, readErr := io.ReadFull(file, header)
-	if readErr != nil {
-		return errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF)
+	return malformedELF(file)
+}
+
+func malformedELF(reader io.ReaderAt) bool {
+	_, err := elf.NewFile(reader)
+	if err == nil {
+		return false
 	}
-	return !bytes.Equal(header, []byte(elf.ELFMAG))
+
+	var formatErr *elf.FormatError
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &formatErr)
 }
 
 // workerELFInterpreter returns the interpreter path recorded in a readable
