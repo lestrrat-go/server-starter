@@ -73,7 +73,7 @@ func TestRunErrServerClosed(t *testing.T) {
 	}
 }
 
-func TestRunReportsListenerMetadataErrorsAtLifecycleStage(t *testing.T) {
+func TestRunRejectsInvalidListenerMetadataBeforeBinding(t *testing.T) {
 	command, err := os.Executable()
 	require.NoError(t, err)
 
@@ -89,10 +89,8 @@ func TestRunReportsListenerMetadataErrorsAtLifecycleStage(t *testing.T) {
 			require.NoError(t, err)
 
 			ctrl, err := sd.Run(context.Background())
-			require.Error(t, err)
-			var opErr *net.OpError
-			require.ErrorAs(t, err, &opErr)
 			require.Nil(t, ctrl)
+			require.ErrorContains(t, err, "NUL")
 		})
 	}
 
@@ -110,16 +108,8 @@ func TestRunReportsListenerMetadataErrorsAtLifecycleStage(t *testing.T) {
 			require.NoError(t, err)
 
 			ctrl, err := sd.Run(context.Background())
-			require.NoError(t, err)
-			require.NotNil(t, ctrl)
-
-			select {
-			case <-ctrl.Done():
-			case <-time.After(5 * time.Second):
-				t.Fatal("timed out waiting for listener metadata formatting failure")
-			}
-			require.ErrorContains(t, ctrl.Err(), "failed to format listeners for worker")
-			require.ErrorContains(t, ctrl.Err(), test.wantErr)
+			require.Nil(t, ctrl)
+			require.ErrorContains(t, err, test.wantErr)
 		})
 	}
 }

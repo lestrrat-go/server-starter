@@ -221,16 +221,60 @@ func TestFormatPorts(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects unix Path containing a semicolon", func(t *testing.T) {
-		_, err := starter.FormatPorts(starter.UnixListener{Path: "/tmp/a;b.sock"})
-		require.Error(t, err)
-		require.ErrorContains(t, err, "Path")
-	})
+	t.Run("rejects reserved wire delimiters", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			listener  starter.Listener
+			field     string
+			delimiter string
+		}{
+			{
+				name:      "TCP Addr semicolon",
+				listener:  starter.NewTCPListener("host;next", 8080, 3),
+				field:     "Addr",
+				delimiter: ";",
+			},
+			{
+				name:      "TCP Addr equals",
+				listener:  starter.NewTCPListener("host=next", 8080, 3),
+				field:     "Addr",
+				delimiter: "=",
+			},
+			{
+				name:      "UDP Addr semicolon",
+				listener:  starter.NewUDPListener("host;next", 8080, 3),
+				field:     "Addr",
+				delimiter: ";",
+			},
+			{
+				name:      "UDP Addr equals",
+				listener:  starter.NewUDPListener("host=next", 8080, 3),
+				field:     "Addr",
+				delimiter: "=",
+			},
+			{
+				name:      "Unix Path semicolon",
+				listener:  starter.NewUnixListener("/tmp/app;next.sock", 3),
+				field:     "Path",
+				delimiter: ";",
+			},
+			{
+				name:      "Unix Path equals",
+				listener:  starter.NewUnixListener("/tmp/app=next.sock", 3),
+				field:     "Path",
+				delimiter: "=",
+			},
+		}
 
-	t.Run("rejects unix Path containing an equals sign", func(t *testing.T) {
-		_, err := starter.FormatPorts(starter.UnixListener{Path: "has=equals.sock"})
-		require.Error(t, err)
-		require.ErrorContains(t, err, "Path")
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				spec, err := starter.FormatPorts(test.listener)
+				require.Error(t, err)
+				require.Empty(t, spec)
+				require.ErrorContains(t, err, test.field)
+				require.ErrorContains(t, err, test.delimiter)
+			})
+		}
 	})
 
 	t.Run("rejects an unknown Listener implementation", func(t *testing.T) {
