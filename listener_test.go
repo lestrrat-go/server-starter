@@ -101,6 +101,19 @@ func TestNewUnixListenerCanonicalPath(t *testing.T) {
 		{name: "reserved UDP prefix", path: "udp://relative.sock", want: "./udp://relative.sock"},
 		{name: "leading UDP grammar", path: "u8080", want: "./u8080"},
 		{name: "trailing UDP grammar", path: "db:u5432", want: "./db:u5432"},
+		{name: "leading space before bare port", path: " 8080", want: "./ 8080"},
+		{
+			name: "leading space before TCP ipv6 grammar",
+			path: " [::1]:5432",
+			want: "./ [::1]:5432",
+		},
+		{name: "leading space before explicit UDP grammar", path: " udp://8080", want: "./ udp://8080"},
+		{name: "leading space before legacy UDP grammar", path: " u8080", want: "./ u8080"},
+		{
+			name: "leading space before legacy UDP ipv6 grammar",
+			path: " u[::1]:5432",
+			want: "./ u[::1]:5432",
+		},
 		{
 			name: "UDP hostname beginning with u",
 			path: "ubuntu.internal:u8080",
@@ -201,6 +214,19 @@ func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 			"u8080",
 			"db:u5432",
 			"ubuntu.internal:u8080",
+		} {
+			list := starter.List{starter.NewUnixListener(path, 9)}
+			roundTrip(t, list)
+		}
+	})
+
+	t.Run("leading-space network grammar unix socket paths", func(t *testing.T) {
+		for _, path := range []string{
+			" 8080",
+			" [::1]:5432",
+			" udp://8080",
+			" u8080",
+			" u[::1]:5432",
 		} {
 			list := starter.List{starter.NewUnixListener(path, 9)}
 			roundTrip(t, list)

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/lestrrat-go/server-starter/v2/internal/portwire"
 )
@@ -40,13 +41,14 @@ func isIPLiteral(host string) bool {
 // Unix socket path. The explicit UDP prefix is reserved even when its target
 // is invalid, while any other path containing "/" is unambiguously Unix.
 func needsUnixPathPrefix(s string) bool {
-	if strings.HasPrefix(s, udpTransportMarker) {
+	trimmed := strings.TrimLeftFunc(s, unicode.IsSpace)
+	if strings.HasPrefix(trimmed, udpTransportMarker) {
 		return true
 	}
-	if strings.ContainsRune(s, '/') {
+	if strings.ContainsRune(trimmed, '/') {
 		return false
 	}
-	for _, candidate := range classifyUDPMarker(s) {
+	for _, candidate := range classifyUDPMarker(trimmed) {
 		if looksLikeTCPGrammar(candidate.target) {
 			return true
 		}
