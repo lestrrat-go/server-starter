@@ -27,10 +27,18 @@ type socketQuarantine interface {
 	location() string
 }
 
-func configuredSocketBasenames(paths []string) map[string]struct{} {
-	basenames := make(map[string]struct{}, len(paths))
+func configuredSocketPaths(paths []string) map[string]struct{} {
+	configured := make(map[string]struct{}, len(paths))
 	for _, path := range paths {
-		basenames[filepath.Base(path)] = struct{}{}
+		configured[normalizeSocketPath(path)] = struct{}{}
 	}
-	return basenames
+	return configured
+}
+
+func normalizeSocketPath(path string) string {
+	absPath, err := filepath.Abs(path)
+	if err == nil {
+		return absPath
+	}
+	return filepath.Clean(path)
 }

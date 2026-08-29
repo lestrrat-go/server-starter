@@ -140,10 +140,10 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 		})
 	}
 
-	reservedSocketNames := configuredSocketBasenames(s.paths)
+	configuredSockets := configuredSocketPaths(s.paths)
 	for _, path := range s.paths {
 		var l net.Listener
-		if err := removeExistingUnixSocketWithReservedNames(path, reservedSocketNames); err != nil {
+		if err := removeExistingUnixSocketWithConfiguredPaths(path, configuredSockets); err != nil {
 			fmt.Fprintf(s.stderr, "failed to prepare socket file:%s:%s\n", path, err)
 			return nil, err
 		}
@@ -189,10 +189,10 @@ func workerStartCanceled(ctx context.Context, err error) bool {
 }
 
 func removeExistingUnixSocket(path string) error {
-	return removeExistingUnixSocketWithReservedNames(path, nil)
+	return removeExistingUnixSocketWithConfiguredPaths(path, nil)
 }
 
-func removeExistingUnixSocketWithReservedNames(path string, reservedNames map[string]struct{}) error {
+func removeExistingUnixSocketWithConfiguredPaths(path string, configuredPaths map[string]struct{}) error {
 	if runtime.GOOS == "linux" &&
 		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
 		return nil
@@ -207,7 +207,7 @@ func removeExistingUnixSocketWithReservedNames(path string, reservedNames map[st
 		}
 		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, errSafeSocketCleanupUnavailable)
 	}
-	return removeSocketWithReservedNames(path, reservedNames, socketCleanupHooks{})
+	return removeSocketWithConfiguredPaths(path, configuredPaths, socketCleanupHooks{})
 }
 
 type socketCleanupHooks struct {
@@ -220,15 +220,15 @@ type socketCleanupHooks struct {
 }
 
 func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
-	return removeSocketWithReservedNames(path, nil, hooks)
+	return removeSocketWithConfiguredPaths(path, nil, hooks)
 }
 
-func removeSocketWithReservedNames(
+func removeSocketWithConfiguredPaths(
 	path string,
-	reservedNames map[string]struct{},
+	configuredPaths map[string]struct{},
 	hooks socketCleanupHooks,
 ) error {
-	quarantine, err := newSocketQuarantine(path, reservedNames, hooks)
+	quarantine, err := newSocketQuarantine(path, configuredPaths, hooks)
 	if err != nil {
 		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, err)
 	}

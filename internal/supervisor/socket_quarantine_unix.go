@@ -4,6 +4,7 @@ package supervisor
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ type unixSocketQuarantine struct {
 
 func newSocketQuarantine(
 	path string,
-	reservedNames map[string]struct{},
+	configuredPaths map[string]struct{},
 	hooks socketCleanupHooks,
 ) (socketQuarantine, error) {
 	parentPath, sourceName := filepath.Split(path)
@@ -51,7 +52,7 @@ func newSocketQuarantine(
 		}
 	}
 
-	dirName := socketQuarantineDirectoryName(sourceName, reservedNames)
+	dirName := socketQuarantineDirectoryName(parentPath, sourceName, configuredPaths)
 	created, createdStat, err := ensureQuarantineDir(parentFD, dirName)
 	if err != nil {
 		if sourceFD >= 0 {
@@ -82,7 +83,7 @@ func newSocketQuarantine(
 		parentPath: parentPath,
 		dirName:    dirName,
 		sourceName: sourceName,
-		slotName:   socketQuarantineSlotName(sourceName),
+		slotName:   socketQuarantineSlotName(parentPath, dirName, sourceName, &sourceStat, configuredPaths),
 		sourceFD:   sourceFD,
 		sourceStat: sourceStat,
 		hooks:      hooks,
@@ -205,12 +206,33 @@ func sameUnixIdentity(a, b *unix.Stat_t) bool {
 	return a.Dev == b.Dev && a.Ino == b.Ino
 }
 
-func socketQuarantineSlotName(sourceName string) string {
-	digest := sha256.Sum256([]byte(sourceName))
-	return fmt.Sprintf("%s%x", quarantineEntryPrefix, digest)
+func socketQuarantineSlotName(
+	parentPath string,
+	dirName string,
+	sourceName string,
+	sourceStat *unix.Stat_t,
+	configuredPaths map[string]struct{},
+) string {
+	identity := fmt.Sprintf("%s\x00%d\x00%d", sourceName, sourceStat.Dev, sourceStat.Ino)
+	digest := sha256.Sum256([]byte(identity))
+	baseName := quarantineEntryPrefix + base64.RawURLEncoding.EncodeToString(digest[:])
+	for suffix := 0; ; suffix++ {
+		name := baseName
+		if suffix > 0 {
+			name += fmt.Sprintf("-%d", suffix)
+		}
+		path := parentPath + dirName + string(filepath.Separator) + name
+		if _, configured := configuredPaths[normalizeSocketPath(path)]; !configured {
+			return name
+		}
+	}
 }
 
-func socketQuarantineDirectoryName(sourceName string, reservedNames map[string]struct{}) string {
+func socketQuarantineDirectoryName(
+	parentPath string,
+	sourceName string,
+	configuredPaths map[string]struct{},
+) string {
 	for suffix := 0; ; suffix++ {
 		name := quarantineDirName
 		if suffix == 1 {
@@ -221,7 +243,8 @@ func socketQuarantineDirectoryName(sourceName string, reservedNames map[string]s
 		if name == sourceName {
 			continue
 		}
-		if _, reserved := reservedNames[name]; reserved {
+		path := parentPath + name
+		if _, configured := configuredPaths[normalizeSocketPath(path)]; configured {
 			continue
 		}
 		return name
