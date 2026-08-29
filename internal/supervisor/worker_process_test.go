@@ -13,14 +13,14 @@ import (
 const testWorkerArg = "server-starter-test-worker"
 
 func testWorkerPorts() []string {
-	if runtime.GOOS == testGOOSWindows {
+	if runtime.GOOS == "windows" {
 		return nil
 	}
 	return []string{"0"}
 }
 
 func TestWorkerPortsForPlatform(t *testing.T) {
-	if runtime.GOOS == testGOOSWindows {
+	if runtime.GOOS == "windows" {
 		require.Empty(t, testWorkerPorts())
 		return
 	}

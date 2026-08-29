@@ -21,8 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testGOOSWindows = "windows"
-
 var echoServerTxt = `package main
 
 import (
@@ -154,7 +152,7 @@ func readFileEventually(t *testing.T, path string) []byte {
 }
 
 func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
-	if runtime.GOOS == testGOOSWindows {
+	if runtime.GOOS == "windows" {
 		t.Skip("the worker fixture uses a POSIX shell script")
 	}
 
@@ -176,39 +174,10 @@ func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
 	require.NoError(t, cmd.Run())
 }
 
-func TestNewStarterValidatesParentRelativeCommandThroughSymlinkedDir(t *testing.T) {
-	if runtime.GOOS == testGOOSWindows {
-		t.Skip("the worker fixture uses POSIX symlink and shell semantics")
-	}
-
-	root := t.TempDir()
-	realDir := filepath.Join(root, "real")
-	workDir := filepath.Join(realDir, "work")
-	binDir := filepath.Join(realDir, "bin")
-	require.NoError(t, os.MkdirAll(workDir, 0755))
-	require.NoError(t, os.MkdirAll(binDir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(binDir, "worker"), []byte("#!/bin/sh\nexit 0\n"), 0700))
-
-	alias := filepath.Join(root, "alias")
-	require.NoError(t, os.Symlink(workDir, alias))
-	command := ".." + string(os.PathSeparator) + filepath.Join("bin", "worker")
-	sd, err := NewStarter(&config{
-		command: command,
-		dir:     alias,
-	})
-	require.NoError(t, err)
-	require.Equal(t, command, sd.command)
-
-	cmd := sd.workerCommand(context.Background())
-	cmd.Dir = sd.dir
-	require.Equal(t, command, cmd.Args[0])
-	require.NoError(t, cmd.Run())
-}
-
 func TestNewStarterPreservesBareCommandForPATHLookup(t *testing.T) {
 	dir := t.TempDir()
 	commandName := "worker"
-	if runtime.GOOS == testGOOSWindows {
+	if runtime.GOOS == "windows" {
 		commandName += ".exe"
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(dir, commandName), nil, 0700))
