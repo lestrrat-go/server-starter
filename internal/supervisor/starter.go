@@ -73,6 +73,14 @@ func hasPathSeparator(path string) bool {
 	return false
 }
 
+func resolveCommandAgainstDir(command, dir string) (string, error) {
+	if command == "" || dir == "" || filepath.IsAbs(command) || filepath.VolumeName(command) != "" ||
+		os.IsPathSeparator(command[0]) || !hasPathSeparator(command) {
+		return command, nil
+	}
+	return filepath.Abs(filepath.Join(dir, command))
+}
+
 // NewStarter creates a new Starter object. Config parameter may NOT be
 // nil, as `Ports` and/or `Paths`, and `Command` are required
 func NewStarter(c Config) (*Starter, error) {
@@ -103,12 +111,9 @@ func NewStarter(c Config) (*Starter, error) {
 		return nil, fmt.Errorf("argument Command must be specified")
 	}
 	dir := c.Dir()
-	if dir != "" && !filepath.IsAbs(command) && hasPathSeparator(command) {
-		var err error
-		command, err = filepath.Abs(filepath.Join(dir, command))
-		if err != nil {
-			return nil, err
-		}
+	command, err := resolveCommandAgainstDir(command, dir)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := exec.LookPath(command); err != nil {
 		return nil, err
