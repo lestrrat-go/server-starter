@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lestrrat-go/server-starter/v2/internal/control"
+	"github.com/lestrrat-go/server-starter/v2/internal/statefile"
 	"github.com/stretchr/testify/require"
 )
 
@@ -121,4 +123,46 @@ func TestRunDaemonizeReportsStartupFailures(t *testing.T) {
 			require.Contains(t, strings.TrimSpace(string(output)), tc.want)
 		})
 	}
+}
+
+func TestDaemonizeDoesNotLeakReadinessToNestedStartServer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	testDir := t.TempDir()
+	binary := filepath.Join(testDir, "start_server")
+	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "../../cmd/start_server")
+	buildOutput, err := build.CombinedOutput()
+	require.NoError(t, err, string(buildOutput))
+
+	outerPIDFile := filepath.Join(testDir, "outer.pid")
+	innerPIDFile := filepath.Join(testDir, "inner.pid")
+	t.Cleanup(func() {
+		if _, err := os.Stat(outerPIDFile); errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stopCancel()
+		require.NoError(t, control.Stop(stopCtx, outerPIDFile))
+	})
+
+	cmd := exec.CommandContext(
+		ctx,
+		binary,
+		"--daemonize",
+		"--interval", "1",
+		"--pid-file", outerPIDFile,
+		"--",
+		binary,
+		"--interval", "0",
+		"--pid-file", innerPIDFile,
+		"--",
+		"/bin/sleep", "30",
+	)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+
+	innerPID, err := statefile.ReadPID(ctx, innerPIDFile)
+	require.NoError(t, err)
+	require.Positive(t, innerPID)
 }

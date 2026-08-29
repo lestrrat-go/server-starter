@@ -86,6 +86,9 @@ func childDaemonReadiness() (*daemonReadiness, error) {
 	if !ok {
 		return &daemonReadiness{}, nil
 	}
+	if err := os.Unsetenv(daemonReadinessEnv); err != nil {
+		return nil, fmt.Errorf("clear daemon readiness descriptor: %w", err)
+	}
 	fd, err := strconv.Atoi(value)
 	if err != nil || fd < daemonReadinessFD {
 		return nil, fmt.Errorf("invalid daemon readiness descriptor %q", value)
