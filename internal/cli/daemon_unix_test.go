@@ -32,7 +32,7 @@ func TestDaemonizeWaitsForReadiness(t *testing.T) {
 	t.Setenv(daemonizedEnv, "0")
 	t.Setenv(daemonReadinessEnv, "99")
 	started := time.Now()
-	require.NoError(t, daemonize())
+	require.NoError(t, runDaemonizeTest(t, "TestDaemonizeWaitsForReadiness"))
 	require.GreaterOrEqual(t, time.Since(started), 100*time.Millisecond)
 }
 
@@ -45,7 +45,25 @@ func TestDaemonizeReturnsChildStartupFailure(t *testing.T) {
 	}
 
 	t.Setenv(daemonTestModeEnv, "failed")
-	require.EqualError(t, daemonize(), "daemon startup failed: invalid listener configuration")
+	require.EqualError(
+		t,
+		runDaemonizeTest(t, "TestDaemonizeReturnsChildStartupFailure"),
+		"daemon startup failed: invalid listener configuration",
+	)
+}
+
+func runDaemonizeTest(t *testing.T, name string) error {
+	t.Helper()
+
+	// Restrict the daemon child to its helper test so unrelated tests cannot
+	// consume the readiness descriptor before the intended child branch.
+	originalArgs := os.Args
+	os.Args = []string{os.Args[0], "-test.run=^" + name + "$"}
+	defer func() {
+		os.Args = originalArgs
+	}()
+
+	return daemonize()
 }
 
 func TestRunDaemonizeReportsStartupFailures(t *testing.T) {
