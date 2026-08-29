@@ -21,6 +21,33 @@ func TestRemoveExistingUnixSocketRemovesStaleSocket(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestRemoveExistingUnixSocketAllowsSymlinkedParent(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	realParent := t.TempDir()
+	symlinkParent := filepath.Join(t.TempDir(), "socket-parent")
+	require.NoError(t, os.Symlink(realParent, symlinkParent))
+	path := filepath.Join(symlinkParent, "listener.sock")
+
+	require.NoError(t, removeExistingUnixSocket(path))
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)
+	require.NoError(t, err)
+	require.NoError(t, listener.Close())
+}
+
+func TestRemoveExistingUnixSocketPreservesUnresolvedParentPath(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	parent := t.TempDir()
+	victim := filepath.Join(parent, "victim.sock")
+	makeStaleSocket(t, victim)
+	path := parent + string(filepath.Separator) + "missing/../victim.sock"
+
+	err := removeExistingUnixSocket(path)
+	require.Error(t, err)
+	info, statErr := os.Lstat(victim)
+	require.NoError(t, statErr)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
+}
+
 func TestRemoveExistingUnixSocketRejectsNonSocket(t *testing.T) {
 	requireSafeSocketQuarantine(t)
 	for _, test := range []struct {
@@ -98,6 +125,42 @@ func TestRemoveExistingUnixSocketDoesNotRecursivelyCleanReplacement(t *testing.T
 	contents, readErr := os.ReadFile(replacementKeep)
 	require.NoError(t, readErr)
 	require.Equal(t, []byte("keep"), contents)
+}
+
+func TestRemoveExistingUnixSocketRetainsQuarantineDirectoryAfterCleanup(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	path := filepath.Join(t.TempDir(), "listener.sock")
+	makeStaleSocket(t, path)
+
+	var quarantineDir string
+	err := removeSocketWithHooks(path, socketCleanupHooks{beforeCleanup: func(quarantineEntry string) {
+		quarantineDir = filepath.Dir(quarantineEntry)
+	}})
+	require.NoError(t, err)
+	info, statErr := os.Stat(quarantineDir)
+	require.NoError(t, statErr)
+	require.True(t, info.IsDir())
+}
+
+func TestRemoveExistingUnixSocketRetainsEmptyCleanupReplacement(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	path := filepath.Join(t.TempDir(), "listener.sock")
+	makeStaleSocket(t, path)
+
+	var movedDir string
+	var replacementDir string
+	err := removeSocketWithHooks(path, socketCleanupHooks{beforeCleanup: func(quarantineEntry string) {
+		replacementDir = filepath.Dir(quarantineEntry)
+		movedDir = replacementDir + ".moved"
+		require.NoError(t, os.Rename(replacementDir, movedDir))
+		require.NoError(t, os.Mkdir(replacementDir, 0o700))
+	}})
+	require.ErrorContains(t, err, "quarantine directory changed")
+	for _, dir := range []string{movedDir, replacementDir} {
+		info, statErr := os.Stat(dir)
+		require.NoError(t, statErr)
+		require.True(t, info.IsDir())
+	}
 }
 
 func TestRemoveExistingUnixSocketFailsClosedWhenSafeQuarantineIsUnavailable(t *testing.T) {

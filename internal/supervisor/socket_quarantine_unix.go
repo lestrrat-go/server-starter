@@ -23,8 +23,11 @@ type unixSocketQuarantine struct {
 }
 
 func newSocketQuarantine(path string) (socketQuarantine, error) {
-	parentPath := filepath.Dir(path)
-	parentFD, err := unix.Open(parentPath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	parentPath, entryName := filepath.Split(path)
+	if parentPath == "" {
+		parentPath = "." + string(filepath.Separator)
+	}
+	parentFD, err := unix.Open(parentPath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +49,7 @@ func newSocketQuarantine(path string) (socketQuarantine, error) {
 		dirFD:      dirFD,
 		parentPath: parentPath,
 		dirName:    dirName,
-		entryName:  filepath.Base(path),
+		entryName:  entryName,
 	}
 	if err := unix.Fstat(dirFD, &quarantine.dirStat); err != nil {
 		quarantine.close()
@@ -99,7 +102,9 @@ func (q *unixSocketQuarantine) cleanup() error {
 	if current.Dev != q.dirStat.Dev || current.Ino != q.dirStat.Ino || current.Mode&unix.S_IFMT != unix.S_IFDIR {
 		return fmt.Errorf("quarantine directory changed; original directory retained through its open handle")
 	}
-	return unix.Unlinkat(q.parentFD, q.dirName, unix.AT_REMOVEDIR)
+	// Removing the directory by name would resolve it again after the identity
+	// check and could remove a replacement. Retain the empty directory instead.
+	return nil
 }
 
 func (q *unixSocketQuarantine) close() {
@@ -108,7 +113,7 @@ func (q *unixSocketQuarantine) close() {
 }
 
 func (q *unixSocketQuarantine) location() string {
-	return filepath.Join(q.parentPath, q.dirName, quarantineEntryName)
+	return q.parentPath + q.dirName + string(filepath.Separator) + quarantineEntryName
 }
 
 func safeSocketQuarantineAvailable() bool {
