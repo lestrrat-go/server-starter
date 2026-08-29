@@ -3,6 +3,7 @@
 package supervisor
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,14 +16,16 @@ type unixSocketQuarantine struct {
 	dirFD      int
 	parentPath string
 	dirName    string
-	entryName  string
+	sourceName string
+	slotName   string
 	dirStat    unix.Stat_t
 	sourceFD   int
 	sourceStat unix.Stat_t
+	hooks      socketCleanupHooks
 }
 
 func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantine, error) {
-	parentPath, entryName := filepath.Split(path)
+	parentPath, sourceName := filepath.Split(path)
 	if parentPath == "" {
 		parentPath = "." + string(filepath.Separator)
 	}
@@ -30,7 +33,7 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 	if err != nil {
 		return nil, err
 	}
-	sourceFD, sourceErr := openQuarantineSource(parentFD, entryName)
+	sourceFD, sourceErr := openQuarantineSource(parentFD, sourceName)
 	if sourceErr != nil && !os.IsNotExist(sourceErr) {
 		_ = unix.Close(parentFD)
 		return nil, sourceErr
@@ -45,7 +48,7 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 	}
 
 	dirName := quarantineDirName
-	if dirName == entryName {
+	if dirName == sourceName {
 		dirName += "-directory"
 	}
 	created, createdStat, err := ensureQuarantineDir(parentFD, dirName)
@@ -77,9 +80,11 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 		dirFD:      dirFD,
 		parentPath: parentPath,
 		dirName:    dirName,
-		entryName:  entryName,
+		sourceName: sourceName,
+		slotName:   socketQuarantineSlotName(sourceName),
 		sourceFD:   sourceFD,
 		sourceStat: sourceStat,
+		hooks:      hooks,
 	}
 	if err := unix.Fstat(dirFD, &quarantine.dirStat); err != nil {
 		quarantine.close()
@@ -131,12 +136,12 @@ func (q *unixSocketQuarantine) moveIn() error {
 	if q.sourceFD < 0 {
 		return errSocketSourceUnavailable
 	}
-	return renameSocketEntryNoReplace(q.parentFD, q.entryName, q.dirFD, quarantineEntryName)
+	return renameSocketEntryNoReplace(q.parentFD, q.sourceName, q.dirFD, q.slotName)
 }
 
 func (q *unixSocketQuarantine) entryIsSocket() (bool, error) {
 	var stat unix.Stat_t
-	if err := unix.Fstatat(q.dirFD, quarantineEntryName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return false, err
 	}
 	if !sameUnixIdentity(&q.sourceStat, &stat) {
@@ -146,18 +151,23 @@ func (q *unixSocketQuarantine) entryIsSocket() (bool, error) {
 }
 
 func (q *unixSocketQuarantine) restore() error {
-	return renameSocketEntryNoReplace(q.dirFD, quarantineEntryName, q.parentFD, q.entryName)
+	return renameSocketEntryNoReplace(q.dirFD, q.slotName, q.parentFD, q.sourceName)
 }
 
 func (q *unixSocketQuarantine) removeEntry() error {
 	var stat unix.Stat_t
-	if err := unix.Fstatat(q.dirFD, quarantineEntryName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
 	if !sameUnixIdentity(&q.sourceStat, &stat) {
 		return fmt.Errorf("quarantined unix socket changed before removal")
 	}
-	return unix.Unlinkat(q.dirFD, quarantineEntryName, 0)
+	if q.hooks.afterRemovalIdentityCheck != nil {
+		q.hooks.afterRemovalIdentityCheck(q.location())
+	}
+	// Unix unlink APIs cannot require the directory entry to match an expected
+	// device and inode. Retain the socket rather than remove a swapped-in entry.
+	return errIdentitySafeSocketRemovalUnavailable
 }
 
 func (q *unixSocketQuarantine) cleanup() error {
@@ -182,7 +192,7 @@ func (q *unixSocketQuarantine) close() {
 }
 
 func (q *unixSocketQuarantine) location() string {
-	return q.parentPath + q.dirName + string(filepath.Separator) + quarantineEntryName
+	return q.parentPath + q.dirName + string(filepath.Separator) + q.slotName
 }
 
 func safeSocketQuarantineAvailable() bool {
@@ -191,4 +201,9 @@ func safeSocketQuarantineAvailable() bool {
 
 func sameUnixIdentity(a, b *unix.Stat_t) bool {
 	return a.Dev == b.Dev && a.Ino == b.Ino
+}
+
+func socketQuarantineSlotName(sourceName string) string {
+	digest := sha256.Sum256([]byte(sourceName))
+	return fmt.Sprintf("%s%x", quarantineEntryPrefix, digest)
 }

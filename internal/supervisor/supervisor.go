@@ -210,6 +210,7 @@ type socketCleanupHooks struct {
 	afterQuarantineOpenFailure func(string)
 	beforeMove                 func()
 	beforeRemove               func(string)
+	afterRemovalIdentityCheck  func(string)
 	beforeCleanup              func(string)
 }
 
@@ -265,9 +266,12 @@ func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
 		hooks.beforeRemove(quarantine.location())
 	}
 	if err := quarantine.removeEntry(); err != nil {
+		if hooks.beforeCleanup != nil {
+			hooks.beforeCleanup(quarantine.location())
+		}
 		return finishSocketQuarantine(
 			quarantine,
-			fmt.Errorf("remove quarantined unix socket %q: %w; entry retained at %q", path, err, quarantine.location()),
+			fmt.Errorf("remove quarantined unix socket %q: %w", path, err),
 		)
 	}
 	if hooks.beforeCleanup != nil {

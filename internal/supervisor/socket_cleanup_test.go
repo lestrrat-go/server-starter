@@ -12,14 +12,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRemoveExistingUnixSocketRemovesStaleSocket(t *testing.T) {
+func TestRemoveExistingUnixSocketQuarantinesStaleSocket(t *testing.T) {
 	requireSafeSocketQuarantine(t)
 	path := filepath.Join(t.TempDir(), "listener.sock")
 	makeStaleSocket(t, path)
 
-	require.NoError(t, removeExistingUnixSocket(path))
-	_, err := os.Lstat(path)
-	require.ErrorIs(t, err, os.ErrNotExist)
+	var quarantineEntry string
+	err := removeSocketWithHooks(path, socketCleanupHooks{beforeRemove: func(path string) {
+		quarantineEntry = path
+	}})
+	require.ErrorContains(t, err, "identity-safe removal")
+	_, statErr := os.Lstat(path)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+	info, statErr := os.Lstat(quarantineEntry)
+	require.NoError(t, statErr)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
 }
 
 func TestRemoveExistingUnixSocketAllowsSymlinkedParent(t *testing.T) {
@@ -110,12 +117,13 @@ func TestRemoveExistingUnixSocketClassifiesQuarantinedEntry(t *testing.T) {
 	require.Equal(t, []byte("keep"), contents)
 }
 
-func TestRemoveExistingUnixSocketUnlinksThroughQuarantineHandle(t *testing.T) {
+func TestRemoveExistingUnixSocketRetainsSocketThroughQuarantineHandle(t *testing.T) {
 	requireSafeSocketQuarantine(t)
 	path := filepath.Join(t.TempDir(), "listener.sock")
 	makeStaleSocket(t, path)
 
 	var movedDir string
+	var retainedEntry string
 	var replacementEntry string
 	err := removeSocketWithHooks(path, socketCleanupHooks{beforeRemove: func(quarantineEntry string) {
 		quarantineDir := filepath.Dir(quarantineEntry)
@@ -123,14 +131,16 @@ func TestRemoveExistingUnixSocketUnlinksThroughQuarantineHandle(t *testing.T) {
 		require.NoError(t, os.Rename(quarantineDir, movedDir))
 		require.NoError(t, os.Mkdir(quarantineDir, 0o700))
 		replacementEntry = quarantineEntry
+		retainedEntry = filepath.Join(movedDir, filepath.Base(quarantineEntry))
 		require.NoError(t, os.WriteFile(replacementEntry, []byte("keep"), 0o600))
 	}})
 	require.ErrorContains(t, err, "quarantine directory changed")
 	contents, readErr := os.ReadFile(replacementEntry)
 	require.NoError(t, readErr)
 	require.Equal(t, []byte("keep"), contents)
-	_, statErr := os.Lstat(filepath.Join(movedDir, "socket"))
-	require.ErrorIs(t, statErr, os.ErrNotExist)
+	info, statErr := os.Lstat(retainedEntry)
+	require.NoError(t, statErr)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
 }
 
 func TestRemoveExistingUnixSocketPreservesQuarantineEntryReplacement(t *testing.T) {
@@ -148,6 +158,69 @@ func TestRemoveExistingUnixSocketPreservesQuarantineEntryReplacement(t *testing.
 	contents, readErr := os.ReadFile(replacementPath)
 	require.NoError(t, readErr)
 	require.Equal(t, []byte("keep"), contents)
+}
+
+func TestRemoveExistingUnixSocketPreservesReplacementAfterIdentityCheck(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	path := filepath.Join(t.TempDir(), "listener.sock")
+	makeStaleSocket(t, path)
+
+	var retainedPath string
+	var replacementPath string
+	err := removeSocketWithHooks(path, socketCleanupHooks{afterRemovalIdentityCheck: func(quarantineEntry string) {
+		retainedPath = quarantineEntry + ".retained"
+		replacementPath = quarantineEntry
+		require.NoError(t, os.Rename(quarantineEntry, retainedPath))
+		require.NoError(t, os.WriteFile(replacementPath, []byte("keep"), 0o600))
+	}})
+	require.ErrorContains(t, err, "identity-safe removal")
+	contents, readErr := os.ReadFile(replacementPath)
+	require.NoError(t, readErr)
+	require.Equal(t, []byte("keep"), contents)
+	info, statErr := os.Lstat(retainedPath)
+	require.NoError(t, statErr)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
+}
+
+func TestRemoveExistingUnixSocketUsesDistinctQuarantineSlots(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	parent := t.TempDir()
+	firstPath := filepath.Join(parent, "first.sock")
+	secondPath := filepath.Join(parent, "second.sock")
+	makeStaleSocket(t, firstPath)
+	makeStaleSocket(t, secondPath)
+
+	firstReady := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstResult := make(chan error, 1)
+	var firstSlot string
+	go func() {
+		firstResult <- removeSocketWithHooks(firstPath, socketCleanupHooks{beforeRemove: func(slot string) {
+			firstSlot = slot
+			close(firstReady)
+			<-releaseFirst
+		}})
+	}()
+
+	<-firstReady
+	var secondSlot string
+	secondErr := removeSocketWithHooks(secondPath, socketCleanupHooks{beforeRemove: func(slot string) {
+		secondSlot = slot
+	}})
+	close(releaseFirst)
+	firstErr := <-firstResult
+
+	require.NotErrorIs(t, secondErr, os.ErrExist)
+	require.ErrorContains(t, secondErr, "identity-safe removal")
+	require.ErrorContains(t, firstErr, "identity-safe removal")
+	require.NotEqual(t, firstSlot, secondSlot)
+	for _, slot := range []string{firstSlot, secondSlot} {
+		info, statErr := os.Lstat(slot)
+		require.NoError(t, statErr)
+		require.NotZero(t, info.Mode()&os.ModeSocket)
+	}
+	_, statErr := os.Lstat(secondPath)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestRemoveExistingUnixSocketRejectsQuarantineSubstitutionBeforeOpen(t *testing.T) {
@@ -216,7 +289,7 @@ func TestRemoveExistingUnixSocketRetainsQuarantineDirectoryAfterCleanup(t *testi
 	err := removeSocketWithHooks(path, socketCleanupHooks{beforeCleanup: func(quarantineEntry string) {
 		quarantineDir = filepath.Dir(quarantineEntry)
 	}})
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "identity-safe removal")
 	info, statErr := os.Stat(quarantineDir)
 	require.NoError(t, statErr)
 	require.True(t, info.IsDir())
