@@ -71,7 +71,7 @@ func TestReportFailedStartMessage(t *testing.T) {
 	})
 
 	t.Run("with a process state", func(t *testing.T) {
-		cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 3")
+		cmd := exec.CommandContext(context.Background(), testShellPath, "-c", "exit 3")
 		require.Error(t, cmd.Run(), "the command must exit non-zero")
 		require.NotNil(t, cmd.ProcessState)
 
@@ -198,7 +198,7 @@ func TestConfiguredWriterReceivesSupervisorDiagnostics(t *testing.T) {
 
 	var buf syncBuffer
 	sd, err := NewStarter(&config{
-		command: "/bin/sh",
+		command: testShellPath,
 		args:    []string{"-c", "exec sleep 30"},
 		ports:   []string{"0"},
 		stderr:  &buf,

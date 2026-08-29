@@ -2,7 +2,6 @@ package supervisor
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,35 +9,19 @@ import (
 	"strings"
 )
 
-var errNoEnv = errors.New("no ENVDIR specified, or ENVDIR does not exist")
-
 const maxEnvValueBytes = 128 * 1024
 
-// loadEnvdir reads the envdir at dn and returns the resulting variable map
-// for the caller to overlay onto a spawned worker's environment. Unlike the
-// old setEnv, it is a pure function: it never touches the supervisor's own
-// process environment, so the caller decides what, if anything, to do with
-// the result. Any failure to load is reported to w, since loadEnvdir has no
-// stream of its own.
-func loadEnvdir(dn string, w io.Writer) map[string]string {
-	m, err := reloadEnv(dn)
-	if err != nil && !errors.Is(err, errNoEnv) {
-		fmt.Fprintf(w, "failed to load from envdir: %s\n", err)
-	}
-	return m
-}
-
 // reloadEnv reads dn (one regular file per variable; a file's value is its
-// first line, up to maxEnvValueBytes) into a map. It returns errNoEnv when dn
-// is empty, does not exist, or contains no usable entries.
+// first line, up to maxEnvValueBytes) into a map. An empty dn disables envdir
+// loading.
 func reloadEnv(dn string) (map[string]string, error) {
 	if dn == "" {
-		return nil, errNoEnv
+		return map[string]string{}, nil
 	}
 
 	entries, err := os.ReadDir(dn)
 	if err != nil {
-		return nil, errNoEnv
+		return nil, fmt.Errorf("read envdir %q: %w", dn, err)
 	}
 
 	m := make(map[string]string)
@@ -48,35 +31,42 @@ func reloadEnv(dn string) (map[string]string, error) {
 			continue
 		}
 
-		file, err := openEnvFile(filepath.Join(dn, name))
+		path := filepath.Join(dn, name)
+		file, err := openEnvFile(path)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("read envdir entry %q: %w", path, err)
 		}
-		value, ok := readEnvValue(file)
-		if err := file.Close(); err != nil || !ok {
+		value, ok, readErr := readEnvValue(file)
+		closeErr := file.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read envdir entry %q: %w", path, readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close envdir entry %q: %w", path, closeErr)
+		}
+		if !ok {
 			continue
 		}
 		m[name] = value
 	}
 
-	if len(m) == 0 {
-		return nil, errNoEnv
-	}
-
 	return m, nil
 }
 
-func readEnvValue(file *os.File) (string, bool) {
+func readEnvValue(file *os.File) (string, bool, error) {
 	data, err := io.ReadAll(io.LimitReader(file, maxEnvValueBytes+1))
-	if err != nil || len(data) == 0 {
-		return "", false
+	if err != nil {
+		return "", false, err
+	}
+	if len(data) == 0 {
+		return "", false, nil
 	}
 
 	if line, _, found := bytes.Cut(data, []byte("\n")); found {
-		return string(line), true
+		return string(line), true, nil
 	}
 	if len(data) > maxEnvValueBytes {
-		return "", false
+		return "", false, nil
 	}
-	return string(data), true
+	return string(data), true, nil
 }

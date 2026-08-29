@@ -1,7 +1,9 @@
 package supervisor
 
 import (
+	"context"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,25 +115,56 @@ func TestReloadEnvdirSkipsSymlink(t *testing.T) {
 		t.Skipf("symlinks are unavailable: %s", err)
 	}
 
-	_, err := reloadEnv(dir)
-	require.ErrorIs(t, err, errNoEnv)
+	got, err := reloadEnv(dir)
+	require.NoError(t, err)
+	require.Empty(t, got)
 }
 
-// TestLoadEnvdirDropsDeletedValues proves loadEnvdir's map reflects the
+func TestReloadEnvdirUnset(t *testing.T) {
+	got, err := reloadEnv("")
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
+func TestReloadEnvdirReportsDirectoryErrors(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing")
+	notDirectory := filepath.Join(dir, "not-directory")
+	require.NoError(t, os.WriteFile(notDirectory, []byte("value"), 0600))
+
+	for name, path := range map[string]string{
+		"missing":       missing,
+		"not directory": notDirectory,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := reloadEnv(path)
+			require.Nil(t, got)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), path)
+
+			var pathErr *os.PathError
+			require.ErrorAs(t, err, &pathErr)
+			require.Equal(t, path, pathErr.Path)
+		})
+	}
+}
+
+// TestReloadEnvdirDropsDeletedValues proves reloadEnv's map reflects the
 // envdir's current contents on every call, with no leftover bookkeeping
 // from a previous call: a key removed from the envdir is simply absent
 // from the next map, rather than needing to be explicitly unset anywhere.
 // This replaces the old managedEnv tracking in setEnv, which existed only
 // because that function mutated the supervisor's own process environment;
-// loadEnvdir never does, so there is nothing to unset (see env.go).
-func TestLoadEnvdirDropsDeletedValues(t *testing.T) {
+// reloadEnv never does, so there is nothing to unset (see env.go).
+func TestReloadEnvdirDropsDeletedValues(t *testing.T) {
 	dir := t.TempDir()
 	name := "SERVER_STARTER_TEST_ENV"
 	if err := os.WriteFile(filepath.Join(dir, name), []byte("first\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	m := loadEnvdir(dir, io.Discard)
+	m, err := reloadEnv(dir)
+	require.NoError(t, err)
 	if got := m[name]; got != "first" {
 		t.Fatalf("initial envdir value = %q", got)
 	}
@@ -140,8 +173,23 @@ func TestLoadEnvdirDropsDeletedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m = loadEnvdir(dir, io.Discard)
+	m, err = reloadEnv(dir)
+	require.NoError(t, err)
 	if _, ok := m[name]; ok {
 		t.Fatal("deleted envdir entry remained in the reloaded map")
 	}
+}
+
+func TestRunRejectsMissingEnvdir(t *testing.T) {
+	command, err := os.Executable()
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "missing")
+	sd, err := NewStarter(&config{command: command, envdir: path})
+	require.NoError(t, err)
+
+	ctrl, err := sd.Run(context.Background())
+	require.Nil(t, ctrl)
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	require.Contains(t, err.Error(), path)
 }

@@ -27,6 +27,8 @@ func TestRunRejectsSparseDescriptorLayout(t *testing.T) {
 	require.ErrorContains(t, err, fmt.Sprintf("maximum is %d", maxSparseListenerFDSlots))
 }
 
+const testShellPath = "/bin/sh"
+
 func TestTeardownRemovesUnixSocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.sock")
 	l, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)

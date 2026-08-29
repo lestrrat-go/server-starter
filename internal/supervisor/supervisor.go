@@ -153,7 +153,9 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 	// SERVER_STARTER_GENERATION, and the supervisor must not mutate its own
 	// environment, so it is only ever set on the worker's cmd.Env in
 	// startWorker.
-	rs.envOverlay = loadEnvdir(rs.cfg.envdir, s.stderr)
+	if err := rs.reloadEnvdir(); err != nil {
+		return nil, err
+	}
 
 	ctrl := newController()
 	go rs.loop(ctx, ctrl)
@@ -203,9 +205,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 		close(workerStateDone)
 	}()
 
-	rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
 	hangupPending := false
-
 	// Just wait for the worker to exit, for a restart request, or for ctx
 	// to be cancelled.
 	for {
@@ -225,8 +225,14 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			// oops, the worker exited? check for its pid
 			if p != nil && p.Pid == st.Pid() { // current worker
 				exitSt := grabExitStatus(rs.cfg.stderr, st)
-				fmt.Fprintf(rs.cfg.stderr, "worker %d died unexpectedly with status %d, restarting\n", p.Pid, exitSt)
-				rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
+				pid := p.Pid
+				p = nil
+				fmt.Fprintf(rs.cfg.stderr, "worker %d died unexpectedly with status %d, restarting\n", pid, exitSt)
+				if err := rs.reloadEnvdir(); err != nil {
+					sigToSend = rs.cfg.signalOnTERM
+					ctrl.setErr(err)
+					return
+				}
 				newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone)
 				if err != nil {
 					fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
@@ -289,7 +295,11 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 			if p != nil {
 				rs.oldWorkers[p.Pid] = rs.generation
 			}
-			rs.envOverlay = loadEnvdir(rs.cfg.envdir, rs.cfg.stderr)
+			if err := rs.reloadEnvdir(); err != nil {
+				sigToSend = rs.cfg.signalOnTERM
+				ctrl.setErr(err)
+				return
+			}
 			newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone)
 			if err != nil {
 				fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
@@ -435,6 +445,15 @@ func (rs *runState) printWorkerPIDs() {
 		}
 	}
 	fmt.Fprintf(rs.cfg.stderr, "\n")
+}
+
+func (rs *runState) reloadEnvdir() error {
+	overlay, err := reloadEnv(rs.cfg.envdir)
+	if err != nil {
+		return err
+	}
+	rs.envOverlay = overlay
+	return nil
 }
 
 func (rs *runState) teardown() {
