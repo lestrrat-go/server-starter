@@ -94,6 +94,12 @@ func openRunningPIDFile(path string) (*os.File, error) {
 	return f, nil
 }
 
+func validatePIDControlPath(string) error {
+	// PID control is rejected by lockOwnerPID on Windows, so the Unix
+	// namespace trust policy does not apply.
+	return nil
+}
+
 func createPIDFile(path *uint16, disposition uint32) (windows.Handle, error) {
 	return windows.CreateFile(
 		path,

@@ -23,7 +23,8 @@ type PIDFile struct {
 }
 
 // RunningPID is a validated reference to a running supervisor. The pid is
-// accepted only when it matches the process that owns both supervisor locks.
+// accepted only from a trusted namespace and when it matches the process that
+// owns both supervisor locks.
 type RunningPID struct {
 	file        *os.File
 	controlFile *os.File
@@ -115,10 +116,14 @@ func (p *PIDFile) Close() error {
 	return err
 }
 
-// OpenRunningPID opens path and verifies that its recorded pid owns the
-// supervisor locks. Keeping the returned handles open also lets callers wait
-// on the same files even if the pathnames are later replaced.
+// OpenRunningPID opens path from a namespace protected against replacement and
+// verifies that its recorded pid owns the supervisor locks. Keeping the
+// returned handles open also lets callers wait on the same files even if the
+// pathnames are later replaced by a trusted owner.
 func OpenRunningPID(path string) (*RunningPID, error) {
+	if err := validatePIDControlPath(path); err != nil {
+		return nil, err
+	}
 	f, err := openRunningPIDFile(path)
 	if err != nil {
 		return nil, err
@@ -198,7 +203,7 @@ func controlLockPath(path string) string {
 	return path + ".lock"
 }
 
-// ReadPID reads a pid only from a live supervisor-owned pid file.
+// ReadPID reads a pid only from a trusted, live supervisor-owned pid file.
 func ReadPID(path string) (int, error) {
 	running, err := OpenRunningPID(path)
 	if err != nil {

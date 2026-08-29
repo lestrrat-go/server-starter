@@ -118,6 +118,51 @@ func TestReadPIDRequiresLiveMatchingLockOwner(t *testing.T) {
 	})
 }
 
+func TestReadPIDRejectsReplaceableNamespace(t *testing.T) {
+	protocols := []struct {
+		name string
+		mode string
+	}{
+		{name: "current"},
+		{name: "legacy", mode: "legacy"},
+	}
+	scopes := []string{"all protocol names", "parent directory"}
+
+	for _, protocol := range protocols {
+		for _, scope := range scopes {
+			t.Run(protocol.name+"/"+scope, func(t *testing.T) {
+				root := t.TempDir()
+				pidDir := root
+				if scope == "parent directory" {
+					pidDir = filepath.Join(root, "run")
+					require.NoError(t, os.Mkdir(pidDir, 0700))
+				}
+				path := filepath.Join(pidDir, "server.pid")
+				originalPID := startPIDLockHelperWithMode(t, path, protocol.mode)
+
+				if scope == "parent directory" {
+					require.NoError(t, os.Rename(pidDir, pidDir+".original"))
+					require.NoError(t, os.Mkdir(pidDir, 0700))
+					require.NoError(t, os.Chmod(root, 0770))
+				} else {
+					require.NoError(t, os.Rename(path, path+".original"))
+					if protocol.mode == "" {
+						require.NoError(t, os.Rename(path+".lock", path+".lock.original"))
+					}
+					require.NoError(t, os.Chmod(pidDir, 0770))
+				}
+
+				replacementPID := startPIDLockHelperWithMode(t, path, protocol.mode)
+				require.NotEqual(t, originalPID, replacementPID)
+
+				got, err := statefile.ReadPID(path)
+				require.ErrorContains(t, err, "allows untrusted replacement")
+				require.Zero(t, got)
+			})
+		}
+	}
+}
+
 func TestReadPIDAllowsDifferentPIDFileOwner(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("changing pid-file ownership requires root")

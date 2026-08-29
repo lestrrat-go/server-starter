@@ -62,6 +62,66 @@ func TestStopRejectsReplacedPIDPath(t *testing.T) {
 	require.NoError(t, syscall.Kill(replacement.pid, 0))
 }
 
+func TestControlRejectsReplaceableNamespaceBeforeSignalling(t *testing.T) {
+	protocols := []struct {
+		name string
+		mode string
+	}{
+		{name: "current"},
+		{name: "legacy", mode: "legacy"},
+	}
+	scopes := []string{"all protocol names", "parent directory"}
+	actions := []struct {
+		name string
+		run  func(context.Context, string, string) error
+	}{
+		{
+			name: "stop",
+			run: func(ctx context.Context, pidPath, _ string) error {
+				return Stop(ctx, pidPath)
+			},
+		},
+		{name: "restart", run: Restart},
+	}
+
+	for _, protocol := range protocols {
+		for _, scope := range scopes {
+			for _, action := range actions {
+				t.Run(protocol.name+"/"+scope+"/"+action.name, func(t *testing.T) {
+					root := t.TempDir()
+					pidDir := root
+					if scope == "parent directory" {
+						pidDir = filepath.Join(root, "run")
+						require.NoError(t, os.Mkdir(pidDir, 0700))
+					}
+					pidPath := filepath.Join(pidDir, "pid")
+					original := startControlHelperWithMode(t, pidPath, protocol.mode)
+
+					if scope == "parent directory" {
+						require.NoError(t, os.Rename(pidDir, pidDir+".original"))
+						require.NoError(t, os.Mkdir(pidDir, 0700))
+						require.NoError(t, os.Chmod(root, 0770))
+					} else {
+						require.NoError(t, os.Rename(pidPath, pidPath+".original"))
+						if protocol.mode == "" {
+							require.NoError(t, os.Rename(pidPath+".lock", pidPath+".lock.original"))
+						}
+						require.NoError(t, os.Chmod(pidDir, 0770))
+					}
+
+					replacement := startControlHelperWithMode(t, pidPath, protocol.mode)
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
+					err := action.run(ctx, pidPath, filepath.Join(root, "status"))
+					require.ErrorContains(t, err, "allows untrusted replacement")
+					require.NoError(t, syscall.Kill(original.pid, 0))
+					require.NoError(t, syscall.Kill(replacement.pid, 0))
+				})
+			}
+		}
+	}
+}
+
 // TestStopCancelledContext verifies that Stop, given a context that is
 // already cancelled, returns promptly instead of waiting out the poll loop.
 // The cancelled context is checked before the pid file is opened, so no

@@ -52,6 +52,13 @@ func TestOpenRunningPIDRejectsOversizedFile(t *testing.T) {
 	require.Nil(t, running)
 }
 
+func TestTrustedPIDNamespaceOwner(t *testing.T) {
+	const trustedUID = 1000
+	require.True(t, trustedPIDNamespaceOwner(0, trustedUID))
+	require.True(t, trustedPIDNamespaceOwner(trustedUID, trustedUID))
+	require.False(t, trustedPIDNamespaceOwner(1001, trustedUID))
+}
+
 func TestAcquireRejectsSymlinkWithoutChangingTarget(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")

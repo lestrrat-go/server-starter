@@ -42,6 +42,106 @@ func openRunningPIDFile(path string) (*os.File, error) {
 	return f, nil
 }
 
+func validatePIDControlPath(path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("failed to resolve pid file %q: %w", path, err)
+	}
+	parentPath := filepath.Dir(absPath)
+	resolvedParent, err := filepath.EvalSymlinks(parentPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve pid file %q parent directory: %w", path, err)
+	}
+
+	trustedUID := uint32(os.Geteuid())
+	if err := validatePIDControlParent(path, resolvedParent, trustedUID); err != nil {
+		return err
+	}
+	if err := validatePIDNamespace(path, parentPath, trustedUID); err != nil {
+		return err
+	}
+	if resolvedParent != parentPath {
+		if err := validatePIDNamespace(path, resolvedParent, trustedUID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePIDControlParent(pidPath, parentPath string, trustedUID uint32) error {
+	info, err := os.Stat(parentPath)
+	if err != nil {
+		return fmt.Errorf("failed to inspect pid file %q parent directory %q: %w", pidPath, parentPath, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("pid file %q parent %q is not a directory", pidPath, parentPath)
+	}
+	ownerUID, err := fileOwnerUID(info, parentPath)
+	if err != nil {
+		return err
+	}
+	if !trustedPIDNamespaceOwner(ownerUID, trustedUID) {
+		return fmt.Errorf("pid file %q has untrusted parent directory %q owned by uid %d", pidPath, parentPath, ownerUID)
+	}
+	if info.Mode().Perm()&0022 != 0 {
+		return fmt.Errorf("pid file %q parent directory %q allows untrusted replacement", pidPath, parentPath)
+	}
+	return nil
+}
+
+func validatePIDNamespace(pidPath, entryPath string, trustedUID uint32) error {
+	entryPath = filepath.Clean(entryPath)
+	for {
+		parentPath := filepath.Dir(entryPath)
+		if parentPath == entryPath {
+			return nil
+		}
+
+		entryInfo, err := os.Lstat(entryPath)
+		if err != nil {
+			return fmt.Errorf("failed to inspect pid file %q namespace entry %q: %w", pidPath, entryPath, err)
+		}
+		parentInfo, err := os.Stat(parentPath)
+		if err != nil {
+			return fmt.Errorf("failed to inspect pid file %q namespace directory %q: %w", pidPath, parentPath, err)
+		}
+		parentUID, err := fileOwnerUID(parentInfo, parentPath)
+		if err != nil {
+			return err
+		}
+		if !trustedPIDNamespaceOwner(parentUID, trustedUID) {
+			return fmt.Errorf("pid file %q has untrusted namespace directory %q owned by uid %d", pidPath, parentPath, parentUID)
+		}
+		if parentInfo.Mode().Perm()&0022 != 0 {
+			entryUID, err := fileOwnerUID(entryInfo, entryPath)
+			if err != nil {
+				return err
+			}
+			if parentInfo.Mode()&os.ModeSticky == 0 || !trustedPIDNamespaceOwner(entryUID, trustedUID) {
+				return fmt.Errorf(
+					"pid file %q namespace directory %q allows untrusted replacement of %q",
+					pidPath,
+					parentPath,
+					entryPath,
+				)
+			}
+		}
+		entryPath = parentPath
+	}
+}
+
+func fileOwnerUID(info os.FileInfo, path string) (uint32, error) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, fmt.Errorf("failed to inspect owner of %q", path)
+	}
+	return stat.Uid, nil
+}
+
+func trustedPIDNamespaceOwner(ownerUID, trustedUID uint32) bool {
+	return ownerUID == 0 || ownerUID == trustedUID
+}
+
 func validatePIDFile(f *os.File, path string) error {
 	info, err := f.Stat()
 	if err != nil {
