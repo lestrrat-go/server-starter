@@ -5,9 +5,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
+
+const windowsOS = "windows"
 
 type Config interface {
 	Args() []string
@@ -52,7 +57,11 @@ type Starter struct {
 	ports      []string
 	paths      []string
 	command    string
-	args       []string
+	// commandPath pins the executable found for Windows commands whose lookup
+	// path cannot be resolved safely again at process start. command remains
+	// the original argv[0] supplied to each worker.
+	commandPath string
+	args        []string
 
 	envdir              string
 	enableAutoRestart   bool
@@ -61,6 +70,69 @@ type Starter struct {
 
 	stdout io.Writer
 	stderr io.Writer
+}
+
+func hasPathSeparator(path string) bool {
+	for i := range len(path) {
+		if os.IsPathSeparator(path[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+func commandForValidation(command, dir string) string {
+	if command == "" || dir == "" || filepath.IsAbs(command) {
+		return command
+	}
+	if os.IsPathSeparator(command[0]) {
+		volume := filepath.VolumeName(dir)
+		if volume == "" {
+			return command
+		}
+		return volume + command
+	}
+
+	volume := filepath.VolumeName(command)
+	if volume != "" {
+		if !strings.EqualFold(volume, filepath.VolumeName(dir)) {
+			return command
+		}
+		return filepath.Join(dir, command[len(volume):])
+	}
+
+	if !hasPathSeparator(command) {
+		return command
+	}
+	return dir + string(os.PathSeparator) + command
+}
+
+func resolveCommandPath(command, dir string) (string, error) {
+	validationDir := dir
+	if runtime.GOOS == windowsOS && dir != "" {
+		var err error
+		validationDir, err = filepath.Abs(dir)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	validationCommand := commandForValidation(command, validationDir)
+	commandPath, err := exec.LookPath(validationCommand)
+	if err != nil {
+		return "", err
+	}
+
+	pinCommandPath := validationCommand != command &&
+		(filepath.VolumeName(command) != "" || os.IsPathSeparator(command[0]))
+	if runtime.GOOS == windowsOS {
+		pinCommandPath = filepath.VolumeName(command) != "" || hasPathSeparator(command)
+	}
+	if !pinCommandPath {
+		return "", nil
+	}
+
+	return filepath.Abs(commandPath)
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
@@ -88,10 +160,13 @@ func NewStarter(c Config) (*Starter, error) {
 		signalOnTERM = signalOnTERMValue
 	}
 
-	if c.Command() == "" {
+	command := c.Command()
+	if command == "" {
 		return nil, fmt.Errorf("argument Command must be specified")
 	}
-	if _, err := exec.LookPath(c.Command()); err != nil {
+	dir := c.Dir()
+	commandPath, err := resolveCommandPath(command, dir)
+	if err != nil {
 		return nil, err
 	}
 
@@ -109,8 +184,9 @@ func NewStarter(c Config) (*Starter, error) {
 
 	s := &Starter{
 		args:                c.Args(),
-		command:             c.Command(),
-		dir:                 c.Dir(),
+		command:             command,
+		commandPath:         commandPath,
+		dir:                 dir,
 		interval:            c.Interval(),
 		pidFile:             c.PidFile(),
 		ports:               c.Ports(),

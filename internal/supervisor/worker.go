@@ -48,6 +48,14 @@ func (d dummyProcessState) Sys() any {
 	return d.status
 }
 
+func (s *Starter) workerCommand(ctx context.Context) *exec.Cmd {
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), s.command, s.args...)
+	if s.commandPath != "" {
+		cmd.Path = s.commandPath
+	}
+	return cmd
+}
+
 // reportFailedStart writes the "worker failed to start" diagnostic to w.
 //
 // The status can come from two places, tried in this order:
@@ -102,7 +110,7 @@ func (rs *runState) startWorker(
 		// signalOnTERM and drains, so context cancellation must not kill
 		// workers out from under that. WithoutCancel keeps the call
 		// context-aware without handing the child's lifetime to ctx.
-		cmd := exec.CommandContext(context.WithoutCancel(ctx), rs.cfg.command, rs.cfg.args...)
+		cmd := rs.cfg.workerCommand(ctx)
 		if rs.cfg.dir != "" {
 			cmd.Dir = rs.cfg.dir
 		}

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -148,6 +149,46 @@ func readFileEventually(t *testing.T, path string) []byte {
 
 	t.Fatalf("timed out waiting for %s", path)
 	return nil
+}
+
+func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
+	if runtime.GOOS == windowsOS {
+		t.Skip("the worker fixture uses a POSIX shell script")
+	}
+
+	dir := t.TempDir()
+	command := "." + string(os.PathSeparator) + "worker"
+	executable := filepath.Join(dir, "worker")
+	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\n[ \"$0\" = \"./worker\" ]\n"), 0700))
+
+	sd, err := NewStarter(&config{
+		command: command,
+		dir:     dir,
+	})
+	require.NoError(t, err)
+	require.Equal(t, command, sd.command)
+
+	cmd := sd.workerCommand(context.Background())
+	cmd.Dir = sd.dir
+	require.Equal(t, command, cmd.Args[0])
+	require.NoError(t, cmd.Run())
+}
+
+func TestNewStarterPreservesBareCommandForPATHLookup(t *testing.T) {
+	dir := t.TempDir()
+	commandName := "worker"
+	if runtime.GOOS == windowsOS {
+		commandName += ".exe"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, commandName), nil, 0700))
+	t.Setenv("PATH", dir)
+
+	sd, err := NewStarter(&config{
+		command: commandName,
+		dir:     t.TempDir(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, commandName, sd.command)
 }
 
 func TestRun(t *testing.T) {
