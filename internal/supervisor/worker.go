@@ -20,6 +20,38 @@ import (
 var successStatus syscall.WaitStatus
 var failureStatus syscall.WaitStatus
 
+const minimumCheckedStartupInterval = time.Second
+
+type workerStartupState struct {
+	checked bool
+}
+
+func (s workerStartupState) waitForProbe(ctx context.Context, interval time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.checked && interval < minimumCheckedStartupInterval {
+		interval = minimumCheckedStartupInterval
+	}
+
+	timer := time.NewTimer(interval)
+	defer func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}()
+
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func grabExitStatus(w io.Writer, st processState) syscall.WaitStatus {
 	// Note: POSSIBLY non portable. seems to work on Unix/Windows
 	// When/if this blows up, we will look for a cure
@@ -102,16 +134,21 @@ func reportFailedStart(
 // into a valid SERVER_STARTER_PORT spec (see starter.FormatPorts), or when the
 // initial worker command cannot start or exits before passing a synchronous
 // startup check. Without a synchronous startup check, command-start errors and
-// early exits remain transient and are retried. startup receives nil after the
-// worker passes a requested synchronous startup check.
+// early exits remain transient and are retried.
 func (rs *runState) startWorker(
 	ctx context.Context,
 	ch chan<- processState,
 	done <-chan struct{},
-	startup chan<- error,
+	checkStartup bool,
 ) (*os.Process, error) {
+	startup := workerStartupState{checked: checkStartup}
+
 	// Don't give up until we're running.
 	for {
+		if ctx.Err() != nil {
+			return nil, nil
+		}
+
 		pid := -1
 		// reapedStatus/reapedOK carry findWorker's reaped exit status (set
 		// below, once the worker has actually been started) out to the
@@ -210,7 +247,7 @@ func (rs *runState) startWorker(
 		}
 		if startErr != nil {
 			fmt.Fprintf(rs.cfg.stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
-			if startup != nil {
+			if startup.checked {
 				return nil, startErr
 			}
 		} else {
@@ -218,22 +255,17 @@ func (rs *runState) startWorker(
 			pid = cmd.Process.Pid
 			fmt.Fprintf(rs.cfg.stderr, "starting new worker %d\n", pid)
 
-			// Wait for interval before checking if the process is alive. A
-			// cancelled ctx bails out early too: it means a shutdown was
-			// requested, so there is no point waiting out the rest of the
-			// interval before deciding the worker "started".
-			tch := time.After(rs.cfg.interval)
-			ctxDone := false
-			select {
-			case <-tch:
-			case <-ctx.Done():
-				ctxDone = true
-			}
-
-			// Check if we can find a process by its pid
+			// Checked startup needs a real observation window even when the
+			// respawn retry interval is zero. Cancellation ends the probe but
+			// leaves worker shutdown under the supervisor's ownership.
+			probeErr := startup.waitForProbe(ctx, rs.cfg.interval)
 			var p *os.Process
-			p, reapedStatus, reapedOK = findWorker(pid)
-			if ctxDone || p != nil {
+			if probeErr != nil {
+				p = cmd.Process
+			} else {
+				p, reapedStatus, reapedOK = findWorker(pid)
+			}
+			if p != nil {
 				// No error? We were successful! Make sure we capture
 				// the program exiting
 				go func() {
@@ -252,9 +284,6 @@ func (rs *runState) startWorker(
 					case <-done:
 					}
 				}()
-				if startup != nil {
-					startup <- nil
-				}
 				// Bail out
 				return p, nil
 			}
@@ -267,11 +296,14 @@ func (rs *runState) startWorker(
 		}
 
 		status, statusOK := reportFailedStart(rs.cfg.stderr, pid, reapedStatus, reapedOK, cmd.ProcessState)
-		if startup != nil {
+		if startup.checked {
 			if statusOK {
 				return nil, fmt.Errorf("initial worker %d exited before passing startup check, status:%d", pid, status)
 			}
 			return nil, fmt.Errorf("initial worker %d exited before passing startup check", pid)
+		}
+		if ctx.Err() != nil {
+			return nil, nil
 		}
 	}
 }

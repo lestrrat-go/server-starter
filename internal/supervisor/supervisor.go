@@ -199,11 +199,15 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- e
 
 	workerCh := make(chan processState)
 	workerStateDone := make(chan struct{})
-	p, err := rs.startWorker(ctx, workerCh, workerStateDone, startup)
-	if err != nil {
-		if startup != nil {
-			startup <- err
+	p, err := rs.startWorker(ctx, workerCh, workerStateDone, startup != nil)
+	if startup != nil {
+		startupErr := err
+		if startupErr == nil {
+			startupErr = ctx.Err()
 		}
+		startup <- startupErr
+	}
+	if err != nil {
 		fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 		ctrl.setErr(err)
 		return
@@ -262,7 +266,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- e
 					ctrl.setErr(err)
 					return
 				}
-				newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone, nil)
+				newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone, false)
 				if err != nil {
 					fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 					sigToSend = rs.cfg.signalOnTERM
@@ -329,7 +333,7 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- e
 				ctrl.setErr(err)
 				return
 			}
-			newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone, nil)
+			newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone, false)
 			if err != nil {
 				fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 				sigToSend = rs.cfg.signalOnTERM

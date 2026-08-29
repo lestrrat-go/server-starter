@@ -116,7 +116,7 @@ func TestFailedStartReportsReapedExitStatus(t *testing.T) {
 	workerCh := make(chan processState, 1)
 	go func() {
 		defer close(done)
-		(&runState{cfg: sd}).startWorker(ctx, workerCh, nil, nil)
+		(&runState{cfg: sd}).startWorker(ctx, workerCh, nil, false)
 	}()
 
 	deadline := time.Now().Add(10 * time.Second)
