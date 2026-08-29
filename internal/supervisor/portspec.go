@@ -82,7 +82,7 @@ func parsePortTarget(raw string) (portTarget, error) {
 		return portTarget{}, err
 	}
 
-	parsed, err := starter.ParsePorts(target + "=0")
+	parsed, err := starter.ParsePorts(target + "=3")
 	if err != nil || len(parsed) != 1 {
 		return portTarget{}, fmt.Errorf("invalid port in %q", raw)
 	}
@@ -90,7 +90,7 @@ func parsePortTarget(raw string) (portTarget, error) {
 	var host string
 	var port int
 	network := ""
-	spec := strings.TrimSuffix(parsed[0].String(), "=0")
+	spec := strings.TrimSuffix(parsed[0].String(), "=3")
 	switch target := parsed[0].(type) {
 	case starter.TCPListener:
 		host = target.Addr
@@ -140,7 +140,7 @@ func validatePortTargetDelimiter(target string) error {
 		var err error
 		host, portText, err = net.SplitHostPort(target)
 		if err != nil {
-			return nil
+			return fmt.Errorf("invalid address %q: %w", target, err)
 		}
 	} else if i := strings.LastIndexByte(target, ':'); i >= 0 {
 		host = target[:i]
@@ -151,8 +151,11 @@ func validatePortTargetDelimiter(target string) error {
 		portText = strings.TrimPrefix(portText, "u")
 	}
 	port, err := strconv.Atoi(portText)
-	if err != nil || !portwire.ValidPort(int64(port)) {
-		return nil
+	if err != nil {
+		return fmt.Errorf("invalid port in %q: %w", target, err)
+	}
+	if !portwire.ValidPort(int64(port)) {
+		return fmt.Errorf("invalid port in %q: must be between 0 and 65535", target)
 	}
 
 	if udp {

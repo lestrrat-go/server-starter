@@ -39,6 +39,21 @@ func TestParsePortTargetRejectsDescriptorAboveLimit(t *testing.T) {
 	require.ErrorContains(t, err, fmt.Sprintf("exceeds maximum %d", maxInheritedListenerFD))
 }
 
+func TestParsePortTargetReturnsDelimitedTargetParseErrors(t *testing.T) {
+	for _, test := range []struct {
+		name, spec, wantErr string
+	}{
+		{name: "malformed IPv6 address", spec: "[::1;next", wantErr: "invalid address"},
+		{name: "non-numeric port", spec: "host;next:not-a-port", wantErr: "invalid syntax"},
+		{name: "out-of-range port", spec: "host;next:65536", wantErr: "must be between 0 and 65535"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parsePortTarget(test.spec)
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
 func TestAssignListenerDescriptors(t *testing.T) {
 	t.Run("fills automatic descriptors around explicit descriptors", func(t *testing.T) {
 		descriptors, err := assignListenerDescriptors([]int{-1, 5, -1})
