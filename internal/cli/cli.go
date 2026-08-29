@@ -24,6 +24,10 @@ const controlTimeout = 30 * time.Second
 // start_server behavior (running the supervisor, --stop, --restart,
 // --daemonize, --help, or --version). It returns the process exit code.
 func Run() int {
+	return run(daemonize)
+}
+
+func run(daemonizeFn func() error) int {
 	opts := &options{OptInterval: -1}
 	p := flags.NewParser(opts, flags.PrintErrors|flags.PassDoubleDash)
 	args, err := p.Parse()
@@ -74,8 +78,20 @@ func Run() int {
 		return 0
 	}
 
+	// Resolve envdir/auto-restart/kill-old-delay before daemonizing so the
+	// launcher can report invalid ambient settings instead of leaving the
+	// detached child to fail without a visible diagnostic.
+	resolved, err := resolveSettings(opts, func(long string) bool {
+		return p.FindOptionByLongName(long).IsSet()
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		return 1
+	}
+	opts.resolved = resolved
+
 	if opts.OptDaemonize && os.Getenv("SERVER_STARTER_DAEMONIZED") != "1" {
-		if err := daemonize(); err != nil {
+		if err := daemonizeFn(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)
 			return 1
 		}
@@ -106,17 +122,6 @@ func Run() int {
 		opts.logWriter = f
 		stderr = f
 	}
-
-	// Resolve envdir/auto-restart/kill-old-delay once, here, instead of
-	// exporting them into the process environment for internal/supervisor
-	// to read back (which is not safe: two supervisors running in one
-	// process would race on the shared environment). Precedence is the
-	// flag if it was explicitly passed, otherwise the ambient environment
-	// variable, otherwise a default -- the same result the old exporting
-	// code produced, without mutating the process environment to get it.
-	opts.resolved = resolveSettings(opts, func(long string) bool {
-		return p.FindOptionByLongName(long).IsSet()
-	})
 
 	s, err := supervisor.NewStarter(opts)
 	if err != nil {

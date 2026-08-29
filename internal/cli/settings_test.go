@@ -69,13 +69,15 @@ func TestResolveEnableAutoRestart(t *testing.T) {
 		envSet   bool
 		envVal   string
 		expected bool
+		wantErr  bool
 	}{
 		{name: "flag true wins over ambient", isSet: true, flagVal: true, envSet: true, envVal: "0", expected: true},
 		{name: "flag false wins over ambient", isSet: true, flagVal: false, envSet: true, envVal: "1", expected: false},
 		{name: "ambient literal 1", isSet: false, envSet: true, envVal: "1", expected: true},
 		{name: "ambient true", isSet: false, envSet: true, envVal: "true", expected: true},
 		{name: "ambient false", isSet: false, envSet: true, envVal: "false", expected: false},
-		{name: "ambient garbage", isSet: false, envSet: true, envVal: "banana", expected: false},
+		{name: "ambient garbage", isSet: false, envSet: true, envVal: "banana", wantErr: true},
+		{name: "ambient empty", isSet: false, envSet: true, envVal: "", wantErr: true},
 		{name: "ambient unset", isSet: false, envSet: false, expected: false},
 	}
 	for _, tc := range testCases {
@@ -85,7 +87,13 @@ func TestResolveEnableAutoRestart(t *testing.T) {
 			} else {
 				setEnvUnset(t, "ENABLE_AUTO_RESTART")
 			}
-			require.Equal(t, tc.expected, resolveEnableAutoRestart(tc.isSet, tc.flagVal))
+			got, err := resolveEnableAutoRestart(tc.isSet, tc.flagVal)
+			if tc.wantErr {
+				require.ErrorContains(t, err, `ENABLE_AUTO_RESTART value "`+tc.envVal+`"`)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, got)
 		})
 	}
 }
@@ -101,6 +109,7 @@ func TestResolveAutoRestartInterval(t *testing.T) {
 		envSet   bool
 		envVal   string
 		expected time.Duration
+		wantErr  bool
 	}{
 		{name: "flag positive", isSet: true, flagVal: 42, expected: 42 * time.Second},
 		{name: "flag zero falls back to default", isSet: true, flagVal: 0, expected: defaultAutoRestartInterval},
@@ -114,14 +123,16 @@ func TestResolveAutoRestartInterval(t *testing.T) {
 			expected: maxInterval,
 		},
 		{
-			name:     "ambient above maximum falls back to default",
-			isSet:    false,
-			envSet:   true,
-			envVal:   strconv.FormatInt(maxSeconds+1, 10),
-			expected: defaultAutoRestartInterval,
+			name:    "ambient above maximum rejected",
+			isSet:   false,
+			envSet:  true,
+			envVal:  strconv.FormatInt(maxSeconds+1, 10),
+			wantErr: true,
 		},
-		{name: "ambient zero falls back to default", isSet: false, envSet: true, envVal: "0", expected: defaultAutoRestartInterval},
-		{name: "ambient unparseable falls back to default", isSet: false, envSet: true, envVal: "nope", expected: defaultAutoRestartInterval},
+		{name: "ambient zero rejected", isSet: false, envSet: true, envVal: "0", wantErr: true},
+		{name: "ambient negative rejected", isSet: false, envSet: true, envVal: "-1", wantErr: true},
+		{name: "ambient unparseable rejected", isSet: false, envSet: true, envVal: "nope", wantErr: true},
+		{name: "ambient empty rejected", isSet: false, envSet: true, envVal: "", wantErr: true},
 		{name: "ambient unset defaults", isSet: false, envSet: false, expected: defaultAutoRestartInterval},
 	}
 	for _, tc := range testCases {
@@ -131,21 +142,34 @@ func TestResolveAutoRestartInterval(t *testing.T) {
 			} else {
 				setEnvUnset(t, "AUTO_RESTART_INTERVAL")
 			}
-			require.Equal(t, tc.expected, resolveAutoRestartInterval(tc.isSet, tc.flagVal))
+			got, err := resolveAutoRestartInterval(tc.isSet, tc.flagVal)
+			if tc.wantErr {
+				require.ErrorContains(t, err, `AUTO_RESTART_INTERVAL value "`+tc.envVal+`"`)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, got)
 		})
 	}
 
 	if strconv.IntSize == 64 {
 		t.Run("flag maximum duration", func(t *testing.T) {
-			require.Equal(t, maxInterval, resolveAutoRestartInterval(true, int(maxSeconds)))
+			got, err := resolveAutoRestartInterval(true, int(maxSeconds))
+			require.NoError(t, err)
+			require.Equal(t, maxInterval, got)
 		})
 		t.Run("flag above maximum falls back to default", func(t *testing.T) {
-			require.Equal(t, defaultAutoRestartInterval, resolveAutoRestartInterval(true, int(maxSeconds+1)))
+			got, err := resolveAutoRestartInterval(true, int(maxSeconds+1))
+			require.NoError(t, err)
+			require.Equal(t, defaultAutoRestartInterval, got)
 		})
 	}
 }
 
 func TestResolveKillOldDelay(t *testing.T) {
+	minDelay := time.Duration(minDurationSeconds) * time.Second
+	maxDelay := time.Duration(maxDurationSeconds) * time.Second
+
 	testCases := []struct {
 		name        string
 		isSet       bool
@@ -154,6 +178,7 @@ func TestResolveKillOldDelay(t *testing.T) {
 		envVal      string
 		autoRestart bool
 		expected    time.Duration
+		wantErr     bool
 	}{
 		{name: "unset, auto-restart off", isSet: false, envSet: false, autoRestart: false, expected: 0},
 		{name: "unset, auto-restart on", isSet: false, envSet: false, autoRestart: true, expected: 5 * time.Second},
@@ -162,7 +187,12 @@ func TestResolveKillOldDelay(t *testing.T) {
 		{name: "flag 3", isSet: true, flagVal: 3, autoRestart: false, expected: 3 * time.Second},
 		{name: "ambient 0, auto-restart on", isSet: false, envSet: true, envVal: "0", autoRestart: true, expected: 0},
 		{name: "ambient 3", isSet: false, envSet: true, envVal: "3", autoRestart: false, expected: 3 * time.Second},
-		{name: "ambient unparseable treated as 0", isSet: false, envSet: true, envVal: "nope", autoRestart: true, expected: 0},
+		{name: "ambient minimum duration", isSet: false, envSet: true, envVal: strconv.FormatInt(minDurationSeconds, 10), expected: minDelay},
+		{name: "ambient below minimum rejected", isSet: false, envSet: true, envVal: strconv.FormatInt(minDurationSeconds-1, 10), wantErr: true},
+		{name: "ambient maximum duration", isSet: false, envSet: true, envVal: strconv.FormatInt(maxDurationSeconds, 10), expected: maxDelay},
+		{name: "ambient above maximum rejected", isSet: false, envSet: true, envVal: strconv.FormatInt(maxDurationSeconds+1, 10), wantErr: true},
+		{name: "ambient unparseable rejected", isSet: false, envSet: true, envVal: "nope", autoRestart: true, wantErr: true},
+		{name: "ambient empty rejected", isSet: false, envSet: true, envVal: "", autoRestart: true, wantErr: true},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -171,7 +201,13 @@ func TestResolveKillOldDelay(t *testing.T) {
 			} else {
 				setEnvUnset(t, "KILL_OLD_DELAY")
 			}
-			require.Equal(t, tc.expected, resolveKillOldDelay(tc.isSet, tc.flagVal, tc.autoRestart))
+			got, err := resolveKillOldDelay(tc.isSet, tc.flagVal, tc.autoRestart)
+			if tc.wantErr {
+				require.ErrorContains(t, err, `KILL_OLD_DELAY value "`+tc.envVal+`"`)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, got)
 		})
 	}
 }
@@ -187,7 +223,8 @@ func TestResolveSettings(t *testing.T) {
 		setEnvUnset(t, "AUTO_RESTART_INTERVAL")
 		setEnvUnset(t, "KILL_OLD_DELAY")
 
-		got := resolveSettings(&options{}, noneSet())
+		got, err := resolveSettings(&options{}, noneSet())
+		require.NoError(t, err)
 		require.Equal(t, resolvedSettings{
 			envdir:              "",
 			enableAutoRestart:   false,
@@ -197,10 +234,12 @@ func TestResolveSettings(t *testing.T) {
 	})
 
 	t.Run("enable-auto-restart flag drives kill-old-delay default", func(t *testing.T) {
+		setEnvUnset(t, "AUTO_RESTART_INTERVAL")
 		setEnvUnset(t, "KILL_OLD_DELAY")
 
 		opts := &options{OptEnableAutoRestart: true}
-		got := resolveSettings(opts, alwaysSet("enable-auto-restart"))
+		got, err := resolveSettings(opts, alwaysSet("enable-auto-restart"))
+		require.NoError(t, err)
 		require.True(t, got.enableAutoRestart)
 		require.Equal(t, 5*time.Second, got.killOldDelay)
 	})
@@ -217,7 +256,11 @@ func TestResolveSettings(t *testing.T) {
 			OptAutoRestartInterval: 12,
 			OptKillOldDelay:        7,
 		}
-		got := resolveSettings(opts, alwaysSet("envdir", "enable-auto-restart", "auto-restart-interval", "kill-old-delay"))
+		got, err := resolveSettings(
+			opts,
+			alwaysSet("envdir", "enable-auto-restart", "auto-restart-interval", "kill-old-delay"),
+		)
+		require.NoError(t, err)
 		require.Equal(t, resolvedSettings{
 			envdir:              "/from/flag",
 			enableAutoRestart:   true,
@@ -225,4 +268,26 @@ func TestResolveSettings(t *testing.T) {
 			killOldDelay:        7 * time.Second,
 		}, got)
 	})
+
+	testCases := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "invalid enable auto restart", key: "ENABLE_AUTO_RESTART", value: "banana"},
+		{name: "invalid auto restart interval", key: "AUTO_RESTART_INTERVAL", value: "nope"},
+		{name: "invalid kill old delay", key: "KILL_OLD_DELAY", value: "nope"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			setEnvUnset(t, "ENABLE_AUTO_RESTART")
+			setEnvUnset(t, "AUTO_RESTART_INTERVAL")
+			setEnvUnset(t, "KILL_OLD_DELAY")
+			t.Setenv(tc.key, tc.value)
+
+			_, err := resolveSettings(&options{}, noneSet())
+			require.ErrorContains(t, err, tc.key)
+			require.ErrorContains(t, err, tc.value)
+		})
+	}
 }
