@@ -53,7 +53,8 @@ type TCPListener struct {
 // address ("0.0.0.0") so the stored value round-trips correctly through
 // String and ParsePorts; without this, TCPListener{Addr: ""}.String() would
 // produce ":8080", which ParsePorts reads back as a unix socket at path
-// ":8080".
+// ":8080". FormatPorts rejects addr values containing the reserved wire
+// delimiters ';' or '='.
 func NewTCPListener(addr string, port int, fd uintptr) TCPListener {
 	if addr == "" {
 		addr = wildcardIPv4
@@ -71,7 +72,8 @@ type UDPListener struct {
 
 // NewUDPListener creates a UDPListener for addr, port, and the inherited
 // file descriptor fd. An empty addr is normalised to the IPv4 wildcard
-// address ("0.0.0.0"), for the same reason as NewTCPListener.
+// address ("0.0.0.0"), for the same reason as NewTCPListener. FormatPorts
+// rejects addr values containing the reserved wire delimiters ';' or '='.
 func NewUDPListener(addr string, port int, fd uintptr) UDPListener {
 	if addr == "" {
 		addr = wildcardIPv4
@@ -86,7 +88,8 @@ type UnixListener struct {
 }
 
 // NewUnixListener creates a UnixListener for path and the inherited file
-// descriptor fd. path is taken verbatim, with no normalisation.
+// descriptor fd. path is taken verbatim, with no normalisation. FormatPorts
+// rejects path values containing the reserved wire delimiters ';' or '='.
 func NewUnixListener(path string, fd uintptr) UnixListener {
 	return UnixListener{Path: path, fd: fd}
 }
@@ -94,8 +97,9 @@ func NewUnixListener(path string, fd uintptr) UnixListener {
 // String returns a human-readable "spec=fd" rendering of l. It is a
 // display form: it does not validate l, so it can render an unnormalised
 // listener (for example one built directly as a struct literal, bypassing
-// NewTCPListener) into a spec that reads back as something else. For the
-// authoritative SERVER_STARTER_PORT encoder, see FormatPorts.
+// NewTCPListener), or an Addr containing ';' or '=', into a spec that reads
+// back as something else. For the authoritative SERVER_STARTER_PORT encoder,
+// see FormatPorts.
 func (l TCPListener) String() string {
 	if l.Addr == wildcardIPv4 {
 		return fmt.Sprintf("%d=%d", l.Port, l.fd)
@@ -139,8 +143,9 @@ func (l TCPListener) Listen() (net.Listener, error) {
 // String returns a human-readable "uspec=fd" rendering of l. It is a
 // display form: it does not validate l, so it can render an unnormalised
 // listener (for example one built directly as a struct literal, bypassing
-// NewUDPListener) into a spec that reads back as something else. For the
-// authoritative SERVER_STARTER_PORT encoder, see FormatPorts.
+// NewUDPListener), or an Addr containing ';' or '=', into a spec that reads
+// back as something else. For the authoritative SERVER_STARTER_PORT encoder,
+// see FormatPorts.
 func (l UDPListener) String() string {
 	address := strconv.Itoa(l.Port)
 	if l.Addr != wildcardIPv4 {

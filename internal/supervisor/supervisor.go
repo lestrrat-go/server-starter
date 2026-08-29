@@ -75,6 +75,12 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 		return nil, err
 	}
 	rs.descriptors = descriptors
+	// Apply the public wire-format validation before acquiring the pid file or
+	// binding any listener. startWorker applies the same rule when it emits
+	// SERVER_STARTER_PORT.
+	if err := validateListenerWireFormat(targets, s.paths, descriptors); err != nil {
+		return nil, err
+	}
 
 	// Setup can fail partway through (e.g. the second of three listeners
 	// refuses to bind). Until the loop goroutine takes ownership, this
@@ -132,13 +138,13 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 			}
 		}
 		_ = os.Remove(path)
-		lc := listenConfig("unix")
-		l, err := lc.Listen(ctx, "unix", path)
+		lc := listenConfig(unixNetwork)
+		l, err := lc.Listen(ctx, unixNetwork, path)
 		if err != nil {
 			fmt.Fprintf(s.stderr, "failed to listen file:%s:%s\n", path, err)
 			return nil, err
 		}
-		rs.listeners = append(rs.listeners, listener{listener: l, network: "unix", path: path})
+		rs.listeners = append(rs.listeners, listener{listener: l, network: unixNetwork, path: path})
 	}
 
 	rs.generation = 0

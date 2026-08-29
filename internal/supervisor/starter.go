@@ -15,8 +15,8 @@ type Config interface {
 	Dir() string             // Directory to chdir to before executing the command
 	Interval() time.Duration // Time between checks for liveness
 	PidFile() string
-	Ports() []string         // Ports to bind to (addr:port or port, so it's a string)
-	Paths() []string         // Paths (UNIX domain socket) to bind to
+	Ports() []string         // Ports to bind to; address components cannot contain ";" or "="
+	Paths() []string         // UNIX socket paths; ";" and "=" are reserved wire delimiters
 	SignalOnHUP() os.Signal  // Signal to send when HUP is received
 	SignalOnTERM() os.Signal // Signal to send when TERM is received
 	StatusFile() string

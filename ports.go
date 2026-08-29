@@ -75,6 +75,8 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 // whose remainder parses as a port/host:port is a UDP target on that
 // remainder; otherwise a spec that itself parses as a port/host:port is a
 // TCP target; otherwise the spec is a unix socket path, taken verbatim.
+// TCP/UDP addresses and unix socket paths cannot contain ";" or "=" because
+// those characters delimit entries and file descriptors in the wire format.
 //
 // This leaves one shape ambiguous: a relative unix socket path with no "/"
 // that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")
@@ -169,8 +171,9 @@ func ParsePorts(spec string) (List, error) {
 //   - a TCPListener or UDPListener whose Addr contains a NUL byte, or a
 //     UnixListener whose Path contains one; environment variables cannot
 //     carry NUL bytes
-//   - a UnixListener whose Path contains ';' (the spec separator) or '='
-//     (the spec/fd separator), either of which ParsePorts would misread
+//   - a TCPListener or UDPListener whose Addr, or a UnixListener whose Path,
+//     contains ';' (the spec separator) or '=' (the spec/fd separator),
+//     either of which ParsePorts would misread
 //   - any Listener whose concrete type is not TCPListener, UDPListener, or
 //     UnixListener; FormatPorts has no way to validate an implementation
 //     it does not know, so it refuses to guess rather than risk emitting
@@ -196,6 +199,12 @@ func FormatPorts(ls ...Listener) (string, error) {
 					v.Port,
 				)
 			}
+			if strings.ContainsAny(v.Addr, ";=") {
+				return "", fmt.Errorf(
+					"starter: cannot format TCPListener (address %q): Addr must not contain ';' or '='",
+					v.Addr,
+				)
+			}
 		case UDPListener:
 			if v.Addr == "" {
 				return "", fmt.Errorf("starter: cannot format UDPListener (port %d): Addr is empty", v.Port)
@@ -204,6 +213,12 @@ func FormatPorts(ls ...Listener) (string, error) {
 				return "", fmt.Errorf(
 					"starter: cannot format UDPListener (port %d): Addr contains a NUL byte",
 					v.Port,
+				)
+			}
+			if strings.ContainsAny(v.Addr, ";=") {
+				return "", fmt.Errorf(
+					"starter: cannot format UDPListener (address %q): Addr must not contain ';' or '='",
+					v.Addr,
 				)
 			}
 		case UnixListener:

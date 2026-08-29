@@ -11,6 +11,8 @@ import (
 )
 
 const (
+	unixNetwork = "unix"
+
 	// Explicit descriptors are a convenience for integrations that require a
 	// stable inherited descriptor number. Keep them bounded because ExtraFiles
 	// must materialize every slot from descriptor 3 through the largest one.
@@ -39,12 +41,12 @@ type listener struct {
 }
 
 // starterListener converts l, bound to fd, into the root package's Listener
-// representation. Formatting the port spec this way (String()) rather than
-// with an inline fmt.Sprintf keeps the supervisor's writer and the worker's
-// reader (starter.ParsePorts) built from the same constructors.
+// representation. Formatting the port spec through starter.FormatPorts rather
+// than with an inline fmt.Sprintf keeps the supervisor's writer and the
+// worker's reader (starter.ParsePorts) on the same validation rules.
 func (l listener) starterListener(fd int) starter.Listener {
 	switch {
-	case l.network == "unix":
+	case l.network == unixNetwork:
 		return starter.NewUnixListener(l.path, uintptr(fd))
 	case strings.HasPrefix(l.network, "udp"):
 		return starter.NewUDPListener(l.host, l.port, uintptr(fd))
@@ -119,6 +121,32 @@ func parsePortTarget(raw string) (portTarget, error) {
 		spec = "u" + spec
 	}
 	return portTarget{host: host, port: port, network: network, spec: spec, fd: fd}, nil
+}
+
+// validateListenerWireFormat applies the public SERVER_STARTER_PORT encoder
+// before Run binds anything. The descriptors are already assigned at this
+// point, so this validates the same Listener values startWorker will later
+// format for the child process.
+func validateListenerWireFormat(targets []portTarget, paths []string, descriptors []int) error {
+	listeners := make(starter.List, 0, len(targets)+len(paths))
+	for i, target := range targets {
+		l := listener{
+			network: target.network,
+			host:    target.host,
+			port:    target.port,
+		}
+		listeners = append(listeners, l.starterListener(descriptors[i]))
+	}
+	for i, path := range paths {
+		l := listener{network: "unix", path: path}
+		listeners = append(listeners, l.starterListener(descriptors[len(targets)+i]))
+	}
+
+	if len(listeners) == 0 {
+		return nil
+	}
+	_, err := starter.FormatPorts(listeners...)
+	return err
 }
 
 func validateExplicitListenerFD(fd int) error {
