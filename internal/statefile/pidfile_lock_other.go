@@ -11,19 +11,13 @@ import (
 // BSD flock and fcntl locks conflict on supported non-Linux Unix systems.
 // New supervisors therefore use only the inspectable record lock, while
 // OpenRunningPID keeps a compatibility path for old flock-only supervisors.
-func lockFile(f *os.File, path string) error {
-	lock, err := pathRecordLock(path)
-	if err != nil {
-		return err
-	}
+func lockFile(f *os.File, _ string) error {
+	lock := pidFileRecordLock()
 	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
 }
 
-func lockOwnerPID(f *os.File, path string) (int, error) {
-	lock, err := pathRecordLock(path)
-	if err != nil {
-		return 0, err
-	}
+func lockOwnerPID(f *os.File, _ string) (int, error) {
+	lock := pidFileRecordLock()
 	if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &lock); err != nil {
 		return 0, err
 	}
