@@ -5,11 +5,19 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 const failingReplacementWorkerTxt = `package main
@@ -67,6 +75,242 @@ func waitForFile(t *testing.T, path string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", path)
+}
+
+func TestRunRetriesInitialWorkerStartError(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "missing")
+	marker := filepath.Join(root, "started")
+	var stderr syncBuffer
+	sd, err := NewStarter(&config{
+		command: "/bin/sh",
+		args:    []string{"-c", `printf started > "$1"; exec sleep 30`, "worker", marker},
+		dir:     dir,
+		stderr:  &stderr,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, ctrl)
+	require.Eventually(t, func() bool {
+		return strings.Contains(stderr.String(), "failed to exec")
+	}, 10*time.Second, 20*time.Millisecond)
+	require.NoError(t, os.Mkdir(dir, 0700))
+	waitForFile(t, marker)
+	cancel()
+	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+}
+
+func TestRunCancellationStopsInitialWorkerStartRetries(t *testing.T) {
+	for _, interval := range []int{0, 1} {
+		t.Run(fmt.Sprintf("interval %d", interval), func(t *testing.T) {
+			var stderr syncBuffer
+			sd, err := NewStarter(&config{
+				command:  testShellPath,
+				args:     []string{"-c", "exec sleep 30"},
+				dir:      filepath.Join(t.TempDir(), "missing"),
+				interval: interval,
+				stderr:   &stderr,
+			})
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			ctrl, err := sd.Run(ctx)
+			require.NoError(t, err)
+			require.NotNil(t, ctrl)
+			require.Eventually(t, func() bool {
+				return strings.Contains(stderr.String(), "failed to exec")
+			}, 10*time.Second, 20*time.Millisecond)
+
+			cancel()
+			select {
+			case <-ctrl.Done():
+			case <-time.After(3 * time.Second):
+				t.Fatal("Run did not stop after cancellation during worker start retries")
+			}
+			require.ErrorIs(t, ctrl.Err(), ErrServerClosed)
+		})
+	}
+}
+
+func TestStartWorkerReturnsCancellationBeforeFirstAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := (&runState{}).startWorker(ctx, make(chan processState), nil, false)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+type cancelOnFailedStartWriter struct {
+	cancel context.CancelFunc
+}
+
+func (w cancelOnFailedStartWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "seems to have failed to start") {
+		w.cancel()
+	}
+	return len(p), nil
+}
+
+func TestStartWorkerReturnsCancellationAfterFailedAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rs := &runState{cfg: &Starter{
+		command: testShellPath,
+		dir:     filepath.Join(t.TempDir(), "missing"),
+		stderr:  cancelOnFailedStartWriter{cancel: cancel},
+	}}
+
+	_, err := rs.startWorker(ctx, make(chan processState), nil, false)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRunWithStartupCheckReturnsInitialWorkerStartError(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing")
+	sd, err := NewStarter(&config{
+		command: "/bin/sh",
+		args:    []string{"-c", "exec sleep 30"},
+		dir:     dir,
+	})
+	require.NoError(t, err)
+
+	ctrl, err := sd.RunWithStartupCheck(context.Background())
+	require.Nil(t, ctrl)
+	var pathErr *os.PathError
+	require.ErrorAs(t, err, &pathErr)
+	require.Equal(t, "chdir", pathErr.Op)
+	require.Equal(t, dir, pathErr.Path)
+	require.ErrorIs(t, pathErr.Err, fs.ErrNotExist)
+}
+
+func TestRunWithStartupCheckReturnsInitialWorkerExitError(t *testing.T) {
+	dir := t.TempDir()
+	firstAttempt := filepath.Join(dir, "first-attempt")
+	retried := filepath.Join(dir, "retried")
+	sd, err := NewStarter(&config{
+		command: "/bin/sh",
+		args: []string{"-c", `
+			if [ -e "$1" ]; then
+				printf retried > "$2"
+				exec sleep 30
+			fi
+			: > "$1"
+			exit 7
+		`, "worker", firstAttempt, retried},
+		interval: 1,
+		stderr:   io.Discard,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctrl, err := sd.RunWithStartupCheck(ctx)
+	if ctrl != nil {
+		cancel()
+		require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+	}
+
+	require.Nil(t, ctrl)
+	require.ErrorContains(t, err, "exited before passing startup check")
+	require.ErrorContains(t, err, fmt.Sprintf("status:%d", syscall.WaitStatus(7<<8)))
+	require.NoFileExists(t, retried)
+}
+
+func TestRunWithStartupCheckRejectsImmediateExitAtZeroInterval(t *testing.T) {
+	sd, err := NewStarter(&config{
+		command:  testShellPath,
+		args:     []string{"-c", "sleep 0.1; exit 7"},
+		interval: 0,
+		stderr:   io.Discard,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctrl, err := sd.RunWithStartupCheck(ctx)
+	if ctrl != nil {
+		cancel()
+		require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+	} else {
+		cancel()
+	}
+	require.Nil(t, ctrl)
+	require.ErrorContains(t, err, "exited before passing startup check")
+	require.ErrorContains(t, err, fmt.Sprintf("status:%d", syscall.WaitStatus(7<<8)))
+}
+
+func TestRunWithStartupCheckReportsProbeCancellation(t *testing.T) {
+	for _, interval := range []int{0, 30} {
+		t.Run(fmt.Sprintf("interval %d", interval), func(t *testing.T) {
+			marker := filepath.Join(t.TempDir(), "started")
+			sd, err := NewStarter(&config{
+				command:  testShellPath,
+				args:     []string{"-c", `: > "$1"; exec sleep 30`, "worker", marker},
+				interval: interval,
+				stderr:   io.Discard,
+			})
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			type runResult struct {
+				ctrl *Controller
+				err  error
+			}
+			resultCh := make(chan runResult, 1)
+			go func() {
+				ctrl, runErr := sd.RunWithStartupCheck(ctx)
+				resultCh <- runResult{ctrl: ctrl, err: runErr}
+			}()
+
+			waitForFile(t, marker)
+			cancel()
+
+			var result runResult
+			select {
+			case result = <-resultCh:
+			case <-time.After(3 * time.Second):
+				t.Fatal("RunWithStartupCheck did not report probe cancellation")
+			}
+			if result.ctrl != nil {
+				select {
+				case <-result.ctrl.Done():
+				case <-time.After(3 * time.Second):
+					t.Fatal("successful controller did not stop after cancellation")
+				}
+			}
+			require.Nil(t, result.ctrl)
+			require.ErrorIs(t, result.err, context.Canceled)
+		})
+	}
+}
+
+func TestStartWorkerReturnsListenerDescriptorError(t *testing.T) {
+	var lc net.ListenConfig
+	bound, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	tcpListener := bound.(*net.TCPListener)
+	require.NoError(t, tcpListener.Close())
+
+	rs := &runState{
+		cfg:         &Starter{command: "/bin/true", stderr: io.Discard},
+		listeners:   []listener{{listener: tcpListener}},
+		descriptors: []int{3},
+	}
+	_, err = rs.startWorker(context.Background(), make(chan processState), nil, true)
+	require.ErrorContains(t, err, "duplicate worker listener descriptor")
+	require.ErrorIs(t, err, net.ErrClosed)
+}
+
+func TestBuildWorkerEnvOmitsDaemonReadinessDescriptor(t *testing.T) {
+	t.Setenv("SERVER_STARTER_DAEMON_READY_FD", "9")
+
+	for _, entry := range buildWorkerEnv(nil, "", 1) {
+		require.NotEqual(t, "SERVER_STARTER_DAEMON_READY_FD", strings.SplitN(entry, "=", 2)[0])
+	}
 }
 
 func TestSIGTERMDuringFailedReplacementDoesNotPanic(t *testing.T) {

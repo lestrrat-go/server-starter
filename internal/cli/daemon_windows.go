@@ -12,3 +12,5 @@ import (
 func daemonSysProcAttr() (*syscall.SysProcAttr, error) {
 	return nil, fmt.Errorf("--daemonize is not supported on windows")
 }
+
+func closeDaemonReadinessOnExec(uintptr) {}

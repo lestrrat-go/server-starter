@@ -28,6 +28,17 @@ func Run() int {
 }
 
 func run(daemonizeFn func() error) int {
+	readiness, err := childDaemonReadiness()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		return 1
+	}
+	failStartup := func(stderr io.Writer, err error) int {
+		readiness.failed(err)
+		fmt.Fprintf(stderr, "error: %s\n", err)
+		return 1
+	}
+
 	opts := &options{OptInterval: -1}
 	p := flags.NewParser(opts, flags.PrintErrors|flags.PassDoubleDash)
 	args, err := p.Parse()
@@ -85,12 +96,11 @@ func run(daemonizeFn func() error) int {
 		return p.FindOptionByLongName(long).IsSet()
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		return 1
+		return failStartup(os.Stderr, err)
 	}
 	opts.resolved = resolved
 
-	if opts.OptDaemonize && os.Getenv("SERVER_STARTER_DAEMONIZED") != "1" {
+	if opts.OptDaemonize && os.Getenv(daemonizedEnv) != "1" {
 		if err := daemonizeFn(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)
 			return 1
@@ -99,7 +109,9 @@ func run(daemonizeFn func() error) int {
 	}
 
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "server program not specified\n")
+		err := fmt.Errorf("server program not specified")
+		readiness.failed(err)
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 
@@ -116,8 +128,7 @@ func run(daemonizeFn func() error) int {
 	if opts.OptLogFile != "" {
 		f, err := openLogFile(opts.OptLogFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
-			return 1
+			return failStartup(os.Stderr, err)
 		}
 		opts.logWriter = f
 		stderr = f
@@ -125,8 +136,7 @@ func run(daemonizeFn func() error) int {
 
 	s, err := supervisor.NewStarter(opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %s\n", err)
-		return 1
+		return failStartup(stderr, err)
 	}
 
 	// internal/supervisor no longer touches os/signal: it is a library and
@@ -135,28 +145,31 @@ func run(daemonizeFn func() error) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ctrl, err := s.Run(ctx)
-	if err != nil {
-		fmt.Fprintf(stderr, "error: %s\n", err)
-		return 1
-	}
-
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	defer signal.Stop(sigCh)
+	signalDone := make(chan struct{})
+	defer close(signalDone)
+	controllerReady := make(chan *supervisor.Controller, 1)
+	go watchSignals(ctx, cancel, sigCh, signalDone, controllerReady)
 
-	go func() {
-		for sig := range sigCh {
-			if sig == syscall.SIGHUP {
-				ctrl.Hangup()
-				continue
-			}
-			// INT, TERM, or QUIT: request shutdown and stop watching for
-			// further signals, ctrl.Wait() below takes it from here.
-			cancel()
-			return
-		}
-	}()
+	var ctrl *supervisor.Controller
+	if readiness.active() {
+		ctrl, err = s.RunWithStartupCheck(ctx)
+	} else {
+		ctrl, err = s.Run(ctx)
+	}
+	if err != nil {
+		return failStartup(stderr, err)
+	}
+	controllerReady <- ctrl
+
+	if err := readiness.ready(); err != nil {
+		cancel()
+		_ = ctrl.Wait()
+		fmt.Fprintf(stderr, "error: report daemon readiness: %s\n", err)
+		return 1
+	}
 
 	// A clean, ctx-driven shutdown is success, not failure: report only a
 	// genuine runtime error.
@@ -165,6 +178,43 @@ func run(daemonizeFn func() error) int {
 		return 1
 	}
 	return 0
+}
+
+func watchSignals(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	sigCh <-chan os.Signal,
+	done <-chan struct{},
+	controllerReady <-chan *supervisor.Controller,
+) {
+	var ctrl *supervisor.Controller
+	pendingHUP := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case ctrl = <-controllerReady:
+			if pendingHUP {
+				ctrl.Hangup()
+				pendingHUP = false
+			}
+		case sig := <-sigCh:
+			if sig == syscall.SIGHUP {
+				if ctrl == nil {
+					pendingHUP = true
+					continue
+				}
+				ctrl.Hangup()
+				continue
+			}
+			// INT, TERM, or QUIT requests shutdown. The supervisor owns
+			// worker termination and ctrl.Wait below joins its teardown.
+			cancel()
+			return
+		}
+	}
 }
 
 func openLogFile(path string) (*os.File, error) {

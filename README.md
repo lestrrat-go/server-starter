@@ -23,6 +23,12 @@ By using ```start_server``` it is much easier to write a hot-deployable server. 
 - receive file descriptors to listen to through an environment variable
 - perform a graceful shutdown when receiving the configured termination signal (`SIGTERM` by default)
 
+When `--daemonize` is used on Unix, the launching process waits until the first
+worker passes its startup check. Startup failures are returned to the launcher,
+and the daemon shuts down its worker before reporting cancellation or a lost
+readiness connection. The regular foreground supervisor keeps retrying workers
+that fail to start.
+
 Many PSGI servers support this. If you want your Go program to support it,
 import the root of this module (`github.com/lestrrat-go/server-starter/v2`, see
 the [package docs](https://github.com/lestrrat-go/server-starter/tree/develop/v2))
