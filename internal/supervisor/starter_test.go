@@ -168,6 +168,56 @@ func TestNewStarterResolvesRelativeCommandAgainstDir(t *testing.T) {
 	require.Equal(t, executable, sd.command)
 }
 
+func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the worker fixture uses a POSIX shell script")
+	}
+
+	dir := t.TempDir()
+	command := "." + string(os.PathSeparator) + "worker"
+	executable := filepath.Join(dir, "worker")
+	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\n[ \"$0\" = \"./worker\" ]\n"), 0700))
+
+	sd, err := NewStarter(&config{
+		command: command,
+		dir:     dir,
+	})
+	require.NoError(t, err)
+	require.Equal(t, command, sd.command)
+
+	cmd := exec.Command(sd.command)
+	cmd.Dir = sd.dir
+	require.NoError(t, cmd.Run())
+}
+
+func TestNewStarterValidatesParentRelativeCommandThroughSymlinkedDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the worker fixture uses POSIX symlink and shell semantics")
+	}
+
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	workDir := filepath.Join(realDir, "work")
+	binDir := filepath.Join(realDir, "bin")
+	require.NoError(t, os.MkdirAll(workDir, 0755))
+	require.NoError(t, os.MkdirAll(binDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "worker"), []byte("#!/bin/sh\nexit 0\n"), 0700))
+
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.Symlink(workDir, alias))
+	command := ".." + string(os.PathSeparator) + filepath.Join("bin", "worker")
+	sd, err := NewStarter(&config{
+		command: command,
+		dir:     alias,
+	})
+	require.NoError(t, err)
+	require.Equal(t, command, sd.command)
+
+	cmd := exec.Command(sd.command)
+	cmd.Dir = sd.dir
+	require.NoError(t, cmd.Run())
+}
+
 func TestNewStarterPreservesBareCommandForPATHLookup(t *testing.T) {
 	dir := t.TempDir()
 	commandName := "worker"
