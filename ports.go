@@ -54,7 +54,9 @@ type udpCandidate struct {
 // classifyUDPMarker returns, in priority order, the candidate transport
 // interpretations of hostPort. The explicit "udp://" marker wins. An
 // ordinary TCP target is otherwise tried before the legacy UDP forms, so a
-// TCP hostname beginning with "u" cannot be consumed as a UDP marker.
+// TCP hostname beginning with "u" cannot be consumed as a UDP marker. Within
+// the legacy forms, a trailing marker is tried first so it does not consume a
+// leading "u" from a valid hostname.
 func classifyUDPMarker(hostPort string) []udpCandidate {
 	if target, ok := strings.CutPrefix(hostPort, udpTransportMarker); ok {
 		return []udpCandidate{{udp: true, target: target}}
@@ -65,14 +67,14 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 
 	var candidates []udpCandidate
 
+	if trailingStripped, hasTrailing := stripTrailingUDPMarker(hostPort); hasTrailing {
+		candidates = append(candidates, udpCandidate{udp: true, target: trailingStripped})
+	}
 	if leadingStripped, hasLeading := stripLeadingUDPMarker(hostPort); hasLeading {
 		if bothStripped, hasTrailing := stripTrailingUDPMarker(leadingStripped); hasTrailing {
 			candidates = append(candidates, udpCandidate{udp: true, target: bothStripped})
 		}
 		candidates = append(candidates, udpCandidate{udp: true, target: leadingStripped})
-	}
-	if trailingStripped, hasTrailing := stripTrailingUDPMarker(hostPort); hasTrailing {
-		candidates = append(candidates, udpCandidate{udp: true, target: trailingStripped})
 	}
 
 	return append(candidates, udpCandidate{udp: false, target: hostPort})
@@ -85,10 +87,11 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 // a UDP target; otherwise a spec that parses as a port/host:port is a TCP
 // target; otherwise the unambiguous legacy UDP forms "uPORT",
 // "u[ipv6]:port", and "host:uPORT" are accepted; otherwise the spec is a
-// unix socket path, taken verbatim. A spec containing "/" is always a unix
-// socket path unless it begins with "udp://". TCP/UDP addresses and unix
-// socket paths cannot contain ";" or "=" because those characters delimit
-// entries and file descriptors in the wire format.
+// unix socket path, taken verbatim. In the "host:uPORT" form, the suffix is
+// the marker, so a leading "u" remains part of the hostname. A spec containing
+// "/" is always a unix socket path unless it begins with "udp://". TCP/UDP
+// addresses and unix socket paths cannot contain ";" or "=" because those
+// characters delimit entries and file descriptors in the wire format.
 //
 // This leaves one shape ambiguous: a relative unix socket path with no "/"
 // that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")

@@ -70,7 +70,9 @@ UDP targets are a v2 extension. Their canonical command-line and
 `udp://[ipv6]:PORT`. The v2 parser still reads unambiguous legacy forms such
 as `uPORT`, `host:uPORT`, and `u[ipv6]:PORT`. A leading `u` on an otherwise
 valid hostname is no longer treated as a transport marker, so
-`ubuntu.internal:8080` is TCP; spell UDP targets with `udp://`.
+`ubuntu.internal:8080` is TCP. In the legacy `host:uPORT` form, the suffix is
+the marker, so `ubuntu.internal:u8080` preserves the full hostname. Spell new
+UDP targets with `udp://`.
 
 ## Listener-spec validation is stricter
 
