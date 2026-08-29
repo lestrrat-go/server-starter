@@ -105,10 +105,8 @@ func canonicalUnixPath(path string) string {
 	if strings.ContainsRune(path, '/') {
 		return path
 	}
-	for _, candidate := range classifyUDPMarker(path) {
-		if looksLikeTCPGrammar(candidate.target) {
-			return "./" + path
-		}
+	if _, _, matched := classifyPortTarget(path); matched {
+		return "./" + path
 	}
 	return path
 }

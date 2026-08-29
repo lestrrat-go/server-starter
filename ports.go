@@ -93,6 +93,21 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 	return append(candidates, udpCandidate{udp: false, target: hostPort})
 }
 
+// classifyPortTarget applies ParsePorts's complete TCP and UDP target
+// classification, including the final host:port grammar fallback.
+func classifyPortTarget(hostPort string) (bool, string, bool) {
+	for _, candidate := range classifyUDPMarker(hostPort) {
+		if looksLikeTCPGrammar(candidate.target) {
+			return candidate.udp, candidate.target, true
+		}
+	}
+
+	if !strings.HasPrefix(hostPort, udpTransportMarker) && reLooksLikeHostPort.MatchString(hostPort) {
+		return false, hostPort, true
+	}
+	return false, hostPort, false
+}
+
 // ParsePorts parses the "spec=fd;spec=fd;..." value carried by
 // SERVER_STARTER_PORT (see PortEnvName) into concrete Listener values.
 //
@@ -147,17 +162,7 @@ func ParsePorts(spec string) (List, error) {
 			continue
 		}
 
-		udp := false
-		target := hostPort
-		matched := false
-		for _, c := range classifyUDPMarker(hostPort) {
-			if looksLikeTCPGrammar(c.target) {
-				udp = c.udp
-				target = c.target
-				matched = true
-				break
-			}
-		}
+		udp, target, matched := classifyPortTarget(hostPort)
 		if explicitUDP && !matched {
 			return nil, fmt.Errorf("failed to parse %q as UDP listen target", pairString)
 		}

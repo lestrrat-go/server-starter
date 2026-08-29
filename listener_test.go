@@ -96,6 +96,7 @@ func TestNewUnixListenerCanonicalPath(t *testing.T) {
 		{name: "absolute path", path: "/var/run/app.sock", want: "/var/run/app.sock"},
 		{name: "bare port", path: "8080", want: "./8080"},
 		{name: "host and port", path: "db:5432", want: "./db:5432"},
+		{name: "multi-colon host and port", path: "a:b:8080", want: "./a:b:8080"},
 		{name: "leading UDP marker", path: "u8080", want: "./u8080"},
 		{name: "trailing UDP marker", path: "db:u5432", want: "./db:u5432"},
 		{name: "TCP hostname beginning with u", path: "ubuntu.internal:8080", want: "./ubuntu.internal:8080"},
@@ -192,6 +193,10 @@ func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 
 	t.Run("host-port unix socket path", func(t *testing.T) {
 		roundTrip(t, starter.List{starter.NewUnixListener("db:5432", 11)})
+	})
+
+	t.Run("multi-colon host-port unix socket path", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewUnixListener("a:b:8080", 14)})
 	})
 
 	t.Run("legacy UDP unix socket path", func(t *testing.T) {
