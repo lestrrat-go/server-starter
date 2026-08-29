@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"slices"
@@ -43,4 +44,58 @@ func TestRunRejectsInvalidSignalOptions(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestValidateControlActions(t *testing.T) {
+	testCases := []struct {
+		name    string
+		opts    options
+		wantErr string
+	}{
+		{name: "no control action"},
+		{name: "stop", opts: options{OptStop: true}},
+		{name: "restart", opts: options{OptRestart: true}},
+		{
+			name:    "stop and restart",
+			opts:    options{OptStop: true, OptRestart: true},
+			wantErr: "--stop and --restart cannot be used together; choose one action",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateControlActions(&tc.opts)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.EqualError(t, err, tc.wantErr)
+		})
+	}
+}
+
+func TestRunRejectsConflictingControlActions(t *testing.T) {
+	readStderr, writeStderr, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, readStderr.Close())
+	})
+
+	originalArgs := os.Args
+	originalStderr := os.Stderr
+	os.Args = []string{"start_server", "--stop", "--restart"}
+	os.Stderr = writeStderr
+	t.Cleanup(func() {
+		os.Args = originalArgs
+		os.Stderr = originalStderr
+	})
+
+	exitCode := Run()
+	require.NoError(t, writeStderr.Close())
+	os.Stderr = originalStderr
+
+	stderr, err := io.ReadAll(readStderr)
+	require.NoError(t, err)
+	require.Equal(t, 1, exitCode)
+	require.Equal(t, "--stop and --restart cannot be used together; choose one action\n", string(stderr))
 }

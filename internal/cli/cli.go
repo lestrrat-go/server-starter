@@ -31,6 +31,10 @@ func Run() int {
 		showHelp()
 		return 1
 	}
+	if err := validateControlActions(opts); err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		return 1
+	}
 
 	if opts.OptVersion {
 		fmt.Fprintf(os.Stdout, "%s\n", version)
@@ -155,4 +159,11 @@ func Run() int {
 
 func openLogFile(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+}
+
+func validateControlActions(opts *options) error {
+	if opts.OptStop && opts.OptRestart {
+		return errors.New("--stop and --restart cannot be used together; choose one action")
+	}
+	return nil
 }
