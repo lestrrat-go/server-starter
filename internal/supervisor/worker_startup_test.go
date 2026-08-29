@@ -137,6 +137,39 @@ func TestRunCancellationStopsInitialWorkerStartRetries(t *testing.T) {
 	}
 }
 
+func TestStartWorkerReturnsCancellationBeforeFirstAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := (&runState{}).startWorker(ctx, make(chan processState), nil, false)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+type cancelOnFailedStartWriter struct {
+	cancel context.CancelFunc
+}
+
+func (w cancelOnFailedStartWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "seems to have failed to start") {
+		w.cancel()
+	}
+	return len(p), nil
+}
+
+func TestStartWorkerReturnsCancellationAfterFailedAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rs := &runState{cfg: &Starter{
+		command: testShellPath,
+		dir:     filepath.Join(t.TempDir(), "missing"),
+		stderr:  cancelOnFailedStartWriter{cancel: cancel},
+	}}
+
+	_, err := rs.startWorker(ctx, make(chan processState), nil, false)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestRunWithStartupCheckReturnsInitialWorkerStartError(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "missing")
 	sd, err := NewStarter(&config{

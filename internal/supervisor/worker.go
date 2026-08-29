@@ -134,7 +134,9 @@ func reportFailedStart(
 // into a valid SERVER_STARTER_PORT spec (see starter.FormatPorts), or when the
 // initial worker command cannot start or exits before passing a synchronous
 // startup check. Without a synchronous startup check, command-start errors and
-// early exits remain transient and are retried.
+// early exits remain transient and are retried. Context cancellation always
+// returns ctx.Err(); the supervisor loop translates it to ErrServerClosed for
+// an ordinary Run while checked startup reports the context error directly.
 func (rs *runState) startWorker(
 	ctx context.Context,
 	ch chan<- processState,
@@ -145,8 +147,8 @@ func (rs *runState) startWorker(
 
 	// Don't give up until we're running.
 	for {
-		if ctx.Err() != nil {
-			return nil, nil
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 
 		pid := -1
@@ -302,8 +304,8 @@ func (rs *runState) startWorker(
 			}
 			return nil, fmt.Errorf("initial worker %d exited before passing startup check", pid)
 		}
-		if ctx.Err() != nil {
-			return nil, nil
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 	}
 }

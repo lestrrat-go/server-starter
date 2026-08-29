@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -184,6 +185,11 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 	return ctrl, nil
 }
 
+func workerStartCanceled(ctx context.Context, err error) bool {
+	ctxErr := ctx.Err()
+	return ctxErr != nil && errors.Is(err, ctxErr)
+}
+
 // loop runs the supervisor's main lifecycle: it starts the initial worker,
 // then waits for the worker to exit, for a hangup request (graceful
 // restart), for the auto-restart timer, or for ctx to be cancelled. It owns
@@ -208,6 +214,10 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- e
 		startup <- startupErr
 	}
 	if err != nil {
+		if workerStartCanceled(ctx, err) {
+			ctrl.setErr(ErrServerClosed)
+			return
+		}
 		fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 		ctrl.setErr(err)
 		return
@@ -268,8 +278,12 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- e
 				}
 				newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone, false)
 				if err != nil {
-					fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 					sigToSend = rs.cfg.signalOnTERM
+					if workerStartCanceled(ctx, err) {
+						ctrl.setErr(ErrServerClosed)
+						return
+					}
+					fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 					ctrl.setErr(err)
 					return
 				}
@@ -335,8 +349,12 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- e
 			}
 			newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone, false)
 			if err != nil {
-				fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 				sigToSend = rs.cfg.signalOnTERM
+				if workerStartCanceled(ctx, err) {
+					ctrl.setErr(ErrServerClosed)
+					return
+				}
+				fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 				ctrl.setErr(err)
 				return
 			}
