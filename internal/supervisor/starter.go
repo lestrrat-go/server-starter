@@ -15,10 +15,10 @@ type Config interface {
 	Dir() string             // Directory to chdir to before executing the command
 	Interval() time.Duration // Time between checks for liveness
 	PidFile() string
-	Ports() []string         // Ports to bind to; address components cannot contain ";" or "="
-	Paths() []string         // UNIX socket paths; ";" and "=" are reserved wire delimiters
-	SignalOnHUP() os.Signal  // Signal to send when HUP is received
-	SignalOnTERM() os.Signal // Signal to send when TERM is received
+	Ports() []string                  // Ports to bind to; address components cannot contain ";" or "="
+	Paths() []string                  // UNIX socket paths; ";" and "=" are reserved wire delimiters
+	SignalOnHUP() (os.Signal, error)  // Signal to send when HUP is received
+	SignalOnTERM() (os.Signal, error) // Signal to send when TERM is received
 	StatusFile() string
 	Envdir() string                     // Directory of files to load into each worker's environment
 	EnableAutoRestart() bool            // Whether to restart workers automatically on a timer
@@ -72,11 +72,20 @@ func NewStarter(c Config) (*Starter, error) {
 
 	var signalOnHUP os.Signal = syscall.SIGTERM
 	var signalOnTERM os.Signal = syscall.SIGTERM
-	if s := c.SignalOnHUP(); s != nil {
-		signalOnHUP = s
+	signalOnHUPValue, err := c.SignalOnHUP()
+	if err != nil {
+		return nil, fmt.Errorf("signal on HUP: %w", err)
 	}
-	if s := c.SignalOnTERM(); s != nil {
-		signalOnTERM = s
+	if signalOnHUPValue != nil {
+		signalOnHUP = signalOnHUPValue
+	}
+
+	signalOnTERMValue, err := c.SignalOnTERM()
+	if err != nil {
+		return nil, fmt.Errorf("signal on TERM: %w", err)
+	}
+	if signalOnTERMValue != nil {
+		signalOnTERM = signalOnTERMValue
 	}
 
 	if c.Command() == "" {
