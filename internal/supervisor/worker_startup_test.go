@@ -116,7 +116,7 @@ func TestRunWithStartupCheckReturnsInitialWorkerExitError(t *testing.T) {
 			fi
 			: > "$1"
 			exit 7
-		`, "worker", firstAttempt, retried},
+		`, testWorkerCommandName, firstAttempt, retried},
 		interval: 1,
 		stderr:   io.Discard,
 	})
@@ -164,7 +164,7 @@ func TestRunWithStartupCheckReportsProbeCancellation(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "started")
 			sd, err := NewStarter(&config{
 				command:  testShellPath,
-				args:     []string{"-c", `: > "$1"; exec sleep 30`, "worker", marker},
+				args:     []string{"-c", `: > "$1"; exec sleep 30`, testWorkerCommandName, marker},
 				interval: interval,
 				stderr:   io.Discard,
 			})

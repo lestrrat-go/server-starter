@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testWorkerCommandName = "worker"
+
 var echoServerTxt = `package main
 
 import (
@@ -176,7 +178,7 @@ func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
 
 func TestNewStarterPreservesBareCommandForPATHLookup(t *testing.T) {
 	dir := t.TempDir()
-	commandName := "worker"
+	commandName := testWorkerCommandName
 	if runtime.GOOS == windowsOS {
 		commandName += ".exe"
 	}

@@ -67,7 +67,7 @@ func TestDeterministicLaunchErrorsStopWorkerStartRetries(t *testing.T) {
 				path := filepath.Join(dir, "worker")
 				require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700))
 				t.Setenv("PATH", dir)
-				return config{command: "worker"}, func() {
+				return config{command: testWorkerCommandName}, func() {
 					require.NoError(t, os.Remove(path))
 				}
 			},
@@ -91,7 +91,7 @@ func TestDeterministicLaunchErrorsStopWorkerStartRetries(t *testing.T) {
 				})
 
 				t.Setenv("PATH", preferredDir+string(os.PathListSeparator)+".")
-				return config{command: "worker"}, func() {
+				return config{command: testWorkerCommandName}, func() {
 					require.NoError(t, os.Remove(preferredPath))
 				}
 			},
