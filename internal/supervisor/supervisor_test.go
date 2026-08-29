@@ -52,7 +52,7 @@ func TestRunErrServerClosed(t *testing.T) {
 		command:   command,
 		args:      args,
 		ports:     testWorkerPorts(),
-		sigonterm: "KILL",
+		sigonterm: signalNameKill,
 	})
 	require.NoError(t, err)
 

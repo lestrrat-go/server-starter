@@ -19,7 +19,7 @@ func TestRunStartsUnixListenerInWriteSearchOnlyParent(t *testing.T) {
 		command:   command,
 		args:      args,
 		paths:     []string{path},
-		sigonterm: "KILL",
+		sigonterm: signalNameKill,
 	})
 	require.NoError(t, err)
 

@@ -10,6 +10,8 @@ import (
 var niceSigNames map[syscall.Signal]string
 var niceNameToSigs map[string]syscall.Signal
 
+const signalNameKill = "KILL"
+
 func makeNiceSigNamesCommon() map[syscall.Signal]string {
 	return map[syscall.Signal]string{
 		syscall.SIGABRT: "ABRT",
@@ -22,7 +24,7 @@ func makeNiceSigNamesCommon() map[syscall.Signal]string {
 		// syscall.SIGINFO: "INFO",
 		syscall.SIGINT: "INT",
 		// syscall.SIGIOT:    "IOT",
-		syscall.SIGKILL: "KILL",
+		syscall.SIGKILL: signalNameKill,
 		syscall.SIGPIPE: "PIPE",
 		syscall.SIGQUIT: "QUIT",
 		syscall.SIGSEGV: "SEGV",
