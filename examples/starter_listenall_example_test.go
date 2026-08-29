@@ -17,7 +17,8 @@ import (
 // "running under a supervisor but misconfigured" — calling Ports() (or
 // ListenAll()) directly and pattern-matching on ErrNoListeningTarget cannot
 // tell those two cases apart, because an unconfigured supervisor also
-// produces that error.
+// produces that error. ListenAll handles only TCP and unix targets; see
+// Example_starter_mixedListeners when the inherited list also contains UDP.
 func Example_starter_listenall() {
 	// Guarantee this example's own environment is clean regardless of what
 	// the process was started with, so its output stays fixed.

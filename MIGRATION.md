@@ -30,7 +30,7 @@ generation. Use `starter.GenerationEnvName` instead of spelling
 `SERVER_STARTER_GENERATION` as a string literal. `Generation` parses that
 variable, while `IsUnderStartServer` checks whether it is present.
 
-Two things to check when you move code over:
+Three things to check when you move code over:
 
 - `ErrNoListeningTarget`'s message text changed, from `"no listening
   target"` to `"starter: no listening target"`. Code that matches on the
@@ -42,6 +42,10 @@ Two things to check when you move code over:
   It breaks two narrower usages: storing the result in a variable of a
   *different* named slice type, and taking `Ports` as a function value typed
   `func() ([]Listener, error)`.
+- `ListenAll()` accepts only TCP and unix targets, while `ListenPacketAll()`
+  accepts only UDP targets. A worker with a mixed list should call `Ports()`
+  and switch on `TCPListener`, `UnixListener`, and `UDPListener`. See the
+  verified [`starter_mixedListeners` example](./examples/starter_mixed_listeners_example_test.go).
 
 ## The supervisor is gone from the API
 
