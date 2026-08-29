@@ -15,9 +15,16 @@ func TestParsePortTarget(t *testing.T) {
 		port, fd                  int
 	}{
 		{name: "tcp4", spec: "8080", network: "tcp4", port: 8080, fd: -1},
-		{name: "udp4", spec: "u8080", network: "udp4", port: 8080, fd: -1},
+		{name: "tcp4 hostname beginning with u", spec: "ubuntu.internal:8080", network: "tcp4", host: "ubuntu.internal", port: 8080, fd: -1},
+		{name: "udp4", spec: "udp://8080", network: udp4Network, port: 8080, fd: -1},
+		{name: "legacy udp4", spec: "u8080", network: udp4Network, port: 8080, fd: -1},
+		{
+			name: "legacy udp4 hostname beginning with u", spec: "ubuntu.internal:u8080",
+			network: udp4Network, host: "ubuntu.internal", port: 8080, fd: -1,
+		},
 		{name: "tcp6", spec: "[::1]:8080", network: "tcp6", host: "::1", port: 8080, fd: -1},
-		{name: "udp6", spec: "u[::1]:8080=7", network: "udp6", host: "::1", port: 8080, fd: 7},
+		{name: "udp6", spec: "udp://[::1]:8080=7", network: "udp6", host: "::1", port: 8080, fd: 7},
+		{name: "legacy udp6", spec: "u[::1]:8080=7", network: "udp6", host: "::1", port: 8080, fd: 7},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := parsePortTarget(test.spec)
@@ -34,6 +41,21 @@ func TestParsePortTarget(t *testing.T) {
 func TestParsePortTargetRejectsDescriptorAboveLimit(t *testing.T) {
 	_, err := parsePortTarget(fmt.Sprintf("8080=%d", maxInheritedListenerFD+1))
 	require.ErrorContains(t, err, fmt.Sprintf("exceeds maximum %d", maxInheritedListenerFD))
+}
+
+func TestParsePortTargetReturnsDelimitedTargetParseErrors(t *testing.T) {
+	for _, test := range []struct {
+		name, spec, wantErr string
+	}{
+		{name: "malformed IPv6 address", spec: "[::1;next", wantErr: "invalid address"},
+		{name: "non-numeric port", spec: "host;next:not-a-port", wantErr: "invalid syntax"},
+		{name: "out-of-range port", spec: "host;next:65536", wantErr: "must be between 0 and 65535"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parsePortTarget(test.spec)
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
 }
 
 func TestAssignListenerDescriptors(t *testing.T) {

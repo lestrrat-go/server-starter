@@ -10,46 +10,43 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	starter "github.com/lestrrat-go/server-starter/v2"
 	"github.com/stretchr/testify/require"
 )
 
-// TestPortSpecWireFormatUnchanged guards startWorker's switch from an
-// inline fmt.Sprintf("%s=%d", spec, fd) to a starter.List built from typed
-// Listener values (NewTCPListener/NewUDPListener/NewUnixListener) and
-// formatted through starter.FormatPorts. SERVER_STARTER_PORT is the wire
-// protocol between this supervisor and every worker, including ones built
-// with a different version of this module; the two formatting paths must
-// stay byte-identical for every shape the supervisor can emit, or a future
-// refactor could silently break that protocol.
-func TestPortSpecWireFormatUnchanged(t *testing.T) {
+// TestPortSpecWireFormat guards the shared SERVER_STARTER_PORT contract
+// between the supervisor's parser and FormatPorts, including canonicalising
+// legacy UDP spellings to the explicit udp:// marker.
+func TestPortSpecWireFormat(t *testing.T) {
 	const fd = 3
 
 	tcpUDPCases := []struct {
 		name string
 		raw  string
+		want string
 	}{
-		{name: "tcp bare port", raw: "8080"},
-		{name: "tcp host:port", raw: "127.0.0.1:9090"},
-		{name: "tcp ipv6", raw: "[::1]:9090"},
-		{name: "udp bare port", raw: "u8080"},
-		{name: "udp host:port", raw: "u127.0.0.1:9090"},
+		{name: "tcp bare port", raw: "8080", want: "8080=3"},
+		{name: "tcp host:port", raw: "127.0.0.1:9090", want: "127.0.0.1:9090=3"},
+		{name: "tcp hostname beginning with u", raw: "ubuntu.internal:9090", want: "ubuntu.internal:9090=3"},
+		{name: "tcp ipv6", raw: "[::1]:9090", want: "[::1]:9090=3"},
+		{name: "udp bare port", raw: "udp://8080", want: "udp://8080=3"},
+		{name: "udp host:port", raw: "udp://127.0.0.1:9090", want: "udp://127.0.0.1:9090=3"},
+		{name: "legacy udp bare port", raw: "u8080", want: "udp://8080=3"},
 	}
 	for _, tc := range tcpUDPCases {
 		t.Run(tc.name, func(t *testing.T) {
 			target, err := parsePortTarget(tc.raw)
 			require.NoError(t, err)
 
-			// old code: fmt.Sprintf("%s=%d", l.spec, descriptors[i])
-			want := fmt.Sprintf("%s=%d", target.spec, fd)
-
 			l := listener{network: target.network, host: target.host, port: target.port}
 			got, err := starter.FormatPorts(l.starterListener(fd))
 			require.NoError(t, err)
 
-			require.Equal(t, want, got)
+			require.Equal(t, tc.want, got)
+			require.Equal(t, strings.TrimSuffix(tc.want, "=3"), target.spec)
 		})
 	}
 
@@ -119,7 +116,7 @@ func TestRunRejectsPortAddressesReservedByWireFormatBeforeBinding(t *testing.T) 
 		},
 		{
 			name:     "UDP address",
-			raw:      "uhost;next:8080",
+			raw:      "udp://host;next:8080",
 			listener: starter.NewUDPListener("host;next", 8080, 3),
 		},
 	} {

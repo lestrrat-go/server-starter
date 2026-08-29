@@ -8,16 +8,15 @@ import (
 // PortEnvName is the environment variable that carries the listener
 // specification, as a list of "spec=fd" pairs joined by ";".
 //
-// Each spec is either a TCP/UDP target (a bare port, "host:port", or
-// "[ipv6]:port", optionally prefixed with "u" for UDP) or a unix socket
+// Each spec is either a TCP target (a bare port, "host:port", or
+// "[ipv6]:port"), a UDP target prefixed with "udp://", or a unix socket
 // path. Because ";" separates entries and "=" separates each target from
 // its descriptor, TCP/UDP addresses and unix socket paths cannot contain
-// either delimiter. A path containing "/" is always read as a unix socket.
-// A relative unix socket path with no "/" that happens to parse as a port or
-// "host:port" (e.g. "8080" or "db:5432") is indistinguishable from a TCP/UDP
-// spec in this wire format and is interpreted as TCP/UDP; pass such sockets
-// as absolute paths, or prefix them with "./" (which contains "/" and so is
-// always read as a unix socket).
+// either delimiter. A path containing "/" is read as a unix socket unless
+// it uses the UDP prefix. A relative unix socket path with no "/" that
+// happens to parse as a port or "host:port" (e.g. "8080" or "db:5432") is
+// indistinguishable from a TCP spec in this wire format and is interpreted
+// as TCP; pass such sockets as absolute paths, or prefix them with "./".
 const PortEnvName = "SERVER_STARTER_PORT"
 
 // GenerationEnvName is the environment variable the supervisor sets to the

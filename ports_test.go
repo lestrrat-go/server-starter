@@ -79,9 +79,21 @@ func TestParsePorts(t *testing.T) {
 	})
 
 	t.Run("UDP host and port", func(t *testing.T) {
-		got, err := starter.ParsePorts("u127.0.0.1:9090=4")
+		got, err := starter.ParsePorts("udp://127.0.0.1:9090=4")
 		require.NoError(t, err)
 		require.Equal(t, starter.NewUDPListener("127.0.0.1", 9090, 4), got[0])
+	})
+
+	t.Run("TCP hostname beginning with u", func(t *testing.T) {
+		got, err := starter.ParsePorts("ubuntu.internal:8080=4")
+		require.NoError(t, err)
+		require.Equal(t, starter.NewTCPListener("ubuntu.internal", 8080, 4), got[0])
+	})
+
+	t.Run("legacy UDP bare port", func(t *testing.T) {
+		got, err := starter.ParsePorts("u8080=4")
+		require.NoError(t, err)
+		require.Equal(t, starter.NewUDPListener("", 8080, 4), got[0])
 	})
 
 	t.Run("UDP port suffix", func(t *testing.T) {
@@ -90,17 +102,29 @@ func TestParsePorts(t *testing.T) {
 		require.Equal(t, starter.NewUDPListener("127.0.0.1", 9090, 4), got[0])
 	})
 
+	t.Run("UDP hostname beginning with u and port suffix", func(t *testing.T) {
+		got, err := starter.ParsePorts("ubuntu.internal:u8080=3")
+		require.NoError(t, err)
+		require.Equal(t, starter.NewUDPListener("ubuntu.internal", 8080, 3), got[0])
+	})
+
 	t.Run("UDP IPv6 host and port", func(t *testing.T) {
+		got, err := starter.ParsePorts("udp://[::1]:9090=4")
+		require.NoError(t, err)
+		require.Equal(t, starter.NewUDPListener("::1", 9090, 4), got[0])
+		require.Equal(t, "udp://[::1]:9090=4", got[0].String())
+	})
+
+	t.Run("legacy UDP IPv6 host and port", func(t *testing.T) {
 		got, err := starter.ParsePorts("u[::1]:9090=4")
 		require.NoError(t, err)
 		require.Equal(t, starter.NewUDPListener("::1", 9090, 4), got[0])
-		require.Equal(t, "u[::1]:9090=4", got[0].String())
 	})
 
-	t.Run("UDP host and port with marker in both positions", func(t *testing.T) {
+	t.Run("UDP port suffix preserves a valid hostname beginning with u", func(t *testing.T) {
 		got, err := starter.ParsePorts("u10.0.0.5:u9090=4")
 		require.NoError(t, err)
-		require.Equal(t, starter.NewUDPListener("10.0.0.5", 9090, 4), got[0])
+		require.Equal(t, starter.NewUDPListener("u10.0.0.5", 9090, 4), got[0])
 	})
 
 	t.Run("unix socket path", func(t *testing.T) {
@@ -154,7 +178,7 @@ func TestParsePorts(t *testing.T) {
 	})
 
 	t.Run("mixed multi-target spec", func(t *testing.T) {
-		got, err := starter.ParsePorts("unix.sock=5;u8080=3;10.0.0.5:9090=4;/foo/bar.sock=6")
+		got, err := starter.ParsePorts("unix.sock=5;udp://8080=3;10.0.0.5:9090=4;/foo/bar.sock=6")
 		require.NoError(t, err)
 		require.Len(t, got, 4)
 		require.Equal(t, starter.NewUnixListener("unix.sock", 5), got[0])
@@ -317,11 +341,10 @@ func TestFormatPorts(t *testing.T) {
 		require.ErrorContains(t, err, "TCPListener")
 	})
 
-	t.Run("rejects a TCP address that looks like a UDP marker", func(t *testing.T) {
-		_, err := starter.FormatPorts(starter.NewTCPListener("upstream", 8080, 3))
-		require.Error(t, err)
-		require.ErrorContains(t, err, "TCPListener")
-		require.ErrorContains(t, err, "UDPListener")
+	t.Run("accepts a TCP address beginning with u", func(t *testing.T) {
+		spec, err := starter.FormatPorts(starter.NewTCPListener("upstream", 8080, 3))
+		require.NoError(t, err)
+		require.Equal(t, "upstream:8080=3", spec)
 	})
 
 	// Round-trip coverage against ParsePorts for every valid shape the

@@ -140,7 +140,7 @@ func (l TCPListener) Listen() (net.Listener, error) {
 	return listener, nil
 }
 
-// String returns a human-readable "uspec=fd" rendering of l. It is a
+// String returns a human-readable "udp://spec=fd" rendering of l. It is a
 // display form: it does not validate l, so it can render an unnormalised
 // listener (for example one built directly as a struct literal, bypassing
 // NewUDPListener), or an Addr containing ';' or '=', into a spec that reads
@@ -151,7 +151,7 @@ func (l UDPListener) String() string {
 	if l.Addr != wildcardIPv4 {
 		address = net.JoinHostPort(l.Addr, strconv.Itoa(l.Port))
 	}
-	return fmt.Sprintf("u%s=%d", address, l.fd)
+	return fmt.Sprintf("%s%s=%d", udpTransportMarker, address, l.fd)
 }
 
 // Fd returns the underlying file descriptor.

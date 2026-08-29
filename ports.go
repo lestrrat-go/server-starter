@@ -15,13 +15,16 @@ import (
 var reLooksLikeHostPort = regexp.MustCompile(`^(.+?):(\d+)$`)
 var reLooksLikePort = regexp.MustCompile(`^\d+$`)
 
+const udpTransportMarker = "udp://"
+
 // looksLikeTCPGrammar reports whether s parses as a bare port, "host:port",
 // or "[ipv6]:port" — the grammar shared by TCP and UDP specs.
 func looksLikeTCPGrammar(s string) bool {
-	if reLooksLikeHostPort.MatchString(s) {
+	if reLooksLikePort.MatchString(s) {
 		return true
 	}
-	return reLooksLikePort.MatchString(s)
+	host, port, err := net.SplitHostPort(s)
+	return err == nil && host != "" && reLooksLikePort.MatchString(port)
 }
 
 // stripLeadingUDPMarker strips a leading "u" from s, reporting whether s
@@ -48,22 +51,30 @@ type udpCandidate struct {
 	target string
 }
 
-// classifyUDPMarker returns, in priority order, the candidate
-// interpretations of hostPort's UDP marker(s): both a leading "u" and a
-// trailing ":u" stripped, only the leading "u" stripped, only the trailing
-// ":u" stripped, and finally no strip at all. The caller picks the first
-// candidate whose target satisfies looksLikeTCPGrammar.
+// classifyUDPMarker returns, in priority order, the candidate transport
+// interpretations of hostPort. The explicit "udp://" marker wins. An
+// ordinary TCP target is otherwise tried before the legacy UDP forms, so a
+// TCP hostname beginning with "u" cannot be consumed as a UDP marker. Within
+// the legacy forms, a trailing marker is tried first so it does not consume a
+// leading "u" from a valid hostname.
 func classifyUDPMarker(hostPort string) []udpCandidate {
+	if target, ok := strings.CutPrefix(hostPort, udpTransportMarker); ok {
+		return []udpCandidate{{udp: true, target: target}}
+	}
+	if looksLikeTCPGrammar(hostPort) {
+		return []udpCandidate{{udp: false, target: hostPort}}
+	}
+
 	var candidates []udpCandidate
 
+	if trailingStripped, hasTrailing := stripTrailingUDPMarker(hostPort); hasTrailing {
+		candidates = append(candidates, udpCandidate{udp: true, target: trailingStripped})
+	}
 	if leadingStripped, hasLeading := stripLeadingUDPMarker(hostPort); hasLeading {
 		if bothStripped, hasTrailing := stripTrailingUDPMarker(leadingStripped); hasTrailing {
 			candidates = append(candidates, udpCandidate{udp: true, target: bothStripped})
 		}
 		candidates = append(candidates, udpCandidate{udp: true, target: leadingStripped})
-	}
-	if trailingStripped, hasTrailing := stripTrailingUDPMarker(hostPort); hasTrailing {
-		candidates = append(candidates, udpCandidate{udp: true, target: trailingStripped})
 	}
 
 	return append(candidates, udpCandidate{udp: false, target: hostPort})
@@ -72,13 +83,15 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 // ParsePorts parses the "spec=fd;spec=fd;..." value carried by
 // SERVER_STARTER_PORT (see PortEnvName) into concrete Listener values.
 //
-// Each spec is classified in this order: a spec containing "/" is always a
-// unix socket path, taken verbatim; otherwise a spec beginning with "u"
-// whose remainder parses as a port/host:port is a UDP target on that
-// remainder; otherwise a spec that itself parses as a port/host:port is a
-// TCP target; otherwise the spec is a unix socket path, taken verbatim.
-// TCP/UDP addresses and unix socket paths cannot contain ";" or "=" because
-// those characters delimit entries and file descriptors in the wire format.
+// Each spec is classified in this order: a spec beginning with "udp://" is
+// a UDP target; otherwise a spec that parses as a port/host:port is a TCP
+// target; otherwise the unambiguous legacy UDP forms "uPORT",
+// "u[ipv6]:port", and "host:uPORT" are accepted; otherwise the spec is a
+// unix socket path, taken verbatim. In the "host:uPORT" form, the suffix is
+// the marker, so a leading "u" remains part of the hostname. A spec containing
+// "/" is always a unix socket path unless it begins with "udp://". TCP/UDP
+// addresses and unix socket paths cannot contain ";" or "=" because those
+// characters delimit entries and file descriptors in the wire format.
 //
 // This leaves one shape ambiguous: a relative unix socket path with no "/"
 // that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")
@@ -110,19 +123,25 @@ func ParsePorts(spec string) (List, error) {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: file descriptor must be at least 3", pairString)
 		}
 
-		if strings.ContainsRune(hostPort, '/') {
+		explicitUDP := strings.HasPrefix(hostPort, udpTransportMarker)
+		if !explicitUDP && strings.ContainsRune(hostPort, '/') {
 			ret[i] = UnixListener{Path: hostPort, fd: uintptr(fd)}
 			continue
 		}
 
 		udp := false
 		target := hostPort
+		matched := false
 		for _, c := range classifyUDPMarker(hostPort) {
 			if looksLikeTCPGrammar(c.target) {
 				udp = c.udp
 				target = c.target
+				matched = true
 				break
 			}
+		}
+		if explicitUDP && !matched {
+			return nil, fmt.Errorf("failed to parse %q as UDP listen target", pairString)
 		}
 
 		if matches := reLooksLikeHostPort.FindStringSubmatch(target); matches != nil {
@@ -194,7 +213,6 @@ func ParsePorts(spec string) (List, error) {
 //     a spec ParsePorts cannot read back correctly
 //   - a listener whose String result ParsePorts would read back as a
 //     different listener, including ambiguous relative unix socket paths
-//     and TCP addresses that look like they carry the UDP marker
 func FormatPorts(ls ...Listener) (string, error) {
 	if len(ls) == 0 {
 		return "", ErrNoListeningTarget
