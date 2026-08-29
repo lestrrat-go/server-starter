@@ -18,8 +18,10 @@ import (
 )
 
 // TestPortSpecWireFormat guards the shared SERVER_STARTER_PORT contract
-// between the supervisor's parser and FormatPorts, including canonicalising
-// legacy UDP spellings to the explicit udp:// marker.
+// between the supervisor's parser and FormatPorts. TCP and Unix formatting
+// must remain compatible with v0 workers, while v2-only UDP formatting must
+// remain stable for v2 workers, including canonicalising legacy UDP spellings
+// to the explicit udp:// marker.
 func TestPortSpecWireFormat(t *testing.T) {
 	const fd = 3
 

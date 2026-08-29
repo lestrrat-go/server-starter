@@ -18,13 +18,12 @@ gone; everything it exported now lives at the module root, in package
 | v0 | v2 |
 |---|---|
 | `listener.ListenAll()` | `starter.ListenAll()` |
-| `listener.ListenPacketAll()` | `starter.ListenPacketAll()` |
 | `listener.Ports()` returning `[]Listener` | `starter.Ports()` returning `List` |
 | `listener.GetPortsSpecification()` | removed; read `os.Getenv(starter.PortEnvName)` |
 | `listener.ServerStarterEnvVarName` | `starter.PortEnvName` |
 | `listener.ErrNoListeningTarget` | `starter.ErrNoListeningTarget` |
 | `listener.Listener` / `List` / `TCPListener` / `UnixListener` | same names, module root |
-| — | new: `UDPListener`, `ParsePorts`, `FormatPorts`, `NewTCPListener`, `NewUDPListener`, `NewUnixListener`, `Generation`, `GenerationEnvName`, `IsUnderStartServer` |
+| — | new: `UDPListener`, `ListenPacketAll`, `ParsePorts`, `FormatPorts`, `NewTCPListener`, `NewUDPListener`, `NewUnixListener`, `Generation`, `GenerationEnvName`, `IsUnderStartServer` |
 
 `GenerationEnvName` names the environment variable that carries the worker
 generation. Use `starter.GenerationEnvName` instead of spelling
@@ -70,7 +69,10 @@ worker binary built against v0's `listener` package still handles those
 targets under a v2 `start_server`, and a worker built against v2's `starter`
 package handles them under a v0 `start_server`.
 
-UDP targets are a v2 extension. Their canonical command-line and
+UDP targets are a v2 extension. V0 workers support TCP and Unix listeners,
+but not UDP listeners, so a v2 `start_server` configured with a UDP target
+requires a worker built against v2's `starter` package. Their canonical
+command-line and
 `SERVER_STARTER_PORT` spelling is `udp://PORT`, `udp://host:PORT`, or
 `udp://[ipv6]:PORT`. The v2 parser still reads unambiguous legacy forms such
 as `uPORT`, `host:uPORT`, and `u[ipv6]:PORT`. A leading `u` on an otherwise
