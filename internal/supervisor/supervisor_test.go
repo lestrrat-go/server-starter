@@ -49,7 +49,7 @@ func TestRunErrServerClosed(t *testing.T) {
 	sd, err := NewStarter(&config{
 		command:   command,
 		args:      args,
-		ports:     []string{"0"},
+		ports:     testWorkerPorts(),
 		sigonterm: "KILL",
 	})
 	require.NoError(t, err)

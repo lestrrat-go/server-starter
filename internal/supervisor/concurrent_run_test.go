@@ -12,10 +12,10 @@ import (
 )
 
 // TestRunConcurrentOnSharedStarter proves that Run is safe to invoke as
-// `go sd.Run(ctx)`: the same *Starter, sharing one command and one port spec
-// (port 0, so each run binds its own ephemeral port instead of colliding),
-// is run twice concurrently, each with its own context. Both runs must
-// complete cleanly when their own context is cancelled, independently of
+// `go sd.Run(ctx)`: the same *Starter, sharing one command and, on Unix, one
+// port spec (port 0, so each run binds its own ephemeral port instead of
+// colliding), is run twice concurrently, each with its own context. Both runs
+// must complete cleanly when their own context is cancelled, independently of
 // each other, and each must have spawned its own live worker process.
 //
 // statusFile and pidFile are left empty on purpose: WriteStatus is a no-op
@@ -32,7 +32,7 @@ func TestRunConcurrentOnSharedStarter(t *testing.T) {
 	sd, err := NewStarter(&config{
 		command:   command,
 		args:      args,
-		ports:     []string{"0"},
+		ports:     testWorkerPorts(),
 		sigonterm: "KILL",
 	})
 	require.NoError(t, err)

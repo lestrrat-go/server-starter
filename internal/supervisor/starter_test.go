@@ -275,7 +275,7 @@ func TestRunDoesNotMutateSupervisorEnvironment(t *testing.T) {
 	sd, err := NewStarter(&config{
 		command:   command,
 		args:      args,
-		ports:     []string{"0"},
+		ports:     testWorkerPorts(),
 		envdir:    envdir,
 		sigonterm: "KILL",
 	})
