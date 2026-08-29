@@ -2,12 +2,10 @@ package supervisor
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -189,135 +187,25 @@ func workerStartCanceled(ctx context.Context, err error) bool {
 }
 
 func removeExistingUnixSocket(path string) error {
-	return removeExistingUnixSocketWithMove(path, moveToQuarantineAt)
-}
-
-const (
-	quarantinedSocketName = "socket"
-	pinnedSocketName      = "selected"
-)
-
-func removeExistingUnixSocketWithMove(
-	path string,
-	movePath func(*os.File, string, *os.File, string) error,
-) error {
 	if runtime.GOOS == "linux" &&
 		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
 		return nil
 	}
 
-	parentPath := filepath.Dir(path)
-	parent, err := os.Open(parentPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("open parent directory for unix socket path %q: %w", path, err)
-	}
-	defer parent.Close()
-
-	name := filepath.Base(path)
-	selected, err := pathIdentityAt(parent, name)
+	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("inspect unix socket path %q: %w", path, err)
 	}
-	if !selected.isSocket() {
+	if info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("unix socket path %q is not a socket", path)
 	}
-
-	quarantineName, err := newSocketQuarantineName()
-	if err != nil {
-		return fmt.Errorf("create quarantine name for unix socket path %q: %w", path, err)
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove unix socket path %q: %w", path, err)
 	}
-	quarantinePath := filepath.Join(parentPath, quarantineName, quarantinedSocketName)
-	quarantine, err := createPrivateDirAt(parent, quarantineName)
-	if err != nil {
-		return fmt.Errorf("create quarantine directory for unix socket path %q: %w", path, err)
-	}
-	defer quarantine.Close()
-
-	selected, err = pinSocketAt(parent, name, quarantine, pinnedSocketName)
-	if err != nil {
-		if cleanupErr := closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName); cleanupErr != nil {
-			return fmt.Errorf("pin unix socket path %q: %w; remove quarantine directory: %v", path, err, cleanupErr)
-		}
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("pin unix socket path %q: %w", path, err)
-	}
-	if !selected.isSocket() {
-		if cleanupErr := removePinnedSocketQuarantine(parent, quarantine, quarantineName, selected); cleanupErr != nil {
-			return fmt.Errorf("unix socket path %q is not a socket; remove quarantine directory: %v", path, cleanupErr)
-		}
-		return fmt.Errorf("unix socket path %q is not a socket", path)
-	}
-
-	if err := movePath(parent, name, quarantine, quarantinedSocketName); err != nil {
-		if cleanupErr := removePinnedSocketQuarantine(parent, quarantine, quarantineName, selected); cleanupErr != nil {
-			return fmt.Errorf("move unix socket path %q: %w; remove quarantine directory: %v", path, err, cleanupErr)
-		}
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("move unix socket path %q: %w", path, err)
-	}
-
-	moved, err := pathIdentityAt(quarantine, quarantinedSocketName)
-	if err != nil {
-		return fmt.Errorf("inspect moved unix socket path %q, preserved at %q: %w", path, quarantinePath, err)
-	}
-	if samePathIdentity(selected, moved) {
-		if err := removeAt(quarantine, quarantinedSocketName, moved); err != nil {
-			return fmt.Errorf("remove moved unix socket path %q: %w", path, err)
-		}
-		if err := removePinnedSocketQuarantine(parent, quarantine, quarantineName, selected); err != nil {
-			return fmt.Errorf("remove quarantine directory for unix socket path %q: %w", path, err)
-		}
-		return nil
-	}
-
-	// Only restoration needs no-replace semantics. The initial move targets an
-	// opened, verified private directory, so moveToQuarantineAt can use the
-	// portable anchored rename available on every supported Unix target.
-	if err := renameNoReplaceEntryAt(quarantine, quarantinedSocketName, parent, name, moved); err != nil {
-		return fmt.Errorf(
-			"unix socket path %q changed to a non-socket and was preserved at %q: %w",
-			path,
-			quarantinePath,
-			err,
-		)
-	}
-	if err := removePinnedSocketQuarantine(parent, quarantine, quarantineName, selected); err != nil {
-		return fmt.Errorf("remove quarantine directory for changed unix socket path %q: %w", path, err)
-	}
-	if !moved.isSocket() {
-		return fmt.Errorf("unix socket path %q changed during preparation and is not a socket", path)
-	}
-	return fmt.Errorf("unix socket path %q changed during preparation", path)
-}
-
-func removePinnedSocketQuarantine(
-	parent *os.File,
-	quarantine *os.File,
-	quarantineName string,
-	selected pathIdentity,
-) error {
-	if err := unpinSocketAt(quarantine, pinnedSocketName, selected); err != nil {
-		return err
-	}
-	return closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName)
-}
-
-func newSocketQuarantineName() (string, error) {
-	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf(".server-starter-socket-%x", random), nil
+	return nil
 }
 
 // loop runs the supervisor's main lifecycle: it starts the initial worker,
