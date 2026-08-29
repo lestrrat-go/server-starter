@@ -5,8 +5,10 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -31,7 +33,7 @@ func TestDaemonSignalDuringReadinessStopsWorker(t *testing.T) {
 	require.NoError(t, cmd.Start())
 
 	waitForPIDFile(t, workerPIDFile)
-	supervisorPID := readPIDFile(t, supervisorPIDFile)
+	supervisorPID := readSupervisorPIDFile(t, supervisorPIDFile)
 	require.NoError(t, syscall.Kill(supervisorPID, syscall.SIGTERM))
 	require.Error(t, cmd.Wait())
 	waitForProcessExit(t, supervisorPID)
@@ -54,7 +56,7 @@ func TestDaemonReadinessPipeFailureStopsWorker(t *testing.T) {
 	require.NoError(t, cmd.Start())
 	waitForPIDFile(t, workerPIDFile)
 	workerPID := readPIDFile(t, workerPIDFile)
-	supervisorPID := readPIDFile(t, supervisorPIDFile)
+	supervisorPID := readSupervisorPIDFile(t, supervisorPIDFile)
 
 	require.NoError(t, cmd.Process.Kill())
 	require.Error(t, cmd.Wait())
@@ -78,7 +80,7 @@ func waitForPIDFile(t *testing.T, path string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if pid, err := statefile.ReadPID(context.Background(), path); err == nil && pid > 0 {
+		if pid, err := readUnownedPIDFile(path); err == nil && pid > 0 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -88,10 +90,26 @@ func waitForPIDFile(t *testing.T, path string) {
 
 func readPIDFile(t *testing.T, path string) int {
 	t.Helper()
-	pid, err := statefile.ReadPID(context.Background(), path)
+	pid, err := readUnownedPIDFile(path)
 	require.NoError(t, err)
 	require.Positive(t, pid)
 	return pid
+}
+
+func readSupervisorPIDFile(t *testing.T, path string) int {
+	t.Helper()
+	pid, err := statefile.ReadPID(path)
+	require.NoError(t, err)
+	require.Positive(t, pid)
+	return pid
+}
+
+func readUnownedPIDFile(path string) (int, error) {
+	value, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(string(value))
 }
 
 func waitForProcessExit(t *testing.T, pid int) {
