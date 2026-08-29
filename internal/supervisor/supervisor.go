@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -140,15 +142,10 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 
 	for _, path := range s.paths {
 		var l net.Listener
-		if fl, err := os.Lstat(path); err == nil && fl.Mode()&os.ModeSocket == os.ModeSocket {
-			fmt.Fprintf(s.stderr, "removing existing socket file:%s\n", path)
-			err = os.Remove(path)
-			if err != nil {
-				fmt.Fprintf(s.stderr, "failed to remove existing socket file:%s:%s\n", path, err)
-				return nil, err
-			}
+		if err := removeExistingUnixSocket(path); err != nil {
+			fmt.Fprintf(s.stderr, "failed to prepare socket file:%s:%s\n", path, err)
+			return nil, err
 		}
-		_ = os.Remove(path)
 		lc := listenConfig(unixNetwork)
 		l, err := lc.Listen(ctx, unixNetwork, path)
 		if err != nil {
@@ -188,6 +185,70 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 func workerStartCanceled(ctx context.Context, err error) bool {
 	ctxErr := ctx.Err()
 	return ctxErr != nil && errors.Is(err, ctxErr)
+}
+
+func removeExistingUnixSocket(path string) error {
+	if runtime.GOOS == "linux" &&
+		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
+		return nil
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect unix socket path %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("unix socket path %q is not a socket", path)
+	}
+	return removeSocketWithIdentity(path, info, os.Rename)
+}
+
+func removeSocketWithIdentity(path string, selected os.FileInfo, move func(string, string) error) error {
+	closeAnchor, err := anchorSocketEntry(path)
+	if err != nil {
+		return fmt.Errorf("anchor unix socket path %q: %w", path, err)
+	}
+	defer closeAnchor()
+
+	quarantineDir, err := os.MkdirTemp(filepath.Dir(path), ".server-starter-socket-*")
+	if err != nil {
+		return fmt.Errorf("create unix socket quarantine for %q: %w", path, err)
+	}
+	quarantinePath := filepath.Join(quarantineDir, "socket")
+	keepQuarantine := false
+	defer func() {
+		if !keepQuarantine {
+			_ = os.RemoveAll(quarantineDir)
+		}
+	}()
+
+	if err := move(path, quarantinePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("quarantine unix socket path %q: %w", path, err)
+	}
+
+	moved, err := os.Lstat(quarantinePath)
+	if err != nil {
+		keepQuarantine = true
+		return fmt.Errorf("inspect quarantined unix socket %q: %w; entry retained at %q", path, err, quarantinePath)
+	}
+	if !os.SameFile(selected, moved) {
+		if err := restoreSocketEntry(quarantinePath, path); err != nil {
+			keepQuarantine = true
+			return fmt.Errorf("unix socket path %q changed during preparation: %w; entry retained at %q", path, err, quarantinePath)
+		}
+		return fmt.Errorf("unix socket path %q changed during preparation; replacement preserved", path)
+	}
+	if err := os.Remove(quarantinePath); err != nil {
+		keepQuarantine = true
+		return fmt.Errorf("remove quarantined unix socket %q: %w; entry retained at %q", path, err, quarantinePath)
+	}
+	return nil
 }
 
 // loop runs the supervisor's main lifecycle: it starts the initial worker,
