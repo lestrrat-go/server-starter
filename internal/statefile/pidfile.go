@@ -28,6 +28,12 @@ type RunningPID struct {
 	pid  int
 }
 
+type runningPIDPath struct {
+	path   string
+	parent *os.File
+	name   string
+}
+
 // Acquire opens path, takes the platform lifetime lock, and writes the
 // current process's pid into it. The platform lock is deliberately the only
 // persistent lock: adding a sibling lock creates a second replaceable name
@@ -106,10 +112,13 @@ func (p *PIDFile) Close() error {
 // the recorded process is live. Platforms without a kernel flock-owner query
 // cannot provide stronger attribution for that old format.
 func OpenRunningPID(path string) (*RunningPID, error) {
-	if err := validatePIDControlPath(path); err != nil {
+	preparedPath, err := prepareRunningPIDPath(path)
+	if err != nil {
 		return nil, err
 	}
-	f, err := openRunningPIDFile(path)
+	defer preparedPath.close()
+
+	f, err := preparedPath.open()
 	if err != nil {
 		return nil, err
 	}
@@ -152,16 +161,8 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		}
 	}
 
-	openedInfo, err := f.Stat()
-	if err != nil {
+	if err := preparedPath.validate(f); err != nil {
 		return closeWithError(err)
-	}
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		return closeWithError(err)
-	}
-	if !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
-		return closeWithError(fmt.Errorf("pid file %q was replaced while being validated", path))
 	}
 
 	return &RunningPID{file: f, pid: pid}, nil

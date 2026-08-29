@@ -80,3 +80,34 @@ func TestAcquireRejectsHardLinkAddedWhileWaitingForLock(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "keep me", string(data))
 }
+
+func TestPreparedRunningPIDPathRetainsResolvedParent(t *testing.T) {
+	dir := t.TempDir()
+	parentA := filepath.Join(dir, "supervisor-a")
+	parentB := filepath.Join(dir, "supervisor-b")
+	pidParent := filepath.Join(dir, "current")
+	require.NoError(t, os.Mkdir(parentA, 0700))
+	require.NoError(t, os.Mkdir(parentB, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(parentA, "server.pid"), []byte("101\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(parentB, "server.pid"), []byte("202\n"), 0600))
+	require.NoError(t, os.Symlink(parentA, pidParent))
+
+	preparedPath, err := prepareRunningPIDPath(filepath.Join(pidParent, "server.pid"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = preparedPath.close() })
+	require.NoError(t, os.Remove(pidParent))
+	require.NoError(t, os.Symlink(parentB, pidParent))
+
+	f, err := preparedPath.open()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	data, err := os.ReadFile(f.Name())
+	require.NoError(t, err)
+	require.Equal(t, "202\n", string(data))
+
+	data = make([]byte, len("101\n"))
+	n, err := readPIDText(f, data)
+	require.NoError(t, err)
+	require.Equal(t, "101\n", string(data[:n]))
+	require.NoError(t, preparedPath.validate(f))
+}
