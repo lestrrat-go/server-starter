@@ -152,7 +152,7 @@ func readFileEventually(t *testing.T, path string) []byte {
 }
 
 func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		t.Skip("the worker fixture uses a POSIX shell script")
 	}
 
@@ -177,7 +177,7 @@ func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
 func TestNewStarterPreservesBareCommandForPATHLookup(t *testing.T) {
 	dir := t.TempDir()
 	commandName := "worker"
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		commandName += ".exe"
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(dir, commandName), nil, 0700))

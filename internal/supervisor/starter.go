@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const windowsOS = "windows"
+
 type Config interface {
 	Args() []string
 	Command() string
@@ -107,7 +109,7 @@ func commandForValidation(command, dir string) string {
 
 func resolveCommandPath(command, dir string) (string, error) {
 	validationDir := dir
-	if runtime.GOOS == "windows" && dir != "" {
+	if runtime.GOOS == windowsOS && dir != "" {
 		var err error
 		validationDir, err = filepath.Abs(dir)
 		if err != nil {
@@ -123,7 +125,7 @@ func resolveCommandPath(command, dir string) (string, error) {
 
 	pinCommandPath := validationCommand != command &&
 		(filepath.VolumeName(command) != "" || os.IsPathSeparator(command[0]))
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		pinCommandPath = filepath.VolumeName(command) != "" || hasPathSeparator(command)
 	}
 	if !pinCommandPath {
