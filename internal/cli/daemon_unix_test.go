@@ -58,9 +58,10 @@ func TestRunDaemonizeReportsStartupFailures(t *testing.T) {
 
 	missingWorkerDir := filepath.Join(t.TempDir(), "missing")
 	testCases := []struct {
-		name string
-		args []string
-		want string
+		name      string
+		args      []string
+		want      string
+		fileLimit bool
 	}{
 		{
 			name: "missing command",
@@ -82,10 +83,20 @@ func TestRunDaemonizeReportsStartupFailures(t *testing.T) {
 			args: []string{"--daemonize", "--dir", missingWorkerDir, "--", "/bin/true"},
 			want: fmt.Sprintf("daemon startup failed: chdir %s: no such file or directory", missingWorkerDir),
 		},
+		{
+			name:      "worker descriptor setup fails",
+			args:      []string{"--daemonize", "--port", "0=63", "--dir", missingWorkerDir, "--", "/bin/true"},
+			want:      "daemon startup failed: open worker descriptor padding: open /dev/null: too many open files",
+			fileLimit: true,
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.CommandContext(ctx, binary, tc.args...)
+			if tc.fileLimit {
+				args := append([]string{"-c", `ulimit -n 64; exec "$@"`, "sh", binary}, tc.args...)
+				cmd = exec.CommandContext(ctx, "/bin/sh", args...)
+			}
 			output, err := cmd.CombinedOutput()
 			require.Error(t, err)
 			require.Contains(t, strings.TrimSpace(string(output)), tc.want)

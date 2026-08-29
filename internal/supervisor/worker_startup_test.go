@@ -5,7 +5,9 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,12 +75,14 @@ func waitForFile(t *testing.T, path string) {
 	t.Fatalf("timed out waiting for %s", path)
 }
 
-func TestRunReturnsInitialWorkerStartError(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "missing")
+func TestRunRetriesInitialWorkerStartError(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "missing")
+	marker := filepath.Join(root, "started")
 	var stderr syncBuffer
 	sd, err := NewStarter(&config{
 		command: "/bin/sh",
-		args:    []string{"-c", "exec sleep 30"},
+		args:    []string{"-c", `printf started > "$1"; exec sleep 30`, "worker", marker},
 		dir:     dir,
 		stderr:  &stderr,
 	})
@@ -88,29 +92,49 @@ func TestRunReturnsInitialWorkerStartError(t *testing.T) {
 	defer cancel()
 
 	ctrl, err := sd.Run(ctx)
-	if ctrl != nil {
-		// Let the historical retry loop finish before asserting, so a
-		// regression does not leave a busy goroutine behind in the suite.
-		deadline := time.Now().Add(10 * time.Second)
-		for time.Now().Before(deadline) && !strings.Contains(stderr.String(), "failed to exec") {
-			time.Sleep(20 * time.Millisecond)
-		}
-		require.Contains(t, stderr.String(), "failed to exec")
-		require.NoError(t, os.Mkdir(dir, 0700))
-		cancel()
-		select {
-		case <-ctrl.Done():
-		case <-time.After(10 * time.Second):
-			t.Fatal("timed out waiting for Run() to return")
-		}
-	}
+	require.NoError(t, err)
+	require.NotNil(t, ctrl)
+	require.Eventually(t, func() bool {
+		return strings.Contains(stderr.String(), "failed to exec")
+	}, 10*time.Second, 20*time.Millisecond)
+	require.NoError(t, os.Mkdir(dir, 0700))
+	waitForFile(t, marker)
+	cancel()
+	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+}
 
+func TestRunWithStartupCheckReturnsInitialWorkerStartError(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing")
+	sd, err := NewStarter(&config{
+		command: "/bin/sh",
+		args:    []string{"-c", "exec sleep 30"},
+		dir:     dir,
+	})
+	require.NoError(t, err)
+
+	ctrl, err := sd.RunWithStartupCheck(context.Background())
 	require.Nil(t, ctrl)
 	var pathErr *os.PathError
 	require.ErrorAs(t, err, &pathErr)
 	require.Equal(t, "chdir", pathErr.Op)
 	require.Equal(t, dir, pathErr.Path)
 	require.ErrorIs(t, pathErr.Err, fs.ErrNotExist)
+}
+
+func TestStartWorkerReturnsListenerDescriptorError(t *testing.T) {
+	bound, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	tcpListener := bound.(*net.TCPListener)
+	require.NoError(t, tcpListener.Close())
+
+	rs := &runState{
+		cfg:         &Starter{command: "/bin/true", stderr: io.Discard},
+		listeners:   []listener{{listener: tcpListener}},
+		descriptors: []int{3},
+	}
+	_, err = rs.startWorker(context.Background(), make(chan processState), nil, make(chan error, 1))
+	require.ErrorContains(t, err, "duplicate worker listener descriptor")
+	require.ErrorIs(t, err, net.ErrClosed)
 }
 
 func TestSIGTERMDuringFailedReplacementDoesNotPanic(t *testing.T) {

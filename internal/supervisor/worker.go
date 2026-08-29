@@ -86,12 +86,12 @@ func reportFailedStart(w io.Writer, pid int, reapedStatus syscall.WaitStatus, re
 	}
 }
 
-// startWorker starts the actual command. It returns a non-nil error when its
-// non-empty listener set cannot be formatted into a valid SERVER_STARTER_PORT
-// spec (see starter.FormatPorts), or when the initial worker command cannot
-// start. Replacement command-start errors remain transient and are retried.
-// startup is non-nil only for the initial worker: it receives the exact
-// command-start error, or nil after the worker passes its startup check.
+// startWorker starts the actual command. It returns a non-nil error when worker
+// descriptor setup fails, when its non-empty listener set cannot be formatted
+// into a valid SERVER_STARTER_PORT spec (see starter.FormatPorts), or when the
+// initial worker command cannot start during a synchronous startup check.
+// Other command-start errors remain transient and are retried. startup receives
+// nil after the worker passes a requested synchronous startup check.
 func (rs *runState) startWorker(
 	ctx context.Context,
 	ch chan<- processState,
@@ -140,7 +140,7 @@ func (rs *runState) startWorker(
 						file.Close()
 					}
 				}
-				panic(err)
+				return nil, fmt.Errorf("open worker descriptor padding: %w", err)
 			}
 		}
 		for i, l := range rs.listeners {
@@ -165,7 +165,7 @@ func (rs *runState) startWorker(
 						file.Close()
 					}
 				}
-				panic(err)
+				return nil, fmt.Errorf("duplicate worker listener descriptor: %w", err)
 			}
 			files[descriptors[i]-3].Close()
 			files[descriptors[i]-3] = f

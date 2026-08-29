@@ -44,14 +44,23 @@ type runState struct {
 }
 
 // Run acquires the pid file, binds every listener, performs the initial envdir
-// load, and waits for the initial worker to pass its startup check; any failure
-// here is returned directly. Once startup succeeds, the supervisor lifecycle
-// continues in a background goroutine. Runtime errors after that acknowledgement
-// are recorded on the returned Controller and observed via Wait/Err.
+// load, and starts the supervisor lifecycle in a background goroutine. Worker
+// command-start errors remain transient and are retried by that lifecycle.
 //
 // Cancelling ctx is the only way to stop the run; the returned Controller's
 // Hangup method requests a graceful worker restart.
 func (s *Starter) Run(ctx context.Context) (*Controller, error) {
+	return s.run(ctx, false)
+}
+
+// RunWithStartupCheck behaves like Run but waits for the initial worker to pass
+// its startup check. It is used by daemon children that must report an exact
+// startup result to the waiting parent process.
+func (s *Starter) RunWithStartupCheck(ctx context.Context) (*Controller, error) {
+	return s.run(ctx, true)
+}
+
+func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, error) {
 	rs := &runState{
 		cfg:       s,
 		listeners: make([]listener, 0, len(s.ports)+len(s.paths)),
@@ -158,12 +167,17 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 	}
 
 	ctrl := newController()
-	startup := make(chan error, 1)
+	var startup chan error
+	if waitForStartup {
+		startup = make(chan error, 1)
+	}
 	go rs.loop(ctx, ctrl, startup)
 	ok = true
-	if err := <-startup; err != nil {
-		<-ctrl.Done()
-		return nil, err
+	if startup != nil {
+		if err := <-startup; err != nil {
+			<-ctrl.Done()
+			return nil, err
+		}
 	}
 
 	return ctrl, nil
@@ -186,7 +200,9 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- e
 	workerStateDone := make(chan struct{})
 	p, err := rs.startWorker(ctx, workerCh, workerStateDone, startup)
 	if err != nil {
-		startup <- err
+		if startup != nil {
+			startup <- err
+		}
 		fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 		ctrl.setErr(err)
 		return

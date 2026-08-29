@@ -74,6 +74,10 @@ type daemonReadiness struct {
 	file *os.File
 }
 
+func (r *daemonReadiness) active() bool {
+	return r.file != nil
+}
+
 func childDaemonReadiness() (*daemonReadiness, error) {
 	if os.Getenv(daemonizedEnv) != "1" {
 		return &daemonReadiness{}, nil

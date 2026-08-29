@@ -264,11 +264,11 @@ replace github.com/lestrrat-go/server-starter/v2 => %s
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Run waits for listener binding and initial worker startup, so the ports
-	// and the worker are already live when it returns.
-	ctrl, err := sd.Run(ctx)
+	// This test probes the worker immediately, so request the synchronous
+	// startup check used by daemon readiness.
+	ctrl, err := sd.RunWithStartupCheck(ctx)
 	if err != nil {
-		t.Fatalf("sd.Run() failed: %s", err)
+		t.Fatalf("sd.RunWithStartupCheck() failed: %s", err)
 	}
 
 	workerReport := strings.Split(strings.TrimSpace(string(readFileEventually(t, portFile))), "\n")

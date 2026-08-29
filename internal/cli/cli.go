@@ -145,7 +145,12 @@ func run(daemonizeFn func() error) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ctrl, err := s.Run(ctx)
+	var ctrl *supervisor.Controller
+	if readiness.active() {
+		ctrl, err = s.RunWithStartupCheck(ctx)
+	} else {
+		ctrl, err = s.Run(ctx)
+	}
 	if err != nil {
 		return failStartup(stderr, err)
 	}
