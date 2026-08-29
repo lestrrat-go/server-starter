@@ -54,7 +54,10 @@ type Starter struct {
 	ports      []string
 	paths      []string
 	command    string
-	args       []string
+	// commandPath pins the executable found for Windows volume-relative
+	// commands. command remains the original argv[0] supplied to each worker.
+	commandPath string
+	args        []string
 
 	envdir              string
 	enableAutoRestart   bool
@@ -75,8 +78,15 @@ func hasPathSeparator(path string) bool {
 }
 
 func commandForValidation(command, dir string) string {
-	if command == "" || dir == "" || filepath.IsAbs(command) || os.IsPathSeparator(command[0]) {
+	if command == "" || dir == "" || filepath.IsAbs(command) {
 		return command
+	}
+	if os.IsPathSeparator(command[0]) {
+		volume := filepath.VolumeName(dir)
+		if volume == "" {
+			return command
+		}
+		return volume + command
 	}
 
 	volume := filepath.VolumeName(command)
@@ -91,6 +101,13 @@ func commandForValidation(command, dir string) string {
 		return command
 	}
 	return dir + string(os.PathSeparator) + command
+}
+
+func needsValidatedCommandPath(command, validationCommand string) bool {
+	if command == "" || validationCommand == command {
+		return false
+	}
+	return filepath.VolumeName(command) != "" || os.IsPathSeparator(command[0])
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
@@ -123,8 +140,18 @@ func NewStarter(c Config) (*Starter, error) {
 		return nil, fmt.Errorf("argument Command must be specified")
 	}
 	dir := c.Dir()
-	if _, err := exec.LookPath(commandForValidation(command, dir)); err != nil {
+	validationCommand := commandForValidation(command, dir)
+	commandPath, err := exec.LookPath(validationCommand)
+	if err != nil {
 		return nil, err
+	}
+	if needsValidatedCommandPath(command, validationCommand) {
+		commandPath, err = filepath.Abs(commandPath)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		commandPath = ""
 	}
 
 	// A Config that returns nil for either writer falls back to the
@@ -142,6 +169,7 @@ func NewStarter(c Config) (*Starter, error) {
 	s := &Starter{
 		args:                c.Args(),
 		command:             command,
+		commandPath:         commandPath,
 		dir:                 dir,
 		interval:            c.Interval(),
 		pidFile:             c.PidFile(),

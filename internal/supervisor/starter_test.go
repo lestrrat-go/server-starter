@@ -185,8 +185,9 @@ func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, command, sd.command)
 
-	cmd := exec.Command(sd.command)
+	cmd := sd.workerCommand(context.Background())
 	cmd.Dir = sd.dir
+	require.Equal(t, command, cmd.Args[0])
 	require.NoError(t, cmd.Run())
 }
 
@@ -213,8 +214,9 @@ func TestNewStarterValidatesParentRelativeCommandThroughSymlinkedDir(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, command, sd.command)
 
-	cmd := exec.Command(sd.command)
+	cmd := sd.workerCommand(context.Background())
 	cmd.Dir = sd.dir
+	require.Equal(t, command, cmd.Args[0])
 	require.NoError(t, cmd.Run())
 }
 
