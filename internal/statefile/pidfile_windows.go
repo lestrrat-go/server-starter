@@ -211,7 +211,7 @@ func lockOwnerPID(*os.File, string) (int, error) {
 	return 0, fmt.Errorf("inspecting pid-file lock ownership is not supported on windows")
 }
 
-func lockReleased(*os.File) (bool, error) {
+func lockNoLongerOwnedByPID(*os.File, int) (bool, error) {
 	return false, fmt.Errorf("waiting for a stopped process is not supported on windows")
 }
 
