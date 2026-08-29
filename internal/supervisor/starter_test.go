@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testGOOSWindows = "windows"
+
 var echoServerTxt = `package main
 
 import (
@@ -169,7 +171,7 @@ func TestNewStarterResolvesRelativeCommandAgainstDir(t *testing.T) {
 }
 
 func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == testGOOSWindows {
 		t.Skip("the worker fixture uses a POSIX shell script")
 	}
 
@@ -192,7 +194,7 @@ func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
 }
 
 func TestNewStarterValidatesParentRelativeCommandThroughSymlinkedDir(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == testGOOSWindows {
 		t.Skip("the worker fixture uses POSIX symlink and shell semantics")
 	}
 
@@ -223,7 +225,7 @@ func TestNewStarterValidatesParentRelativeCommandThroughSymlinkedDir(t *testing.
 func TestNewStarterPreservesBareCommandForPATHLookup(t *testing.T) {
 	dir := t.TempDir()
 	commandName := "worker"
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == testGOOSWindows {
 		commandName += ".exe"
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(dir, commandName), nil, 0700))
