@@ -97,14 +97,15 @@ func classifyUDPMarker(hostPort string) []udpCandidate {
 // SERVER_STARTER_PORT (see PortEnvName) into concrete Listener values.
 //
 // Each spec is classified in this order: a spec beginning with "udp://" is
-// a UDP target; otherwise a spec that parses as a port/host:port is a TCP
-// target; otherwise the unambiguous legacy UDP forms "uPORT",
-// "u[ipv6]:port", and "host:uPORT" are accepted; otherwise the spec is a
-// unix socket path, taken verbatim. In the "host:uPORT" form, the suffix is
-// the marker, so a leading "u" remains part of the hostname. A spec containing
-// "/" is always a unix socket path unless it begins with "udp://". TCP/UDP
-// addresses and unix socket paths cannot contain ";" or "=" because those
-// characters delimit entries and file descriptors in the wire format.
+// a UDP target; otherwise the legacy UDP form "host:uPORT" is considered;
+// otherwise the constrained leading-marker forms "uPORT", "uIPv4:PORT", and
+// "u[IPv6]:PORT" are considered; otherwise a spec that parses as a
+// port/host:port is a TCP target; otherwise the spec is a unix socket path,
+// taken verbatim. In the "host:uPORT" form, the suffix is the marker, so a
+// leading "u" remains part of the hostname. A spec containing "/" is always a
+// unix socket path unless it begins with "udp://". TCP/UDP addresses and unix
+// socket paths cannot contain ";" or "=" because those characters delimit
+// entries and file descriptors in the wire format.
 //
 // This leaves one shape ambiguous: a relative unix socket path with no "/"
 // that happens to parse as a port or "host:port" (e.g. "8080" or "db:5432")
