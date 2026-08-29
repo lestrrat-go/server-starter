@@ -140,9 +140,10 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 		})
 	}
 
+	reservedSocketNames := configuredSocketBasenames(s.paths)
 	for _, path := range s.paths {
 		var l net.Listener
-		if err := removeExistingUnixSocket(path); err != nil {
+		if err := removeExistingUnixSocketWithReservedNames(path, reservedSocketNames); err != nil {
 			fmt.Fprintf(s.stderr, "failed to prepare socket file:%s:%s\n", path, err)
 			return nil, err
 		}
@@ -188,6 +189,10 @@ func workerStartCanceled(ctx context.Context, err error) bool {
 }
 
 func removeExistingUnixSocket(path string) error {
+	return removeExistingUnixSocketWithReservedNames(path, nil)
+}
+
+func removeExistingUnixSocketWithReservedNames(path string, reservedNames map[string]struct{}) error {
 	if runtime.GOOS == "linux" &&
 		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
 		return nil
@@ -202,20 +207,28 @@ func removeExistingUnixSocket(path string) error {
 		}
 		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, errSafeSocketCleanupUnavailable)
 	}
-	return removeSocketWithHooks(path, socketCleanupHooks{})
+	return removeSocketWithReservedNames(path, reservedNames, socketCleanupHooks{})
 }
 
 type socketCleanupHooks struct {
-	afterQuarantineMkdir       func(string)
-	afterQuarantineOpenFailure func(string)
-	beforeMove                 func()
-	beforeRemove               func(string)
-	afterRemovalIdentityCheck  func(string)
-	beforeCleanup              func(string)
+	afterQuarantineMkdir        func(string)
+	afterQuarantineOpenFailure  func(string)
+	beforeMove                  func()
+	beforeRetain                func(string)
+	afterRetentionIdentityCheck func(string)
+	beforeCleanup               func(string)
 }
 
 func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
-	quarantine, err := newSocketQuarantine(path, hooks)
+	return removeSocketWithReservedNames(path, nil, hooks)
+}
+
+func removeSocketWithReservedNames(
+	path string,
+	reservedNames map[string]struct{},
+	hooks socketCleanupHooks,
+) error {
+	quarantine, err := newSocketQuarantine(path, reservedNames, hooks)
 	if err != nil {
 		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, err)
 	}
@@ -262,16 +275,16 @@ func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
 		return finishSocketQuarantine(quarantine, fmt.Errorf("unix socket path %q is not a socket", path))
 	}
 
-	if hooks.beforeRemove != nil {
-		hooks.beforeRemove(quarantine.location())
+	if hooks.beforeRetain != nil {
+		hooks.beforeRetain(quarantine.location())
 	}
-	if err := quarantine.removeEntry(); err != nil {
+	if err := quarantine.retainEntry(); err != nil {
 		if hooks.beforeCleanup != nil {
 			hooks.beforeCleanup(quarantine.location())
 		}
 		return finishSocketQuarantine(
 			quarantine,
-			fmt.Errorf("remove quarantined unix socket %q: %w", path, err),
+			fmt.Errorf("retain quarantined unix socket %q: %w", path, err),
 		)
 	}
 	if hooks.beforeCleanup != nil {

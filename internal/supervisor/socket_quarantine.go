@@ -1,6 +1,9 @@
 package supervisor
 
-import "errors"
+import (
+	"errors"
+	"path/filepath"
+)
 
 const (
 	quarantineDirPrefix   = ".server-starter-socket-"
@@ -14,16 +17,20 @@ var errSocketSourceUnavailable = errors.New("unix socket path was not present wh
 
 var errSocketSourceChanged = errors.New("unix socket path changed before quarantine")
 
-var errIdentitySafeSocketRemovalUnavailable = errors.New(
-	"identity-safe removal of a quarantined unix socket is unavailable",
-)
-
 type socketQuarantine interface {
 	moveIn() error
 	entryIsSocket() (bool, error)
 	restore() error
-	removeEntry() error
+	retainEntry() error
 	cleanup() error
 	close()
 	location() string
+}
+
+func configuredSocketBasenames(paths []string) map[string]struct{} {
+	basenames := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		basenames[filepath.Base(path)] = struct{}{}
+	}
+	return basenames
 }

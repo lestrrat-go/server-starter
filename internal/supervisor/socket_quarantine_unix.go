@@ -24,7 +24,11 @@ type unixSocketQuarantine struct {
 	hooks      socketCleanupHooks
 }
 
-func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantine, error) {
+func newSocketQuarantine(
+	path string,
+	reservedNames map[string]struct{},
+	hooks socketCleanupHooks,
+) (socketQuarantine, error) {
 	parentPath, sourceName := filepath.Split(path)
 	if parentPath == "" {
 		parentPath = "." + string(filepath.Separator)
@@ -47,10 +51,7 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 		}
 	}
 
-	dirName := quarantineDirName
-	if dirName == sourceName {
-		dirName += "-directory"
-	}
+	dirName := socketQuarantineDirectoryName(sourceName, reservedNames)
 	created, createdStat, err := ensureQuarantineDir(parentFD, dirName)
 	if err != nil {
 		if sourceFD >= 0 {
@@ -154,20 +155,21 @@ func (q *unixSocketQuarantine) restore() error {
 	return renameSocketEntryNoReplace(q.dirFD, q.slotName, q.parentFD, q.sourceName)
 }
 
-func (q *unixSocketQuarantine) removeEntry() error {
+func (q *unixSocketQuarantine) retainEntry() error {
 	var stat unix.Stat_t
 	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
 	if !sameUnixIdentity(&q.sourceStat, &stat) {
-		return fmt.Errorf("quarantined unix socket changed before removal")
+		return fmt.Errorf("quarantined unix socket changed before retention")
 	}
-	if q.hooks.afterRemovalIdentityCheck != nil {
-		q.hooks.afterRemovalIdentityCheck(q.location())
+	if q.hooks.afterRetentionIdentityCheck != nil {
+		q.hooks.afterRetentionIdentityCheck(q.location())
 	}
 	// Unix unlink APIs cannot require the directory entry to match an expected
-	// device and inode. Retain the socket rather than remove a swapped-in entry.
-	return errIdentitySafeSocketRemovalUnavailable
+	// device and inode. The original listener path is already free after the
+	// move, so retain the socket in quarantine and let startup continue.
+	return nil
 }
 
 func (q *unixSocketQuarantine) cleanup() error {
@@ -206,4 +208,22 @@ func sameUnixIdentity(a, b *unix.Stat_t) bool {
 func socketQuarantineSlotName(sourceName string) string {
 	digest := sha256.Sum256([]byte(sourceName))
 	return fmt.Sprintf("%s%x", quarantineEntryPrefix, digest)
+}
+
+func socketQuarantineDirectoryName(sourceName string, reservedNames map[string]struct{}) string {
+	for suffix := 0; ; suffix++ {
+		name := quarantineDirName
+		if suffix == 1 {
+			name += "-directory"
+		} else if suffix > 1 {
+			name += fmt.Sprintf("-directory-%d", suffix-1)
+		}
+		if name == sourceName {
+			continue
+		}
+		if _, reserved := reservedNames[name]; reserved {
+			continue
+		}
+		return name
+	}
 }

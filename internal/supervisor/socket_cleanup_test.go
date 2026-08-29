@@ -18,10 +18,10 @@ func TestRemoveExistingUnixSocketQuarantinesStaleSocket(t *testing.T) {
 	makeStaleSocket(t, path)
 
 	var quarantineEntry string
-	err := removeSocketWithHooks(path, socketCleanupHooks{beforeRemove: func(path string) {
+	err := removeSocketWithHooks(path, socketCleanupHooks{beforeRetain: func(path string) {
 		quarantineEntry = path
 	}})
-	require.ErrorContains(t, err, "identity-safe removal")
+	require.NoError(t, err)
 	_, statErr := os.Lstat(path)
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 	info, statErr := os.Lstat(quarantineEntry)
@@ -61,6 +61,63 @@ func TestRunStartsUnixListenerAtQuarantineBasename(t *testing.T) {
 	info, err := os.Lstat(path)
 	require.NoError(t, err)
 	require.NotZero(t, info.Mode()&os.ModeSocket)
+
+	cancel()
+	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+}
+
+func TestRunStartsOverStaleUnixSocket(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	path := filepath.Join(t.TempDir(), "listener.sock")
+	makeStaleSocket(t, path)
+	command, args := testWorkerCommand(t)
+	starter, err := NewStarter(&config{
+		command:   command,
+		args:      args,
+		paths:     []string{path},
+		sigonterm: signalNameKill,
+	})
+	require.NoError(t, err)
+
+	// testing.T.Context requires Go 1.24, but this module supports Go 1.23.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctrl, err := starter.Run(ctx)
+	require.NoError(t, err)
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
+
+	cancel()
+	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+}
+
+func TestRunReservesQuarantineBasenames(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	parent := t.TempDir()
+	paths := []string{
+		filepath.Join(parent, quarantineDirName),
+		filepath.Join(parent, quarantineDirName+"-directory"),
+	}
+	command, args := testWorkerCommand(t)
+	starter, err := NewStarter(&config{
+		command:   command,
+		args:      args,
+		paths:     paths,
+		sigonterm: signalNameKill,
+	})
+	require.NoError(t, err)
+
+	// testing.T.Context requires Go 1.24, but this module supports Go 1.23.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctrl, err := starter.Run(ctx)
+	require.NoError(t, err)
+	for _, path := range paths {
+		info, statErr := os.Lstat(path)
+		require.NoError(t, statErr)
+		require.NotZero(t, info.Mode()&os.ModeSocket)
+	}
 
 	cancel()
 	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
@@ -125,7 +182,7 @@ func TestRemoveExistingUnixSocketRetainsSocketThroughQuarantineHandle(t *testing
 	var movedDir string
 	var retainedEntry string
 	var replacementEntry string
-	err := removeSocketWithHooks(path, socketCleanupHooks{beforeRemove: func(quarantineEntry string) {
+	err := removeSocketWithHooks(path, socketCleanupHooks{beforeRetain: func(quarantineEntry string) {
 		quarantineDir := filepath.Dir(quarantineEntry)
 		movedDir = quarantineDir + ".moved"
 		require.NoError(t, os.Rename(quarantineDir, movedDir))
@@ -149,12 +206,12 @@ func TestRemoveExistingUnixSocketPreservesQuarantineEntryReplacement(t *testing.
 	makeStaleSocket(t, path)
 
 	var replacementPath string
-	err := removeSocketWithHooks(path, socketCleanupHooks{beforeRemove: func(quarantineEntry string) {
+	err := removeSocketWithHooks(path, socketCleanupHooks{beforeRetain: func(quarantineEntry string) {
 		replacementPath = quarantineEntry
 		require.NoError(t, os.Remove(quarantineEntry))
 		require.NoError(t, os.WriteFile(quarantineEntry, []byte("keep"), 0o600))
 	}})
-	require.ErrorContains(t, err, "changed before removal")
+	require.ErrorContains(t, err, "changed before retention")
 	contents, readErr := os.ReadFile(replacementPath)
 	require.NoError(t, readErr)
 	require.Equal(t, []byte("keep"), contents)
@@ -167,13 +224,13 @@ func TestRemoveExistingUnixSocketPreservesReplacementAfterIdentityCheck(t *testi
 
 	var retainedPath string
 	var replacementPath string
-	err := removeSocketWithHooks(path, socketCleanupHooks{afterRemovalIdentityCheck: func(quarantineEntry string) {
+	err := removeSocketWithHooks(path, socketCleanupHooks{afterRetentionIdentityCheck: func(quarantineEntry string) {
 		retainedPath = quarantineEntry + ".retained"
 		replacementPath = quarantineEntry
 		require.NoError(t, os.Rename(quarantineEntry, retainedPath))
 		require.NoError(t, os.WriteFile(replacementPath, []byte("keep"), 0o600))
 	}})
-	require.ErrorContains(t, err, "identity-safe removal")
+	require.NoError(t, err)
 	contents, readErr := os.ReadFile(replacementPath)
 	require.NoError(t, readErr)
 	require.Equal(t, []byte("keep"), contents)
@@ -195,7 +252,7 @@ func TestRemoveExistingUnixSocketUsesDistinctQuarantineSlots(t *testing.T) {
 	firstResult := make(chan error, 1)
 	var firstSlot string
 	go func() {
-		firstResult <- removeSocketWithHooks(firstPath, socketCleanupHooks{beforeRemove: func(slot string) {
+		firstResult <- removeSocketWithHooks(firstPath, socketCleanupHooks{beforeRetain: func(slot string) {
 			firstSlot = slot
 			close(firstReady)
 			<-releaseFirst
@@ -204,15 +261,15 @@ func TestRemoveExistingUnixSocketUsesDistinctQuarantineSlots(t *testing.T) {
 
 	<-firstReady
 	var secondSlot string
-	secondErr := removeSocketWithHooks(secondPath, socketCleanupHooks{beforeRemove: func(slot string) {
+	secondErr := removeSocketWithHooks(secondPath, socketCleanupHooks{beforeRetain: func(slot string) {
 		secondSlot = slot
 	}})
 	close(releaseFirst)
 	firstErr := <-firstResult
 
 	require.NotErrorIs(t, secondErr, os.ErrExist)
-	require.ErrorContains(t, secondErr, "identity-safe removal")
-	require.ErrorContains(t, firstErr, "identity-safe removal")
+	require.NoError(t, secondErr)
+	require.NoError(t, firstErr)
 	require.NotEqual(t, firstSlot, secondSlot)
 	for _, slot := range []string{firstSlot, secondSlot} {
 		info, statErr := os.Lstat(slot)
@@ -289,7 +346,7 @@ func TestRemoveExistingUnixSocketRetainsQuarantineDirectoryAfterCleanup(t *testi
 	err := removeSocketWithHooks(path, socketCleanupHooks{beforeCleanup: func(quarantineEntry string) {
 		quarantineDir = filepath.Dir(quarantineEntry)
 	}})
-	require.ErrorContains(t, err, "identity-safe removal")
+	require.NoError(t, err)
 	info, statErr := os.Stat(quarantineDir)
 	require.NoError(t, statErr)
 	require.True(t, info.IsDir())
