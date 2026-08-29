@@ -13,6 +13,7 @@ import (
 
 const (
 	unixNetwork = "unix"
+	udp4Network = "udp4"
 
 	// Explicit descriptors are a convenience for integrations that require a
 	// stable inherited descriptor number. Keep them bounded because ExtraFiles
@@ -99,7 +100,7 @@ func parsePortTarget(raw string) (portTarget, error) {
 	case starter.UDPListener:
 		host = target.Addr
 		port = target.Port
-		network = "udp4"
+		network = udp4Network
 	default:
 		return portTarget{}, fmt.Errorf("invalid port in %q", raw)
 	}
