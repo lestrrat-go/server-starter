@@ -167,6 +167,9 @@ func TestResolveAutoRestartInterval(t *testing.T) {
 }
 
 func TestResolveKillOldDelay(t *testing.T) {
+	minDelay := time.Duration(minDurationSeconds) * time.Second
+	maxDelay := time.Duration(maxDurationSeconds) * time.Second
+
 	testCases := []struct {
 		name        string
 		isSet       bool
@@ -184,6 +187,10 @@ func TestResolveKillOldDelay(t *testing.T) {
 		{name: "flag 3", isSet: true, flagVal: 3, autoRestart: false, expected: 3 * time.Second},
 		{name: "ambient 0, auto-restart on", isSet: false, envSet: true, envVal: "0", autoRestart: true, expected: 0},
 		{name: "ambient 3", isSet: false, envSet: true, envVal: "3", autoRestart: false, expected: 3 * time.Second},
+		{name: "ambient minimum duration", isSet: false, envSet: true, envVal: strconv.FormatInt(minDurationSeconds, 10), expected: minDelay},
+		{name: "ambient below minimum rejected", isSet: false, envSet: true, envVal: strconv.FormatInt(minDurationSeconds-1, 10), wantErr: true},
+		{name: "ambient maximum duration", isSet: false, envSet: true, envVal: strconv.FormatInt(maxDurationSeconds, 10), expected: maxDelay},
+		{name: "ambient above maximum rejected", isSet: false, envSet: true, envVal: strconv.FormatInt(maxDurationSeconds+1, 10), wantErr: true},
 		{name: "ambient unparseable rejected", isSet: false, envSet: true, envVal: "nope", autoRestart: true, wantErr: true},
 		{name: "ambient empty rejected", isSet: false, envSet: true, envVal: "", autoRestart: true, wantErr: true},
 	}

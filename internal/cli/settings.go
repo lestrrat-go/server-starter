@@ -12,7 +12,10 @@ import (
 // default (previously baked into the AUTO_RESTART_INTERVAL reader).
 const defaultAutoRestartInterval = 360 * time.Second
 
-const maxAutoRestartIntervalSeconds = int64(math.MaxInt64) / int64(time.Second)
+const (
+	minDurationSeconds = int64(math.MinInt64) / int64(time.Second)
+	maxDurationSeconds = int64(math.MaxInt64) / int64(time.Second)
+)
 
 // defaultKillOldDelayWithAutoRestart is the delay used when nothing sets
 // --kill-old-delay/KILL_OLD_DELAY and auto-restart is enabled.
@@ -101,7 +104,7 @@ func resolveEnableAutoRestart(isSet bool, flagValue bool) (bool, error) {
 func resolveAutoRestartInterval(isSet bool, flagSeconds int) (time.Duration, error) {
 	if isSet {
 		seconds := int64(flagSeconds)
-		if seconds > 0 && seconds <= maxAutoRestartIntervalSeconds {
+		if seconds > 0 && seconds <= maxDurationSeconds {
 			return time.Duration(seconds) * time.Second, nil
 		}
 		return defaultAutoRestartInterval, nil
@@ -117,11 +120,11 @@ func resolveAutoRestartInterval(isSet bool, flagSeconds int) (time.Duration, err
 	if parsed <= 0 {
 		return 0, fmt.Errorf("invalid AUTO_RESTART_INTERVAL value %q: must be greater than zero", raw)
 	}
-	if parsed > maxAutoRestartIntervalSeconds {
+	if parsed > maxDurationSeconds {
 		return 0, fmt.Errorf(
 			"invalid AUTO_RESTART_INTERVAL value %q: must not exceed %d",
 			raw,
-			maxAutoRestartIntervalSeconds,
+			maxDurationSeconds,
 		)
 	}
 	return time.Duration(parsed) * time.Second, nil
@@ -139,9 +142,17 @@ func resolveKillOldDelay(isSet bool, flagSeconds int, enableAutoRestart bool) (t
 		return time.Duration(flagSeconds) * time.Second, nil
 	}
 	if raw, ok := os.LookupEnv("KILL_OLD_DELAY"); ok {
-		delay, err := strconv.ParseInt(raw, 10, 0)
+		delay, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return 0, fmt.Errorf("invalid KILL_OLD_DELAY value %q: %w", raw, err)
+		}
+		if delay < minDurationSeconds || delay > maxDurationSeconds {
+			return 0, fmt.Errorf(
+				"invalid KILL_OLD_DELAY value %q: must be between %d and %d",
+				raw,
+				minDurationSeconds,
+				maxDurationSeconds,
+			)
 		}
 		return time.Duration(delay) * time.Second, nil
 	}
