@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -54,8 +55,9 @@ type Starter struct {
 	ports      []string
 	paths      []string
 	command    string
-	// commandPath pins the executable found for Windows volume-relative
-	// commands. command remains the original argv[0] supplied to each worker.
+	// commandPath pins the executable found for Windows commands whose lookup
+	// path cannot be resolved safely again at process start. command remains
+	// the original argv[0] supplied to each worker.
 	commandPath string
 	args        []string
 
@@ -107,7 +109,8 @@ func needsValidatedCommandPath(command, validationCommand string) bool {
 	if command == "" || validationCommand == command {
 		return false
 	}
-	return filepath.VolumeName(command) != "" || os.IsPathSeparator(command[0])
+	return filepath.VolumeName(command) != "" || os.IsPathSeparator(command[0]) ||
+		(runtime.GOOS == "windows" && hasPathSeparator(command))
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
