@@ -86,11 +86,11 @@ func reportFailedStart(w io.Writer, pid int, reapedStatus syscall.WaitStatus, re
 	}
 }
 
-// startWorker starts the actual command. It returns a non-nil error only
-// when its non-empty listener set cannot be formatted into a valid
-// SERVER_STARTER_PORT spec (see starter.FormatPorts); that is a permanent
-// misconfiguration, not a transient exec failure, so it is reported instead of
-// retried. startup is non-nil only for the initial worker: it receives the exact
+// startWorker starts the actual command. It returns a non-nil error when its
+// non-empty listener set cannot be formatted into a valid SERVER_STARTER_PORT
+// spec (see starter.FormatPorts), or when the initial worker command cannot
+// start. Replacement command-start errors remain transient and are retried.
+// startup is non-nil only for the initial worker: it receives the exact
 // command-start error, or nil after the worker passes its startup check.
 func (rs *runState) startWorker(
 	ctx context.Context,
@@ -199,8 +199,7 @@ func (rs *runState) startWorker(
 		if startErr != nil {
 			fmt.Fprintf(rs.cfg.stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
 			if startup != nil {
-				startup <- startErr
-				return nil, nil
+				return nil, startErr
 			}
 		} else {
 			// Save pid...
