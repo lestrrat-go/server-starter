@@ -12,7 +12,15 @@ import (
 	"syscall"
 )
 
-func platformTerminalWorkerStartError(command, dir string, err error) bool {
+var platformWorkerStartErrorPolicy = workerStartErrorPolicy{
+	terminalErrors: []error{
+		syscall.EISDIR,
+		syscall.ELIBBAD,
+	},
+	inspect: terminalLinuxEIOWorkerStartError,
+}
+
+func terminalLinuxEIOWorkerStartError(command, dir string, err error) bool {
 	var pathErr *os.PathError
 	if !errors.As(err, &pathErr) || pathErr.Op != "fork/exec" || !errors.Is(err, syscall.EIO) {
 		return false

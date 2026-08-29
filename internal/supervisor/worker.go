@@ -24,6 +24,35 @@ const minimumCheckedStartupInterval = time.Second
 
 const minimumWorkerStartRetryDelay = 100 * time.Millisecond
 
+type workerStartErrorPolicy struct {
+	terminalErrors []error
+	inspect        func(command, dir string, err error) bool
+}
+
+func (p workerStartErrorPolicy) isTerminal(command, dir string, err error) bool {
+	for _, terminalErr := range p.terminalErrors {
+		if errors.Is(err, terminalErr) {
+			return true
+		}
+	}
+	return p.inspect != nil && p.inspect(command, dir, err)
+}
+
+var commonWorkerStartErrorPolicy = workerStartErrorPolicy{
+	terminalErrors: []error{
+		exec.ErrNotFound,
+		exec.ErrDot,
+		os.ErrNotExist,
+		os.ErrPermission,
+		syscall.EINVAL,
+		syscall.ENOEXEC,
+		syscall.ENOTDIR,
+		syscall.ELOOP,
+		syscall.ENAMETOOLONG,
+		syscall.E2BIG,
+	},
+}
+
 type workerStartupState struct {
 	checked bool
 }
@@ -55,17 +84,8 @@ func (s workerStartupState) waitForProbe(ctx context.Context, interval time.Dura
 }
 
 func terminalWorkerStartError(command, dir string, err error) bool {
-	return errors.Is(err, exec.ErrNotFound) ||
-		errors.Is(err, exec.ErrDot) ||
-		errors.Is(err, os.ErrNotExist) ||
-		errors.Is(err, os.ErrPermission) ||
-		errors.Is(err, syscall.EINVAL) ||
-		errors.Is(err, syscall.ENOEXEC) ||
-		errors.Is(err, syscall.ENOTDIR) ||
-		errors.Is(err, syscall.ELOOP) ||
-		errors.Is(err, syscall.ENAMETOOLONG) ||
-		errors.Is(err, syscall.E2BIG) ||
-		platformTerminalWorkerStartError(command, dir, err)
+	return commonWorkerStartErrorPolicy.isTerminal(command, dir, err) ||
+		platformWorkerStartErrorPolicy.isTerminal(command, dir, err)
 }
 
 func workerStartRetryDelay(interval time.Duration) time.Duration {

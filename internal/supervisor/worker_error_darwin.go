@@ -3,13 +3,14 @@
 package supervisor
 
 import (
-	"errors"
 	"syscall"
 )
 
-func platformTerminalWorkerStartError(_, _ string, err error) bool {
-	return errors.Is(err, syscall.EBADEXEC) ||
-		errors.Is(err, syscall.EBADARCH) ||
-		errors.Is(err, syscall.ESHLIBVERS) ||
-		errors.Is(err, syscall.EBADMACHO)
+var platformWorkerStartErrorPolicy = workerStartErrorPolicy{
+	terminalErrors: []error{
+		syscall.EBADEXEC,
+		syscall.EBADARCH,
+		syscall.ESHLIBVERS,
+		syscall.EBADMACHO,
+	},
 }

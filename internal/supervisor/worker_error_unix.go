@@ -2,6 +2,4 @@
 
 package supervisor
 
-func platformTerminalWorkerStartError(string, string, error) bool {
-	return false
-}
+var platformWorkerStartErrorPolicy workerStartErrorPolicy

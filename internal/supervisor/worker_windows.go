@@ -1,20 +1,21 @@
 package supervisor
 
 import (
-	"errors"
 	"os"
 	"syscall"
 
 	"golang.org/x/sys/windows"
 )
 
-func platformTerminalWorkerStartError(_, _ string, err error) bool {
-	return errors.Is(err, windows.ERROR_BAD_EXE_FORMAT) ||
-		errors.Is(err, windows.ERROR_DIRECTORY) ||
-		errors.Is(err, windows.ERROR_INVALID_PARAMETER) ||
-		errors.Is(err, windows.ERROR_FILENAME_EXCED_RANGE) ||
-		errors.Is(err, windows.ERROR_EXE_MACHINE_TYPE_MISMATCH) ||
-		errors.Is(err, windows.ERROR_ELEVATION_REQUIRED)
+var platformWorkerStartErrorPolicy = workerStartErrorPolicy{
+	terminalErrors: []error{
+		windows.ERROR_BAD_EXE_FORMAT,
+		windows.ERROR_DIRECTORY,
+		windows.ERROR_INVALID_PARAMETER,
+		windows.ERROR_FILENAME_EXCED_RANGE,
+		windows.ERROR_EXE_MACHINE_TYPE_MISMATCH,
+		windows.ERROR_ELEVATION_REQUIRED,
+	},
 }
 
 func init() {

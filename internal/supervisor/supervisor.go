@@ -46,7 +46,8 @@ type runState struct {
 
 // Run acquires the pid file, binds every listener, performs the initial envdir
 // load, and starts the supervisor lifecycle in a background goroutine. Worker
-// command-start errors remain transient and are retried by that lifecycle.
+// command-start errors are retried when transient. Terminal launch errors stop
+// the lifecycle and are reported by the returned Controller.
 //
 // Cancelling ctx is the only way to stop the run; the returned Controller's
 // Hangup method requests a graceful worker restart.
