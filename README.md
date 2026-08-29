@@ -34,10 +34,11 @@ owner for new record-locked supervisors and Linux legacy flock-only
 supervisors. Linux legacy flock-only control requires readable `/proc/locks`;
 if that file is unavailable or cannot be read, control fails safely without
 signaling the recorded PID. On other Unix systems, legacy flock-only control
-verifies only that the lock is held and the recorded process is live. Store the
-PID file in a root-owned or mode-0700 directory that another user cannot
-replace, and ensure no traversed ancestor lets another user replace the next
-path entry, especially when controlling a legacy supervisor on those systems.
+verifies only that the lock is held and the recorded process is live, then
+waits for that validated process to exit. Store the PID file in a root-owned or
+mode-0700 directory that another user cannot replace, and ensure no traversed
+ancestor lets another user replace the next path entry, especially when
+controlling a legacy supervisor on those systems.
 
 Many PSGI servers support this. If you want your Go program to support it,
 import the root of this module (`github.com/lestrrat-go/server-starter/v2`, see

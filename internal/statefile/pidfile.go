@@ -21,11 +21,12 @@ type PIDFile struct {
 	path string
 }
 
-// RunningPID is a validated reference to a running supervisor. The returned
-// file remains open so callers can wait on the same lock after validation.
+// RunningPID is a validated reference to a running supervisor. The retained
+// file keeps the validated inode available while callers check for exit.
 type RunningPID struct {
-	file *os.File
-	pid  int
+	file                    *os.File
+	pid                     int
+	legacyLockUninspectable bool
 }
 
 type runningPIDPath struct {
@@ -139,6 +140,7 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		return nil, closeWithError(fmt.Errorf("invalid pid file %q", path))
 	}
 	pid := int(parsedPID)
+	legacyLockUninspectable := false
 
 	ownerPID, err := lockOwnerPID(f, path)
 	if err != nil {
@@ -159,13 +161,14 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		if !processIsLive(pid) {
 			return nil, closeWithError(fmt.Errorf("pid file %q records process %d, which is not running", path, pid))
 		}
+		legacyLockUninspectable = true
 	}
 
 	if err := preparedPath.validate(f); err != nil {
 		return nil, closeWithError(err)
 	}
 
-	return &RunningPID{file: f, pid: pid}, nil
+	return &RunningPID{file: f, pid: pid, legacyLockUninspectable: legacyLockUninspectable}, nil
 }
 
 // PID returns the validated supervisor process id.
@@ -173,8 +176,12 @@ func (p *RunningPID) PID() int {
 	return p.pid
 }
 
-// Exited reports whether the validated supervisor no longer owns the lifetime lock.
+// Exited reports whether the validated supervisor has exited or no longer owns
+// its inspectable lifetime lock.
 func (p *RunningPID) Exited() (bool, error) {
+	if p.legacyLockUninspectable {
+		return !processIsLive(p.pid), nil
+	}
 	return lockNoLongerOwnedByPID(p.file, p.pid)
 }
 
