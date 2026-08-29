@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -43,15 +44,25 @@ type runState struct {
 	restartC     <-chan time.Time
 }
 
-// Run acquires the pid file, binds every listener, and performs the initial
-// envdir load synchronously; any failure here is returned directly. Once
-// setup succeeds, Run spawns the supervisor loop in a background goroutine and
-// returns immediately. Runtime errors are never returned from Run: they are
-// recorded on the returned Controller and observed via Wait/Err.
+// Run acquires the pid file, binds every listener, performs the initial envdir
+// load, and starts the supervisor lifecycle in a background goroutine. Worker
+// command-start errors remain transient and are retried by that lifecycle.
 //
 // Cancelling ctx is the only way to stop the run; the returned Controller's
 // Hangup method requests a graceful worker restart.
 func (s *Starter) Run(ctx context.Context) (*Controller, error) {
+	return s.run(ctx, false)
+}
+
+// RunWithStartupCheck behaves like Run but waits for the initial worker to pass
+// its startup check. It returns an error if the worker cannot start or exits
+// during that check, so daemon children can report an exact startup result to
+// the waiting parent process.
+func (s *Starter) RunWithStartupCheck(ctx context.Context) (*Controller, error) {
+	return s.run(ctx, true)
+}
+
+func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, error) {
 	rs := &runState{
 		cfg:       s,
 		listeners: make([]listener, 0, len(s.ports)+len(s.paths)),
@@ -158,10 +169,25 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 	}
 
 	ctrl := newController()
-	go rs.loop(ctx, ctrl)
+	var startup chan error
+	if waitForStartup {
+		startup = make(chan error, 1)
+	}
+	go rs.loop(ctx, ctrl, startup)
 	ok = true
+	if startup != nil {
+		if err := <-startup; err != nil {
+			<-ctrl.Done()
+			return nil, err
+		}
+	}
 
 	return ctrl, nil
+}
+
+func workerStartCanceled(ctx context.Context, err error) bool {
+	ctxErr := ctx.Err()
+	return ctxErr != nil && errors.Is(err, ctxErr)
 }
 
 // loop runs the supervisor's main lifecycle: it starts the initial worker,
@@ -170,7 +196,7 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 // teardown of everything Run acquired: listeners, the pid file, and the
 // controller's done channel are all released here, not in Run, so they stay
 // alive for as long as the loop is actually running.
-func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
+func (rs *runState) loop(ctx context.Context, ctrl *Controller, startup chan<- error) {
 	defer close(ctrl.done)
 	defer rs.teardown()
 	if rs.pidFile != nil {
@@ -179,10 +205,27 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 
 	workerCh := make(chan processState)
 	workerStateDone := make(chan struct{})
-	p, err := rs.startWorker(ctx, workerCh, workerStateDone)
+	p, err := rs.startWorker(ctx, workerCh, workerStateDone, startup != nil)
+	if startup != nil {
+		startupErr := err
+		if startupErr == nil {
+			startupErr = ctx.Err()
+		}
+		startup <- startupErr
+	}
 	if err != nil {
+		if workerStartCanceled(ctx, err) {
+			ctrl.setErr(ErrServerClosed)
+			return
+		}
 		fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 		ctrl.setErr(err)
+		return
+	}
+	if p == nil {
+		if ctx.Err() != nil {
+			ctrl.setErr(ErrServerClosed)
+		}
 		return
 	}
 	rs.oldWorkers = make(map[int]int)
@@ -233,10 +276,14 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 					ctrl.setErr(err)
 					return
 				}
-				newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone)
+				newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone, false)
 				if err != nil {
-					fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 					sigToSend = rs.cfg.signalOnTERM
+					if workerStartCanceled(ctx, err) {
+						ctrl.setErr(ErrServerClosed)
+						return
+					}
+					fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 					ctrl.setErr(err)
 					return
 				}
@@ -300,10 +347,14 @@ func (rs *runState) loop(ctx context.Context, ctrl *Controller) {
 				ctrl.setErr(err)
 				return
 			}
-			newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone)
+			newWorker, err := rs.startWorker(ctx, workerCh, workerStateDone, false)
 			if err != nil {
-				fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 				sigToSend = rs.cfg.signalOnTERM
+				if workerStartCanceled(ctx, err) {
+					ctrl.setErr(ErrServerClosed)
+					return
+				}
+				fmt.Fprintf(rs.cfg.stderr, "%s\n", err)
 				ctrl.setErr(err)
 				return
 			}

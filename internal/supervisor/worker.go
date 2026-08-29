@@ -20,6 +20,38 @@ import (
 var successStatus syscall.WaitStatus
 var failureStatus syscall.WaitStatus
 
+const minimumCheckedStartupInterval = time.Second
+
+type workerStartupState struct {
+	checked bool
+}
+
+func (s workerStartupState) waitForProbe(ctx context.Context, interval time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.checked && interval < minimumCheckedStartupInterval {
+		interval = minimumCheckedStartupInterval
+	}
+
+	timer := time.NewTimer(interval)
+	defer func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}()
+
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func grabExitStatus(w io.Writer, st processState) syscall.WaitStatus {
 	// Note: POSSIBLY non portable. seems to work on Unix/Windows
 	// When/if this blows up, we will look for a cure
@@ -56,7 +88,8 @@ func (s *Starter) workerCommand(ctx context.Context) *exec.Cmd {
 	return cmd
 }
 
-// reportFailedStart writes the "worker failed to start" diagnostic to w.
+// reportFailedStart writes the "worker failed to start" diagnostic to w and
+// returns the observed exit status when one is available.
 //
 // The status can come from two places, tried in this order:
 //
@@ -75,29 +108,49 @@ func (s *Starter) workerCommand(ctx context.Context) *exec.Cmd {
 // exit status could be collected; either way, dereferencing it would panic.
 // When neither source has a status, the message falls back to the pid
 // alone.
-func reportFailedStart(w io.Writer, pid int, reapedStatus syscall.WaitStatus, reapedOK bool, ps *os.ProcessState) {
+func reportFailedStart(
+	w io.Writer,
+	pid int,
+	reapedStatus syscall.WaitStatus,
+	reapedOK bool,
+	ps *os.ProcessState,
+) (syscall.WaitStatus, bool) {
 	switch {
 	case reapedOK:
 		fmt.Fprintf(w, "new worker %d seems to have failed to start, status:%d\n", pid, reapedStatus)
+		return reapedStatus, true
 	case ps != nil:
-		fmt.Fprintf(w, "new worker %d seems to have failed to start, status:%d\n", pid, grabExitStatus(w, ps))
+		status := grabExitStatus(w, ps)
+		fmt.Fprintf(w, "new worker %d seems to have failed to start, status:%d\n", pid, status)
+		return status, true
 	default:
 		fmt.Fprintf(w, "new worker %d seems to have failed to start\n", pid)
+		return successStatus, false
 	}
 }
 
-// startWorker starts the actual command. It returns a non-nil error only
-// when its non-empty listener set cannot be formatted into a valid
-// SERVER_STARTER_PORT spec (see starter.FormatPorts); that is a permanent
-// misconfiguration, not a transient exec failure, so it is reported instead
-// of retried.
+// startWorker starts the actual command. It returns a non-nil error when worker
+// descriptor setup fails, when its non-empty listener set cannot be formatted
+// into a valid SERVER_STARTER_PORT spec (see starter.FormatPorts), or when the
+// initial worker command cannot start or exits before passing a synchronous
+// startup check. Without a synchronous startup check, command-start errors and
+// early exits remain transient and are retried. Context cancellation always
+// returns ctx.Err(); the supervisor loop translates it to ErrServerClosed for
+// an ordinary Run while checked startup reports the context error directly.
 func (rs *runState) startWorker(
 	ctx context.Context,
 	ch chan<- processState,
 	done <-chan struct{},
+	checkStartup bool,
 ) (*os.Process, error) {
+	startup := workerStartupState{checked: checkStartup}
+
 	// Don't give up until we're running.
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		pid := -1
 		// reapedStatus/reapedOK carry findWorker's reaped exit status (set
 		// below, once the worker has actually been started) out to the
@@ -133,12 +186,8 @@ func (rs *runState) startWorker(
 		for slot := range files {
 			files[slot], err = os.OpenFile(os.DevNull, os.O_RDONLY, 0)
 			if err != nil {
-				for _, file := range files {
-					if file != nil {
-						file.Close()
-					}
-				}
-				panic(err)
+				closeWorkerFiles(files)
+				return nil, fmt.Errorf("open worker descriptor padding: %w", err)
 			}
 		}
 		for i, l := range rs.listeners {
@@ -158,15 +207,12 @@ func (rs *runState) startWorker(
 				}
 			}
 			if err != nil {
-				for _, file := range files {
-					if file != nil {
-						file.Close()
-					}
-				}
-				panic(err)
+				closeWorkerFiles(files)
+				return nil, fmt.Errorf("duplicate worker listener descriptor: %w", err)
 			}
-			files[descriptors[i]-3].Close()
-			files[descriptors[i]-3] = f
+			slot := descriptors[i] - 3
+			_ = files[slot].Close()
+			files[slot] = f
 			portList[i] = l.starterListener(descriptors[i])
 		}
 		cmd.ExtraFiles = files
@@ -175,11 +221,7 @@ func (rs *runState) startWorker(
 		if len(portList) > 0 {
 			portSpec, err = starter.FormatPorts(portList...)
 			if err != nil {
-				for _, file := range files {
-					if file != nil {
-						file.Close()
-					}
-				}
+				closeWorkerFiles(files)
 				return nil, fmt.Errorf("failed to format listeners for worker: %w", err)
 			}
 		}
@@ -189,34 +231,29 @@ func (rs *runState) startWorker(
 
 		// Now start!
 		startErr := cmd.Start()
-		for _, f := range files {
-			if f != nil {
-				f.Close()
-			}
-		}
+		closeWorkerFiles(files)
+		cmd.ExtraFiles = nil
 		if startErr != nil {
 			fmt.Fprintf(rs.cfg.stderr, "failed to exec %s: %s\n", cmd.Path, startErr)
+			if startup.checked {
+				return nil, startErr
+			}
 		} else {
 			// Save pid...
 			pid = cmd.Process.Pid
 			fmt.Fprintf(rs.cfg.stderr, "starting new worker %d\n", pid)
 
-			// Wait for interval before checking if the process is alive. A
-			// cancelled ctx bails out early too: it means a shutdown was
-			// requested, so there is no point waiting out the rest of the
-			// interval before deciding the worker "started".
-			tch := time.After(rs.cfg.interval)
-			ctxDone := false
-			select {
-			case <-tch:
-			case <-ctx.Done():
-				ctxDone = true
-			}
-
-			// Check if we can find a process by its pid
+			// Checked startup needs a real observation window even when the
+			// respawn retry interval is zero. Cancellation ends the probe but
+			// leaves worker shutdown under the supervisor's ownership.
+			probeErr := startup.waitForProbe(ctx, rs.cfg.interval)
 			var p *os.Process
-			p, reapedStatus, reapedOK = findWorker(pid)
-			if ctxDone || p != nil {
+			if probeErr != nil {
+				p = cmd.Process
+			} else {
+				p, reapedStatus, reapedOK = findWorker(pid)
+			}
+			if p != nil {
 				// No error? We were successful! Make sure we capture
 				// the program exiting
 				go func() {
@@ -242,11 +279,27 @@ func (rs *runState) startWorker(
 		// If we fall through here, we prematurely exited :/
 		// Make sure to wait to release resources
 		_ = cmd.Wait()
-		for _, f := range cmd.ExtraFiles {
-			f.Close()
-		}
 
-		reportFailedStart(rs.cfg.stderr, pid, reapedStatus, reapedOK, cmd.ProcessState)
+		status, statusOK := reportFailedStart(rs.cfg.stderr, pid, reapedStatus, reapedOK, cmd.ProcessState)
+		if startup.checked {
+			if statusOK {
+				return nil, fmt.Errorf("initial worker %d exited before passing startup check, status:%d", pid, status)
+			}
+			return nil, fmt.Errorf("initial worker %d exited before passing startup check", pid)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func closeWorkerFiles(files []*os.File) {
+	for i, file := range files {
+		if file == nil {
+			continue
+		}
+		_ = file.Close()
+		files[i] = nil
 	}
 }
 
@@ -265,6 +318,12 @@ func buildWorkerEnv(overlay map[string]string, portSpec string, generation int) 
 	merged := make(map[string]string, len(overlay)+2)
 	for _, kv := range os.Environ() {
 		if k, v, ok := strings.Cut(kv, "="); ok {
+			// The readiness descriptor belongs only to the daemon child. A
+			// worker must never inherit the protocol endpoint because fd 3
+			// may be reused for a listener in a nested start_server.
+			if k == "SERVER_STARTER_DAEMON_READY_FD" {
+				continue
+			}
 			merged[k] = v
 		}
 	}

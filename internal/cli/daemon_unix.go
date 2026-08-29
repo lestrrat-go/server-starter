@@ -10,3 +10,7 @@ import "syscall"
 func daemonSysProcAttr() (*syscall.SysProcAttr, error) {
 	return &syscall.SysProcAttr{Setsid: true}, nil
 }
+
+func closeDaemonReadinessOnExec(fd uintptr) {
+	syscall.CloseOnExec(int(fd))
+}
