@@ -270,12 +270,14 @@ func TestRunDoesNotMutateSupervisorEnvironment(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(envdir, leakKey), []byte("leaked\n"), 0600); err != nil {
 		t.Fatalf("failed to write envdir entry: %s", err)
 	}
+	command, args := testWorkerCommand(t)
 
 	sd, err := NewStarter(&config{
-		command: "/bin/sh",
-		args:    []string{"-c", "exec sleep 30"},
-		ports:   []string{"0"},
-		envdir:  envdir,
+		command:   command,
+		args:      args,
+		ports:     testWorkerPorts(),
+		envdir:    envdir,
+		sigonterm: "KILL",
 	})
 	if err != nil {
 		t.Fatalf("failed to create starter: %s", err)

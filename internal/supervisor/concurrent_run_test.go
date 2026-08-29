@@ -12,10 +12,10 @@ import (
 )
 
 // TestRunConcurrentOnSharedStarter proves that Run is safe to invoke as
-// `go sd.Run(ctx)`: the same *Starter, sharing one command and one port spec
-// (port 0, so each run binds its own ephemeral port instead of colliding),
-// is run twice concurrently, each with its own context. Both runs must
-// complete cleanly when their own context is cancelled, independently of
+// `go sd.Run(ctx)`: the same *Starter, sharing one command and, on Unix, one
+// port spec (port 0, so each run binds its own ephemeral port instead of
+// colliding), is run twice concurrently, each with its own context. Both runs
+// must complete cleanly when their own context is cancelled, independently of
 // each other, and each must have spawned its own live worker process.
 //
 // statusFile and pidFile are left empty on purpose: WriteStatus is a no-op
@@ -25,17 +25,15 @@ import (
 func TestRunConcurrentOnSharedStarter(t *testing.T) {
 	dir := t.TempDir()
 	markerFile := filepath.Join(dir, "workers.txt")
+	command, args := testWorkerCommand(t, markerFile)
 
-	// The worker command appends its own pid to markerFile, then sleeps.
-	// Using a shell command keeps this file buildable on Windows (it only
-	// needs to compile there) without needing a companion worker binary.
-	// "exec sleep" replaces the shell with sleep in place (same pid), so
-	// the TERM the supervisor sends terminates it directly instead of
-	// leaving an orphaned grandchild holding the test's stdout pipe open.
+	// The helper worker appends its own pid to markerFile, then waits until
+	// the supervisor terminates it.
 	sd, err := NewStarter(&config{
-		command: "/bin/sh",
-		args:    []string{"-c", `echo $$ >> "$1"; exec sleep 30`, "sh", markerFile},
-		ports:   []string{"0"},
+		command:   command,
+		args:      args,
+		ports:     testWorkerPorts(),
+		sigonterm: "KILL",
 	})
 	require.NoError(t, err)
 
