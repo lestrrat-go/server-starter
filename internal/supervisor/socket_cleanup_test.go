@@ -133,6 +133,23 @@ func TestRemoveExistingUnixSocketUnlinksThroughQuarantineHandle(t *testing.T) {
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
+func TestRemoveExistingUnixSocketPreservesQuarantineEntryReplacement(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	path := filepath.Join(t.TempDir(), "listener.sock")
+	makeStaleSocket(t, path)
+
+	var replacementPath string
+	err := removeSocketWithHooks(path, socketCleanupHooks{beforeRemove: func(quarantineEntry string) {
+		replacementPath = quarantineEntry
+		require.NoError(t, os.Remove(quarantineEntry))
+		require.NoError(t, os.WriteFile(quarantineEntry, []byte("keep"), 0o600))
+	}})
+	require.ErrorContains(t, err, "changed before removal")
+	contents, readErr := os.ReadFile(replacementPath)
+	require.NoError(t, readErr)
+	require.Equal(t, []byte("keep"), contents)
+}
+
 func TestRemoveExistingUnixSocketRejectsQuarantineSubstitutionBeforeOpen(t *testing.T) {
 	requireSafeSocketQuarantine(t)
 	path := filepath.Join(t.TempDir(), "listener.sock")

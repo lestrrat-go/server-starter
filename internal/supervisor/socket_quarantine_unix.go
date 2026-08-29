@@ -10,12 +10,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const (
-	quarantineDirPrefix = ".server-starter-socket-"
-	quarantineDirName   = quarantineDirPrefix + "quarantine"
-	quarantineEntryName = "socket"
-)
-
 type unixSocketQuarantine struct {
 	parentFD   int
 	dirFD      int
@@ -23,6 +17,8 @@ type unixSocketQuarantine struct {
 	dirName    string
 	entryName  string
 	dirStat    unix.Stat_t
+	sourceFD   int
+	sourceStat unix.Stat_t
 }
 
 func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantine, error) {
@@ -34,13 +30,29 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 	if err != nil {
 		return nil, err
 	}
+	sourceFD, sourceErr := openQuarantineSource(parentFD, entryName)
+	if sourceErr != nil && !os.IsNotExist(sourceErr) {
+		_ = unix.Close(parentFD)
+		return nil, sourceErr
+	}
+	var sourceStat unix.Stat_t
+	if sourceFD >= 0 {
+		if err := unix.Fstat(sourceFD, &sourceStat); err != nil {
+			_ = unix.Close(sourceFD)
+			_ = unix.Close(parentFD)
+			return nil, err
+		}
+	}
 
 	dirName := quarantineDirName
 	if dirName == entryName {
 		dirName += "-directory"
 	}
-	created, err := ensureQuarantineDir(parentFD, dirName)
+	created, createdStat, err := ensureQuarantineDir(parentFD, dirName)
 	if err != nil {
+		if sourceFD >= 0 {
+			_ = unix.Close(sourceFD)
+		}
 		_ = unix.Close(parentFD)
 		return nil, err
 	}
@@ -53,6 +65,9 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 		if hooks.afterQuarantineOpenFailure != nil {
 			hooks.afterQuarantineOpenFailure(dirPath)
 		}
+		if sourceFD >= 0 {
+			_ = unix.Close(sourceFD)
+		}
 		_ = unix.Close(parentFD)
 		return nil, err
 	}
@@ -63,6 +78,8 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 		parentPath: parentPath,
 		dirName:    dirName,
 		entryName:  entryName,
+		sourceFD:   sourceFD,
+		sourceStat: sourceStat,
 	}
 	if err := unix.Fstat(dirFD, &quarantine.dirStat); err != nil {
 		quarantine.close()
@@ -72,17 +89,28 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 		quarantine.close()
 		return nil, err
 	}
+	if created && !sameUnixIdentity(&createdStat, &quarantine.dirStat) {
+		quarantine.close()
+		return nil, fmt.Errorf("quarantine directory changed while opening it")
+	}
 	return quarantine, nil
 }
 
-func ensureQuarantineDir(parentFD int, dirName string) (bool, error) {
+func ensureQuarantineDir(parentFD int, dirName string) (bool, unix.Stat_t, error) {
+	var stat unix.Stat_t
 	if err := unix.Mkdirat(parentFD, dirName, 0o700); err != nil {
 		if err == unix.EEXIST {
-			return false, nil
+			if err := unix.Fstatat(parentFD, dirName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+				return false, stat, err
+			}
+			return false, stat, nil
 		}
-		return false, err
+		return false, stat, err
 	}
-	return true, nil
+	if err := unix.Fstatat(parentFD, dirName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return false, stat, err
+	}
+	return true, stat, nil
 }
 
 func validateQuarantineDirectory(stat *unix.Stat_t) error {
@@ -100,6 +128,9 @@ func validateQuarantineDirectory(stat *unix.Stat_t) error {
 }
 
 func (q *unixSocketQuarantine) moveIn() error {
+	if q.sourceFD < 0 {
+		return errSocketSourceUnavailable
+	}
 	return renameSocketEntryNoReplace(q.parentFD, q.entryName, q.dirFD, quarantineEntryName)
 }
 
@@ -107,6 +138,9 @@ func (q *unixSocketQuarantine) entryIsSocket() (bool, error) {
 	var stat unix.Stat_t
 	if err := unix.Fstatat(q.dirFD, quarantineEntryName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return false, err
+	}
+	if !sameUnixIdentity(&q.sourceStat, &stat) {
+		return false, errSocketSourceChanged
 	}
 	return stat.Mode&unix.S_IFMT == unix.S_IFSOCK, nil
 }
@@ -116,6 +150,13 @@ func (q *unixSocketQuarantine) restore() error {
 }
 
 func (q *unixSocketQuarantine) removeEntry() error {
+	var stat unix.Stat_t
+	if err := unix.Fstatat(q.dirFD, quarantineEntryName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if !sameUnixIdentity(&q.sourceStat, &stat) {
+		return fmt.Errorf("quarantined unix socket changed before removal")
+	}
 	return unix.Unlinkat(q.dirFD, quarantineEntryName, 0)
 }
 
@@ -135,6 +176,9 @@ func (q *unixSocketQuarantine) cleanup() error {
 func (q *unixSocketQuarantine) close() {
 	_ = unix.Close(q.dirFD)
 	_ = unix.Close(q.parentFD)
+	if q.sourceFD >= 0 {
+		_ = unix.Close(q.sourceFD)
+	}
 }
 
 func (q *unixSocketQuarantine) location() string {
@@ -143,4 +187,8 @@ func (q *unixSocketQuarantine) location() string {
 
 func safeSocketQuarantineAvailable() bool {
 	return true
+}
+
+func sameUnixIdentity(a, b *unix.Stat_t) bool {
+	return a.Dev == b.Dev && a.Ino == b.Ino
 }

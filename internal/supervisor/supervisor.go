@@ -224,7 +224,7 @@ func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
 		hooks.beforeMove()
 	}
 	if err := quarantine.moveIn(); err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, errSocketSourceUnavailable) || os.IsNotExist(err) {
 			return finishSocketQuarantine(quarantine, nil)
 		}
 		return finishSocketQuarantine(
@@ -235,6 +235,12 @@ func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
 
 	isSocket, err := quarantine.entryIsSocket()
 	if err != nil {
+		if errors.Is(err, errSocketSourceChanged) {
+			if restoreErr := quarantine.restore(); restoreErr != nil {
+				return finishSocketQuarantine(quarantine, fmt.Errorf("unix socket path changed during preparation: restore entry: %w", restoreErr))
+			}
+			return finishSocketQuarantine(quarantine, fmt.Errorf("unix socket path changed during preparation and is not a socket"))
+		}
 		return finishSocketQuarantine(
 			quarantine,
 			fmt.Errorf("inspect quarantined unix socket %q: %w; entry retained at %q", path, err, quarantine.location()),
