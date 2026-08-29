@@ -74,7 +74,10 @@ func (o options) validateSignals() error {
 		{option: "--signal-on-hup", value: o.OptSignalOnHUP},
 		{option: "--signal-on-term", value: o.OptSignalOnTERM},
 	} {
-		if setting.value != "" && supervisor.SigFromName(setting.value) == nil {
+		if setting.value == "" {
+			continue
+		}
+		if _, err := supervisor.SigFromName(setting.value); err != nil {
 			return fmt.Errorf("invalid %s value %q: unknown signal", setting.option, setting.value)
 		}
 	}

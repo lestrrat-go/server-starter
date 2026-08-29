@@ -14,6 +14,7 @@ import (
 )
 
 const cliTestHelperEnv = "SERVER_STARTER_CLI_TEST_HELPER"
+const invalidDaemonSignalEnv = "SERVER_STARTER_TEST_INVALID_DAEMON_SIGNAL"
 
 func TestRunRejectsInvalidSignalOptions(t *testing.T) {
 	if os.Getenv(cliTestHelperEnv) == "1" {
@@ -42,6 +43,45 @@ func TestRunRejectsInvalidSignalOptions(t *testing.T) {
 				fmt.Sprintf("error: invalid %s value %q: unknown signal\n", option, value),
 				string(output),
 			)
+		})
+	}
+}
+
+func TestDaemonizeRejectsInvalidSignalNames(t *testing.T) {
+	if flag := os.Getenv(invalidDaemonSignalEnv); flag != "" {
+		os.Args = []string{os.Args[0], "--daemonize", flag, "TERMM", "--", os.Args[0]}
+		os.Exit(Run())
+	}
+
+	testCases := []struct {
+		name     string
+		flag     string
+		expected string
+	}{
+		{
+			name:     "signal on HUP",
+			flag:     "--signal-on-hup",
+			expected: "error: invalid --signal-on-hup value \"TERMM\": unknown signal\n",
+		},
+		{
+			name:     "signal on TERM",
+			flag:     "--signal-on-term",
+			expected: "error: invalid --signal-on-term value \"TERMM\": unknown signal\n",
+		},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDaemonizeRejectsInvalidSignalNames$")
+			cmd.Env = append(os.Environ(), invalidDaemonSignalEnv+"="+test.flag)
+			output, err := cmd.CombinedOutput()
+
+			var exitErr *exec.ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.Equal(t, 1, exitErr.ExitCode())
+			require.Equal(t, test.expected, string(output))
 		})
 	}
 }
