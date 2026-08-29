@@ -40,6 +40,9 @@ func init() {
 	for sig, name := range niceSigNames {
 		niceNameToSigs[name] = sig
 	}
+	if sig, ok := niceNameToSigs["XFSZ"]; ok {
+		niceNameToSigs["GXFSZ"] = sig
+	}
 }
 
 func signame(s os.Signal) string {
