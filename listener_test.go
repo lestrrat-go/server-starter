@@ -101,6 +101,8 @@ func TestNewUnixListenerCanonicalPath(t *testing.T) {
 		{name: "trailing UDP marker", path: "db:u5432", want: "./db:u5432"},
 		{name: "TCP hostname beginning with u", path: "ubuntu.internal:8080", want: "./ubuntu.internal:8080"},
 		{name: "explicit UDP target", path: "udp://8080", want: "./udp://8080"},
+		{name: "leading space before bare port", path: " 8080", want: "./ 8080"},
+		{name: "leading space before explicit UDP target", path: " udp://8080", want: "./ udp://8080"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -205,6 +207,14 @@ func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 
 	t.Run("explicit UDP unix socket path", func(t *testing.T) {
 		roundTrip(t, starter.List{starter.NewUnixListener("udp://8080", 13)})
+	})
+
+	t.Run("leading-space TCP-like unix socket path", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewUnixListener(" 8080", 15)})
+	})
+
+	t.Run("leading-space explicit UDP unix socket path", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewUnixListener(" udp://8080", 16)})
 	})
 
 	t.Run("mixed multi-target list", func(t *testing.T) {

@@ -99,13 +99,14 @@ func NewUnixListener(path string, fd uintptr) UnixListener {
 // canonicalUnixPath adds the existing "./" wire-format disambiguator when
 // ParsePorts would otherwise classify path as TCP or UDP.
 func canonicalUnixPath(path string) string {
-	if strings.HasPrefix(path, udpTransportMarker) {
+	wireTarget := strings.TrimSpace(path)
+	if strings.HasPrefix(wireTarget, udpTransportMarker) {
 		return "./" + path
 	}
-	if strings.ContainsRune(path, '/') {
+	if strings.ContainsRune(wireTarget, '/') {
 		return path
 	}
-	if _, _, matched := classifyPortTarget(path); matched {
+	if _, _, matched := classifyPortTarget(wireTarget); matched {
 		return "./" + path
 	}
 	return path
