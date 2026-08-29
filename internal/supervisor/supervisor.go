@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -141,15 +142,10 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 
 	for _, path := range s.paths {
 		var l net.Listener
-		if fl, err := os.Lstat(path); err == nil && fl.Mode()&os.ModeSocket == os.ModeSocket {
-			fmt.Fprintf(s.stderr, "removing existing socket file:%s\n", path)
-			err = os.Remove(path)
-			if err != nil {
-				fmt.Fprintf(s.stderr, "failed to remove existing socket file:%s:%s\n", path, err)
-				return nil, err
-			}
+		if err := removeExistingUnixSocket(path); err != nil {
+			fmt.Fprintf(s.stderr, "failed to prepare socket file:%s:%s\n", path, err)
+			return nil, err
 		}
-		_ = os.Remove(path)
 		lc := listenConfig(unixNetwork)
 		l, err := lc.Listen(ctx, unixNetwork, path)
 		if err != nil {
@@ -189,6 +185,98 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 func workerStartCanceled(ctx context.Context, err error) bool {
 	ctxErr := ctx.Err()
 	return ctxErr != nil && errors.Is(err, ctxErr)
+}
+
+func removeExistingUnixSocket(path string) error {
+	if runtime.GOOS == "linux" &&
+		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
+		return nil
+	}
+	if !safeSocketQuarantineAvailable() {
+		_, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect unix socket path %q: %w", path, err)
+		}
+		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, errSafeSocketCleanupUnavailable)
+	}
+	return removeSocketWithHooks(path, socketCleanupHooks{})
+}
+
+type socketCleanupHooks struct {
+	afterQuarantineMkdir       func(string)
+	afterQuarantineOpenFailure func(string)
+	beforeMove                 func()
+	beforeRemove               func(string)
+	beforeCleanup              func(string)
+}
+
+func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
+	quarantine, err := newSocketQuarantine(path, hooks)
+	if err != nil {
+		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, err)
+	}
+	defer quarantine.close()
+
+	if hooks.beforeMove != nil {
+		hooks.beforeMove()
+	}
+	if err := quarantine.moveIn(); err != nil {
+		if os.IsNotExist(err) {
+			return finishSocketQuarantine(quarantine, nil)
+		}
+		return finishSocketQuarantine(
+			quarantine,
+			fmt.Errorf("quarantine unix socket path %q: %w", path, err),
+		)
+	}
+
+	isSocket, err := quarantine.entryIsSocket()
+	if err != nil {
+		return finishSocketQuarantine(
+			quarantine,
+			fmt.Errorf("inspect quarantined unix socket %q: %w; entry retained at %q", path, err, quarantine.location()),
+		)
+	}
+	if !isSocket {
+		if err := quarantine.restore(); err != nil {
+			return finishSocketQuarantine(
+				quarantine,
+				fmt.Errorf(
+					"unix socket path %q is not a socket: restore entry: %w; entry retained at %q",
+					path,
+					err,
+					quarantine.location(),
+				),
+			)
+		}
+		return finishSocketQuarantine(quarantine, fmt.Errorf("unix socket path %q is not a socket", path))
+	}
+
+	if hooks.beforeRemove != nil {
+		hooks.beforeRemove(quarantine.location())
+	}
+	if err := quarantine.removeEntry(); err != nil {
+		return finishSocketQuarantine(
+			quarantine,
+			fmt.Errorf("remove quarantined unix socket %q: %w; entry retained at %q", path, err, quarantine.location()),
+		)
+	}
+	if hooks.beforeCleanup != nil {
+		hooks.beforeCleanup(quarantine.location())
+	}
+	return finishSocketQuarantine(quarantine, nil)
+}
+
+func finishSocketQuarantine(quarantine socketQuarantine, operationErr error) error {
+	cleanupErr := quarantine.cleanup()
+	if cleanupErr == nil {
+		return operationErr
+	}
+	cleanupErr = fmt.Errorf("clean unix socket quarantine %q: %w", quarantine.location(), cleanupErr)
+	return errors.Join(operationErr, cleanupErr)
 }
 
 // loop runs the supervisor's main lifecycle: it starts the initial worker,
