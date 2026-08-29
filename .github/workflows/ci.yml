@@ -65,6 +65,30 @@ jobs:
       - name: Run tests
         run: go test -race -timeout 5m ./...
 
+  perl-interoperability:
+    needs: lint
+    runs-on: ubuntu-latest
+    name: Test Perl interoperability
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install original Server::Starter
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libserver-starter-perl
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run interoperability tests
+        run: SERVER_STARTER_INTEROP_REQUIRED=1 go test -race -timeout 2m -run '^TestPerlInteroperability' .
+
   test-windows-pidfile:
     needs: lint
     runs-on: windows-latest
