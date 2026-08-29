@@ -35,6 +35,30 @@ func TestRemoveExistingUnixSocketAllowsSymlinkedParent(t *testing.T) {
 	require.NoError(t, listener.Close())
 }
 
+func TestRunStartsUnixListenerAtQuarantineBasename(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	path := filepath.Join(t.TempDir(), quarantineDirName)
+	command, args := testWorkerCommand(t)
+	starter, err := NewStarter(&config{
+		command:   command,
+		args:      args,
+		paths:     []string{path},
+		sigonterm: signalNameKill,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctrl, err := starter.Run(ctx)
+	require.NoError(t, err)
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
+
+	cancel()
+	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+}
+
 func TestRemoveExistingUnixSocketPreservesUnresolvedParentPath(t *testing.T) {
 	requireSafeSocketQuarantine(t)
 	parent := t.TempDir()

@@ -35,16 +35,20 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 		return nil, err
 	}
 
-	created, err := ensureQuarantineDir(parentFD)
+	dirName := quarantineDirName
+	if dirName == entryName {
+		dirName += "-directory"
+	}
+	created, err := ensureQuarantineDir(parentFD, dirName)
 	if err != nil {
 		_ = unix.Close(parentFD)
 		return nil, err
 	}
-	dirPath := parentPath + quarantineDirName
+	dirPath := parentPath + dirName
 	if created && hooks.afterQuarantineMkdir != nil {
 		hooks.afterQuarantineMkdir(dirPath)
 	}
-	dirFD, err := openQuarantineDirectoryAt(parentFD, quarantineDirName)
+	dirFD, err := openQuarantineDirectoryAt(parentFD, dirName)
 	if err != nil {
 		if hooks.afterQuarantineOpenFailure != nil {
 			hooks.afterQuarantineOpenFailure(dirPath)
@@ -57,7 +61,7 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 		parentFD:   parentFD,
 		dirFD:      dirFD,
 		parentPath: parentPath,
-		dirName:    quarantineDirName,
+		dirName:    dirName,
 		entryName:  entryName,
 	}
 	if err := unix.Fstat(dirFD, &quarantine.dirStat); err != nil {
@@ -71,8 +75,8 @@ func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantin
 	return quarantine, nil
 }
 
-func ensureQuarantineDir(parentFD int) (bool, error) {
-	if err := unix.Mkdirat(parentFD, quarantineDirName, 0o700); err != nil {
+func ensureQuarantineDir(parentFD int, dirName string) (bool, error) {
+	if err := unix.Mkdirat(parentFD, dirName, 0o700); err != nil {
 		if err == unix.EEXIST {
 			return false, nil
 		}
