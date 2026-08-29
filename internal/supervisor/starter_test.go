@@ -153,23 +153,6 @@ func readFileEventually(t *testing.T, path string) []byte {
 	return nil
 }
 
-func TestNewStarterResolvesRelativeCommandAgainstDir(t *testing.T) {
-	dir := t.TempDir()
-	commandName := "worker"
-	if runtime.GOOS == "windows" {
-		commandName += ".exe"
-	}
-	executable := filepath.Join(dir, commandName)
-	require.NoError(t, os.WriteFile(executable, nil, 0700))
-
-	sd, err := NewStarter(&config{
-		command: "." + string(os.PathSeparator) + commandName,
-		dir:     dir,
-	})
-	require.NoError(t, err)
-	require.Equal(t, executable, sd.command)
-}
-
 func TestNewStarterPreservesRelativeCommandArgv0(t *testing.T) {
 	if runtime.GOOS == testGOOSWindows {
 		t.Skip("the worker fixture uses a POSIX shell script")

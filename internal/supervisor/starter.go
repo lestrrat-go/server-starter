@@ -105,12 +105,32 @@ func commandForValidation(command, dir string) string {
 	return dir + string(os.PathSeparator) + command
 }
 
-func needsValidatedCommandPath(command, validationCommand string) bool {
-	if command == "" || validationCommand == command {
-		return false
+func resolveCommandPath(command, dir string) (string, error) {
+	validationDir := dir
+	if runtime.GOOS == "windows" && dir != "" {
+		var err error
+		validationDir, err = filepath.Abs(dir)
+		if err != nil {
+			return "", err
+		}
 	}
-	return filepath.VolumeName(command) != "" || os.IsPathSeparator(command[0]) ||
-		(runtime.GOOS == "windows" && hasPathSeparator(command))
+
+	validationCommand := commandForValidation(command, validationDir)
+	commandPath, err := exec.LookPath(validationCommand)
+	if err != nil {
+		return "", err
+	}
+
+	pinCommandPath := validationCommand != command &&
+		(filepath.VolumeName(command) != "" || os.IsPathSeparator(command[0]))
+	if runtime.GOOS == "windows" {
+		pinCommandPath = filepath.VolumeName(command) != "" || hasPathSeparator(command)
+	}
+	if !pinCommandPath {
+		return "", nil
+	}
+
+	return filepath.Abs(commandPath)
 }
 
 // NewStarter creates a new Starter object. Config parameter may NOT be
@@ -143,18 +163,9 @@ func NewStarter(c Config) (*Starter, error) {
 		return nil, fmt.Errorf("argument Command must be specified")
 	}
 	dir := c.Dir()
-	validationCommand := commandForValidation(command, dir)
-	commandPath, err := exec.LookPath(validationCommand)
+	commandPath, err := resolveCommandPath(command, dir)
 	if err != nil {
 		return nil, err
-	}
-	if needsValidatedCommandPath(command, validationCommand) {
-		commandPath, err = filepath.Abs(commandPath)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		commandPath = ""
 	}
 
 	// A Config that returns nil for either writer falls back to the

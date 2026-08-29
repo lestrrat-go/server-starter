@@ -42,12 +42,110 @@ func TestNewStarterCarriesDriveRelativeLookupPathToWorkerCommand(t *testing.T) {
 	require.Equal(t, executable, cmd.Path)
 }
 
-func TestNeedsValidatedCommandPathPinsRelativeWindowsCommandsUnderUNCDir(t *testing.T) {
-	const dir = `\\server\share\service`
-	for _, command := range []string{`.\bin\worker.exe`, `..\bin\worker.exe`} {
-		t.Run(command, func(t *testing.T) {
-			validationCommand := commandForValidation(command, dir)
-			require.True(t, needsValidatedCommandPath(command, validationCommand))
+func copyCurrentTestExecutable(t *testing.T, target string) {
+	t.Helper()
+
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	data, err := os.ReadFile(executable)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(target, data, 0700))
+}
+
+func windowsDoubleSeparatorPath(path string) string {
+	if strings.HasPrefix(path, `\\`) && !strings.HasPrefix(path, `\\?\`) {
+		return `\\?\UNC\` + strings.TrimPrefix(path, `\\`)
+	}
+	if !strings.HasPrefix(path, `\\?\`) {
+		return `\\?\` + path
+	}
+	return path
+}
+
+func TestNewStarterPinsDriveRelativeWindowsCommandToRelativeDir(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "svc", "bin")
+	require.NoError(t, os.MkdirAll(binDir, 0755))
+	executable := filepath.Join(binDir, "worker.exe")
+	copyCurrentTestExecutable(t, executable)
+	t.Chdir(root)
+
+	volume := filepath.VolumeName(root)
+	require.NotEmpty(t, volume)
+	testCases := []struct {
+		name    string
+		command string
+		pathext string
+	}{
+		{name: "explicit extension", command: volume + `bin\worker.exe`},
+		{name: "PATHEXT lookup", command: volume + `bin\worker`, pathext: ".EXE"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.pathext != "" {
+				t.Setenv("PATHEXT", tc.pathext)
+			}
+
+			sd, err := NewStarter(&config{
+				args:    []string{"-test.run=^$"},
+				command: tc.command,
+				dir:     "svc",
+			})
+			require.NoError(t, err)
+
+			cmd := sd.workerCommand(t.Context())
+			cmd.Dir = sd.dir
+			require.Equal(t, tc.command, cmd.Args[0])
+			require.True(t, strings.EqualFold(executable, cmd.Path))
+			require.NoError(t, cmd.Run())
+		})
+	}
+}
+
+func TestNewStarterPinsDriveRelativeWindowsCommandUnderDoubleSeparatorDir(t *testing.T) {
+	executable, err := os.Executable()
+	require.NoError(t, err)
+
+	currentDir := filepath.Dir(filepath.Dir(executable))
+	relativeExecutable, err := filepath.Rel(currentDir, executable)
+	require.NoError(t, err)
+	t.Chdir(currentDir)
+
+	volume := filepath.VolumeName(executable)
+	require.NotEmpty(t, volume)
+	explicitCommand := volume + relativeExecutable
+	testCases := []struct {
+		name    string
+		command string
+		pathext string
+	}{
+		{name: "explicit extension", command: explicitCommand},
+		{
+			name:    "PATHEXT lookup",
+			command: strings.TrimSuffix(explicitCommand, filepath.Ext(explicitCommand)),
+			pathext: ".EXE",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.pathext != "" {
+				t.Setenv("PATHEXT", tc.pathext)
+			}
+
+			sd, err := NewStarter(&config{
+				args:    []string{"-test.run=^$"},
+				command: tc.command,
+				dir:     windowsDoubleSeparatorPath(t.TempDir()),
+			})
+			require.NoError(t, err)
+
+			cmd := sd.workerCommand(t.Context())
+			cmd.Dir = sd.dir
+			require.Equal(t, tc.command, cmd.Args[0])
+			require.True(t, strings.EqualFold(executable, cmd.Path))
+			// Go rejects a drive-relative application path before CreateProcess
+			// when Dir starts with two separators, including for a UNC Dir.
+			require.NoError(t, cmd.Run())
 		})
 	}
 }
@@ -56,12 +154,7 @@ func TestNewStarterRunsDotRelativeCommandFromDoubleSeparatorDir(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)
 
-	dir := filepath.Dir(executable)
-	if strings.HasPrefix(dir, `\\`) && !strings.HasPrefix(dir, `\\?\`) {
-		dir = `\\?\UNC\` + strings.TrimPrefix(dir, `\\`)
-	} else if !strings.HasPrefix(dir, `\\?\`) {
-		dir = `\\?\` + dir
-	}
+	dir := windowsDoubleSeparatorPath(filepath.Dir(executable))
 
 	command := `.\` + filepath.Base(executable)
 	sd, err := NewStarter(&config{
