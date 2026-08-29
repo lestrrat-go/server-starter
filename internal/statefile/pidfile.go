@@ -122,47 +122,47 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 	if err != nil {
 		return nil, err
 	}
-	closeWithError := func(err error) (*RunningPID, error) {
+	closeWithError := func(err error) error {
 		_ = f.Close()
-		return nil, err
+		return err
 	}
 
 	data, err := io.ReadAll(io.LimitReader(f, pidTextSize+1))
 	if err != nil {
-		return closeWithError(err)
+		return nil, closeWithError(err)
 	}
 	if len(data) > pidTextSize {
-		return closeWithError(fmt.Errorf("pid file %q is too large", path))
+		return nil, closeWithError(fmt.Errorf("pid file %q is too large", path))
 	}
 	parsedPID, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 32)
 	if err != nil || parsedPID <= 0 {
-		return closeWithError(fmt.Errorf("invalid pid file %q", path))
+		return nil, closeWithError(fmt.Errorf("invalid pid file %q", path))
 	}
 	pid := int(parsedPID)
 
 	ownerPID, err := lockOwnerPID(f, path)
 	if err != nil {
-		return closeWithError(fmt.Errorf("failed to inspect pid file %q lock: %w", path, err))
+		return nil, closeWithError(fmt.Errorf("failed to inspect pid file %q lock: %w", path, err))
 	}
 	if ownerPID > 0 {
 		if ownerPID != pid {
-			return closeWithError(fmt.Errorf("pid file %q records process %d, which does not match lock owner %d", path, pid, ownerPID))
+			return nil, closeWithError(fmt.Errorf("pid file %q records process %d, which does not match lock owner %d", path, pid, ownerPID))
 		}
 	} else {
 		lockErr := TryLock(f)
 		if lockErr == nil {
-			return closeWithError(fmt.Errorf("pid file %q is not locked by a running supervisor", path))
+			return nil, closeWithError(fmt.Errorf("pid file %q is not locked by a running supervisor", path))
 		}
 		if !lockUnavailable(lockErr) {
-			return closeWithError(fmt.Errorf("failed to inspect legacy pid file %q lock: %w", path, lockErr))
+			return nil, closeWithError(fmt.Errorf("failed to inspect legacy pid file %q lock: %w", path, lockErr))
 		}
 		if !processIsLive(pid) {
-			return closeWithError(fmt.Errorf("pid file %q records process %d, which is not running", path, pid))
+			return nil, closeWithError(fmt.Errorf("pid file %q records process %d, which is not running", path, pid))
 		}
 	}
 
 	if err := preparedPath.validate(f); err != nil {
-		return closeWithError(err)
+		return nil, closeWithError(err)
 	}
 
 	return &RunningPID{file: f, pid: pid}, nil
