@@ -129,6 +129,13 @@ func TestParsePorts(t *testing.T) {
 		require.Equal(t, starter.NewUDPListener("::1", 9090, 4), got[0])
 	})
 
+	t.Run("UDP zone-qualified IPv6 host and port", func(t *testing.T) {
+		got, err := starter.ParsePorts("u[fe80::1%lo0]:8080=3")
+		require.NoError(t, err)
+		require.Equal(t, starter.NewUDPListener("fe80::1%lo0", 8080, 3), got[0])
+		require.Equal(t, "udp://[fe80::1%lo0]:8080=3", got[0].String())
+	})
+
 	t.Run("UDP port suffix preserves a valid hostname beginning with u", func(t *testing.T) {
 		got, err := starter.ParsePorts("u10.0.0.5:u9090=4")
 		require.NoError(t, err)
@@ -355,6 +362,17 @@ func TestFormatPorts(t *testing.T) {
 		spec, err := starter.FormatPorts(starter.NewTCPListener("upstream", 8080, 3))
 		require.NoError(t, err)
 		require.Equal(t, "upstream:8080=3", spec)
+	})
+
+	t.Run("formats a UDP hostname beginning with u", func(t *testing.T) {
+		listener := starter.NewUDPListener("upstream", 8080, 3)
+		spec, err := starter.FormatPorts(listener)
+		require.NoError(t, err)
+		require.Equal(t, "udp://upstream:8080=3", spec)
+
+		got, err := starter.ParsePorts(spec)
+		require.NoError(t, err)
+		require.Equal(t, starter.List{listener}, got)
 	})
 
 	// Round-trip coverage against ParsePorts for every valid shape the

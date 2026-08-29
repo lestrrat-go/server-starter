@@ -3,6 +3,7 @@ package starter
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"regexp"
 	"strconv"
@@ -27,6 +28,14 @@ func looksLikeTCPGrammar(s string) bool {
 	return err == nil && host != "" && reLooksLikePort.MatchString(port)
 }
 
+func isIPLiteral(host string) bool {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	_, err := netip.ParseAddr(host)
+	return err == nil
+}
+
 // stripLeadingUDPMarker accepts the leading "u" marker only when the
 // remainder is a bare port or an IP literal with a port. Restricting the
 // marker this way keeps ordinary TCP hostnames such as "upstream" from
@@ -40,7 +49,7 @@ func stripLeadingUDPMarker(s string) (string, bool) {
 		return stripped, true
 	}
 	matches := reLooksLikeHostPort.FindStringSubmatch(stripped)
-	if matches == nil || net.ParseIP(strings.Trim(matches[1], "[]")) == nil {
+	if matches == nil || !isIPLiteral(matches[1]) {
 		return s, false
 	}
 	return stripped, true
