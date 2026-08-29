@@ -45,6 +45,23 @@ func TestStopSignalsLegacyFlockSupervisor(t *testing.T) {
 	require.NoError(t, helper.wait())
 }
 
+func TestStopRejectsReplacedPIDPath(t *testing.T) {
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "pid")
+	originalPath := filepath.Join(dir, "original.pid")
+	owner := startControlHelper(t, pidPath)
+
+	require.NoError(t, os.Rename(pidPath, originalPath))
+	replacement := startControlHelperWithMode(t, pidPath, "legacy")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := Stop(ctx, pidPath)
+	require.ErrorContains(t, err, "does not match control lock owner")
+	require.NoError(t, syscall.Kill(owner.pid, 0))
+	require.NoError(t, syscall.Kill(replacement.pid, 0))
+}
+
 // TestStopCancelledContext verifies that Stop, given a context that is
 // already cancelled, returns promptly instead of waiting out the poll loop.
 // The cancelled context is checked before the pid file is opened, so no

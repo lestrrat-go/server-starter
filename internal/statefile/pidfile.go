@@ -14,28 +14,43 @@ const maxPIDFileSize = 64
 // ErrPIDFileLocked means a live supervisor already holds the pid-file lock.
 var ErrPIDFileLocked = errors.New("pid file is already locked")
 
-// PIDFile is a pid file that has been acquired via Acquire. Closing it
-// releases the lock and, if this process still owns the file on disk,
-// removes it.
+// PIDFile is a pid file and its control lock acquired via Acquire. Closing it
+// releases both locks and removes files this process still owns on disk.
 type PIDFile struct {
-	file *os.File
-	path string
+	file        *os.File
+	path        string
+	controlFile *PIDFile
 }
 
 // RunningPID is a validated reference to a running supervisor. The pid is
-// accepted only when it matches the process that owns the pid-file lock.
+// accepted only when it matches the process that owns both supervisor locks.
 type RunningPID struct {
-	file *os.File
-	pid  int
+	file        *os.File
+	controlFile *os.File
+	pid         int
 }
 
-// Acquire opens path, takes a non-blocking ownership lock on it, and writes
-// the current process's pid into it. It returns ErrPIDFileLocked when another
-// supervisor already holds the lock.
+// Acquire opens path, takes non-blocking ownership locks on it and its control
+// lock, and writes the current process's pid into both files. It returns
+// ErrPIDFileLocked when another supervisor already holds either lock.
 func Acquire(path string) (*PIDFile, error) {
-	return acquire(path, func(f *os.File) error {
+	pidFile, err := acquire(path, func(f *os.File) error {
 		return lockFile(f, path)
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	controlPath := controlLockPath(path)
+	controlFile, err := acquire(controlPath, func(f *os.File) error {
+		return lockFile(f, controlPath)
+	})
+	if err != nil {
+		_ = pidFile.Close()
+		return nil, err
+	}
+	pidFile.controlFile = controlFile
+	return pidFile, nil
 }
 
 func acquire(path string, lock func(*os.File) error) (*PIDFile, error) {
@@ -93,20 +108,28 @@ func (p *PIDFile) Close() error {
 	}
 	err := closePIDFile(p.file, p.path)
 	p.file = nil
+	if p.controlFile != nil {
+		err = errors.Join(err, p.controlFile.Close())
+		p.controlFile = nil
+	}
 	return err
 }
 
 // OpenRunningPID opens path and verifies that its recorded pid owns the
-// supervisor lock. Keeping the returned handle open also lets callers wait on
-// the same file even if the pathname is later replaced.
+// supervisor locks. Keeping the returned handles open also lets callers wait
+// on the same files even if the pathnames are later replaced.
 func OpenRunningPID(path string) (*RunningPID, error) {
 	f, err := openRunningPIDFile(path)
 	if err != nil {
 		return nil, err
 	}
+	var controlFile *os.File
 
 	closeWithError := func(err error) (*RunningPID, error) {
 		_ = f.Close()
+		if controlFile != nil {
+			_ = controlFile.Close()
+		}
 		return nil, err
 	}
 
@@ -135,6 +158,27 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		return closeWithError(fmt.Errorf("pid file %q records process %d, which does not match lock owner %d", path, pid, ownerPID))
 	}
 
+	controlPath := controlLockPath(path)
+	controlFile, err = openRunningPIDFile(controlPath)
+	if errors.Is(err, os.ErrNotExist) {
+		// The sibling lock was added after the original pid-file protocol. Keep
+		// accepting legacy supervisors that have no control lock.
+		controlFile = nil
+	} else if err != nil {
+		return closeWithError(fmt.Errorf("failed to open control lock %q: %w", controlPath, err))
+	} else {
+		controlOwnerPID, err := lockOwnerPID(controlFile, controlPath)
+		if err != nil {
+			return closeWithError(fmt.Errorf("failed to inspect control lock %q: %w", controlPath, err))
+		}
+		if controlOwnerPID == 0 {
+			return closeWithError(fmt.Errorf("control lock %q is not held by a running supervisor", controlPath))
+		}
+		if controlOwnerPID != pid {
+			return closeWithError(fmt.Errorf("pid file %q records process %d, which does not match control lock owner %d", path, pid, controlOwnerPID))
+		}
+	}
+
 	openedInfo, err := f.Stat()
 	if err != nil {
 		return closeWithError(err)
@@ -147,7 +191,11 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		return closeWithError(fmt.Errorf("pid file %q was replaced while being validated", path))
 	}
 
-	return &RunningPID{file: f, pid: pid}, nil
+	return &RunningPID{file: f, controlFile: controlFile, pid: pid}, nil
+}
+
+func controlLockPath(path string) string {
+	return path + ".lock"
 }
 
 // ReadPID reads a pid only from a live supervisor-owned pid file.
@@ -165,8 +213,11 @@ func (p *RunningPID) PID() int {
 	return p.pid
 }
 
-// Exited reports whether the supervisor has released its pid-file lock.
+// Exited reports whether the supervisor has released its control lock.
 func (p *RunningPID) Exited() (bool, error) {
+	if p.controlFile != nil {
+		return lockReleased(p.controlFile)
+	}
 	return lockReleased(p.file)
 }
 
@@ -177,5 +228,9 @@ func (p *RunningPID) Close() error {
 	}
 	err := p.file.Close()
 	p.file = nil
+	if p.controlFile != nil {
+		err = errors.Join(err, p.controlFile.Close())
+		p.controlFile = nil
+	}
 	return err
 }
