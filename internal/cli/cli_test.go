@@ -173,7 +173,7 @@ func TestRunInformationalAndParseExitCodes(t *testing.T) {
 			name:       "version succeeds",
 			args:       []string{"--version"},
 			exitCode:   0,
-			stdoutText: "0.0.2\n",
+			stdoutText: "2.0.0-dev\n",
 		},
 		{
 			name:       "parse error fails",
@@ -247,4 +247,11 @@ func runCLIWithDaemonize(
 	require.NoError(t, stderrReader.Close())
 
 	return exitCode, string(stdout), string(stderr)
+}
+
+func TestRunVersion(t *testing.T) {
+	exitCode, stdout, stderr := runCLI(t, "--version")
+	require.Equal(t, 0, exitCode)
+	require.Equal(t, "2.0.0-dev\n", stdout)
+	require.Empty(t, stderr)
 }

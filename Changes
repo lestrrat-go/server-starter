@@ -4,6 +4,7 @@ Changes
 2.0.0 UNRELEASED
    * v2 is not tagged yet; this entry documents work in progress on the
      develop/v2 branch, not a shipped release.
+   - start_server --version reports 2.0.0-dev while v2 remains untagged
    - Module path moved to github.com/lestrrat-go/server-starter/v2
    - The listener subpackage is folded into the module root (package
      starter); import the module root instead of a listener subpackage
