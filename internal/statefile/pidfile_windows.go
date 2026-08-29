@@ -162,11 +162,30 @@ func finishPIDFileLock(f *os.File) error {
 	return windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, &overlapped)
 }
 
-func openRunningPIDFile(path string) (*os.File, error) {
-	return openPIDFile(path)
+func prepareRunningPIDPath(path string) (*runningPIDPath, error) {
+	return &runningPIDPath{path: path}, nil
 }
 
-func validatePIDControlPath(string) error {
+func (p *runningPIDPath) open() (*os.File, error) {
+	return openPIDFile(p.path)
+}
+
+func (p *runningPIDPath) validate(f *os.File) error {
+	openedInfo, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	pathInfo, err := os.Lstat(p.path)
+	if err != nil {
+		return err
+	}
+	if !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
+		return fmt.Errorf("pid file %q was replaced while being validated", p.path)
+	}
+	return nil
+}
+
+func (*runningPIDPath) close() error {
 	return nil
 }
 
