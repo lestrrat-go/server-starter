@@ -26,6 +26,11 @@ gone; everything it exported now lives at the module root, in package
 | `listener.Listener` / `List` / `TCPListener` / `UnixListener` | same names, module root |
 | — | new: `UDPListener`, `ParsePorts`, `FormatPorts`, `NewTCPListener`, `NewUDPListener`, `NewUnixListener`, `Generation`, `GenerationEnvName`, `IsUnderStartServer` |
 
+`GenerationEnvName` names the environment variable that carries the worker
+generation. Use `starter.GenerationEnvName` instead of spelling
+`SERVER_STARTER_GENERATION` as a string literal. `Generation` parses that
+variable, while `IsUnderStartServer` checks whether it is present.
+
 Two things to check when you move code over:
 
 - `ErrNoListeningTarget`'s message text changed, from `"no listening
