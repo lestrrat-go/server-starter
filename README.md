@@ -80,8 +80,8 @@ wg.Wait()
 `Ports` and type-switch on `UDPListener`: use `ListenPacket` for UDP and
 `Listen` for the other built-in listener types.
 
-See the `examples/` directory for verified examples, including the mixed-list
-workflow.
+See the `examples/` directory for tested examples of the worker-side APIs,
+including the mixed-list workflow.
 
 ## SUPERVISOR PORT DESCRIPTORS
 
