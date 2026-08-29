@@ -17,6 +17,7 @@ import (
 )
 
 const daemonTestModeEnv = "SERVER_STARTER_DAEMON_TEST_MODE"
+const daemonizeFlag = "--daemonize"
 
 func TestDaemonizeWaitsForReadiness(t *testing.T) {
 	if os.Getenv(daemonTestModeEnv) == "ready" && os.Getenv(daemonizedEnv) == "1" {
@@ -65,27 +66,27 @@ func TestRunDaemonizeReportsStartupFailures(t *testing.T) {
 	}{
 		{
 			name: "missing command",
-			args: []string{"--daemonize"},
+			args: []string{daemonizeFlag},
 			want: "daemon startup failed: server program not specified",
 		},
 		{
 			name: "log file cannot be opened",
-			args: []string{"--daemonize", "--log-file", t.TempDir(), "--", os.Args[0]},
+			args: []string{daemonizeFlag, "--log-file", t.TempDir(), "--", os.Args[0]},
 			want: "daemon startup failed: open ",
 		},
 		{
 			name: "listener configuration is invalid",
-			args: []string{"--daemonize", "--port", "not-a-port", "--", os.Args[0]},
+			args: []string{daemonizeFlag, "--port", "not-a-port", "--", os.Args[0]},
 			want: "daemon startup failed: invalid port",
 		},
 		{
 			name: "worker directory does not exist",
-			args: []string{"--daemonize", "--dir", missingWorkerDir, "--", "/bin/true"},
+			args: []string{daemonizeFlag, "--dir", missingWorkerDir, "--", "/bin/true"},
 			want: fmt.Sprintf("daemon startup failed: chdir %s: no such file or directory", missingWorkerDir),
 		},
 		{
 			name:      "worker descriptor setup fails",
-			args:      []string{"--daemonize", "--port", "0=63", "--dir", missingWorkerDir, "--", "/bin/true"},
+			args:      []string{daemonizeFlag, "--port", "0=63", "--dir", missingWorkerDir, "--", "/bin/true"},
 			want:      "daemon startup failed: open worker descriptor padding: open /dev/null: too many open files",
 			fileLimit: true,
 		},
