@@ -1,6 +1,7 @@
 package starter_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -58,8 +59,15 @@ func TestUDPListenerFd(t *testing.T) {
 }
 
 func TestUnixListenerString(t *testing.T) {
-	l := starter.NewUnixListener("/var/run/app.sock", 7)
-	require.Equal(t, "/var/run/app.sock=7", l.String())
+	t.Run("absolute path", func(t *testing.T) {
+		l := starter.NewUnixListener("/var/run/app.sock", 7)
+		require.Equal(t, "/var/run/app.sock=7", l.String())
+	})
+
+	t.Run("ambiguous struct literal", func(t *testing.T) {
+		l := starter.UnixListener{Path: "8080"}
+		require.Equal(t, "./8080=0", l.String())
+	})
 }
 
 func TestUnixListenerFd(t *testing.T) {
@@ -79,10 +87,37 @@ func TestNewUDPListenerNormalisesEmptyAddr(t *testing.T) {
 	require.Equal(t, "udp://8080=1", l.String())
 }
 
-func TestNewUnixListenerNoNormalisation(t *testing.T) {
-	l := starter.NewUnixListener("relative.sock", 1)
-	require.Equal(t, "relative.sock", l.Path)
-	require.Equal(t, "relative.sock=1", l.String())
+func TestNewUnixListenerCanonicalPath(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "ordinary relative path", path: "relative.sock", want: "relative.sock"},
+		{name: "relative path with slash", path: "dir/8080", want: "dir/8080"},
+		{name: "absolute path", path: "/var/run/app.sock", want: "/var/run/app.sock"},
+		{name: "already disambiguated path", path: "./8080", want: "./8080"},
+		{name: "bare port grammar", path: "8080", want: "./8080"},
+		{name: "host and port grammar", path: "db:5432", want: "./db:5432"},
+		{name: "multi-colon host and port", path: "a:b:8080", want: "./a:b:8080"},
+		{name: "TCP hostname beginning with u", path: "ubuntu.internal:8080", want: "./ubuntu.internal:8080"},
+		{name: "explicit UDP grammar", path: "udp://8080", want: "./udp://8080"},
+		{name: "reserved UDP prefix", path: "udp://relative.sock", want: "./udp://relative.sock"},
+		{name: "leading UDP grammar", path: "u8080", want: "./u8080"},
+		{name: "trailing UDP grammar", path: "db:u5432", want: "./db:u5432"},
+		{name: "leading space before bare port", path: " 8080", want: "./ 8080"},
+		{name: "trailing space after bare port", path: "8080 ", want: "./8080 "},
+		{name: "leading space before explicit UDP grammar", path: " udp://8080", want: "./ udp://8080"},
+		{name: "leading space before legacy UDP grammar", path: " u8080", want: "./ u8080"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			l := starter.NewUnixListener(tc.path, 1)
+			require.Equal(t, tc.want, l.Path)
+			require.Equal(t, tc.want+"=1", l.String())
+			require.Equal(t, filepath.Clean(tc.path), filepath.Clean(l.Path))
+		})
+	}
 }
 
 func TestListFormatPorts(t *testing.T) {
@@ -108,12 +143,9 @@ func TestListStringCompatibility(t *testing.T) {
 // TestListFormatPortsParsePortsRoundTrip checks that FormatPorts and
 // ParsePorts are inverses of each other, scoped to the shapes the
 // supervisor can actually emit: a bare TCP port, "host:port",
-// "[ipv6]:port" (each with and without the UDP "udp://" prefix), and an
-// absolute unix socket path.
-//
-// A relative unix socket path with no "/" that happens to parse as a port
-// or "host:port" (e.g. "8080" or "db:5432") is deliberately excluded:
-// ParsePorts reads it back as TCP/UDP, per its documented ambiguity.
+// "[ipv6]:port" (each with and without the UDP "udp://" prefix), empty
+// lists, and unix socket paths, including relative paths that overlap the
+// network grammar.
 func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 	roundTrip := func(t *testing.T, list starter.List) {
 		t.Helper()
@@ -161,6 +193,18 @@ func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 		roundTrip(t, starter.List{starter.NewUnixListener("/var/run/app.sock", 9)})
 	})
 
+	t.Run("grammar-ambiguous unix socket paths", func(t *testing.T) {
+		for _, path := range []string{
+			"8080", "db:5432", "a:b:8080", "ubuntu.internal:8080",
+			"udp://8080", "udp://relative.sock", "u8080", "db:u5432",
+			"ubuntu.internal:u8080", " 8080", " [::1]:5432", " udp://8080",
+			" u8080", "8080 ",
+		} {
+			list := starter.List{starter.NewUnixListener(path, 9)}
+			roundTrip(t, list)
+		}
+	})
+
 	t.Run("mixed multi-target list", func(t *testing.T) {
 		roundTrip(t, starter.List{
 			starter.NewTCPListener("", 8080, 3),
@@ -170,6 +214,7 @@ func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 			starter.NewUDPListener("192.168.1.20", 9092, 7),
 			starter.NewUDPListener("2001:db8::1", 9093, 8),
 			starter.NewUnixListener("/var/run/app.sock", 9),
+			starter.NewUnixListener("8080", 10),
 		})
 	})
 }

@@ -199,6 +199,28 @@ func TestParsePorts(t *testing.T) {
 		require.Equal(t, starter.NewUnixListener("./8080", 5), got[0])
 	})
 
+	t.Run("canonical host-port path is a unix socket", func(t *testing.T) {
+		got, err := starter.ParsePorts("./db:5432=5")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.IsType(t, starter.UnixListener{}, got[0])
+		require.Equal(t, starter.NewUnixListener("db:5432", 5), got[0])
+	})
+
+	t.Run("unix path preserves surrounding whitespace", func(t *testing.T) {
+		got, err := starter.ParsePorts("  relative.sock  =5")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.Equal(t, starter.NewUnixListener("  relative.sock  ", 5), got[0])
+	})
+
+	t.Run("canonical unix path preserves surrounding whitespace", func(t *testing.T) {
+		got, err := starter.ParsePorts(" ./8080  =5")
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.Equal(t, starter.NewUnixListener(" ./8080  ", 5), got[0])
+	})
+
 	t.Run("mixed multi-target spec", func(t *testing.T) {
 		got, err := starter.ParsePorts("unix.sock=5;udp://8080=3;10.0.0.5:9090=4;/foo/bar.sock=6")
 		require.NoError(t, err)
@@ -357,11 +379,19 @@ func TestFormatPorts(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("rejects an ambiguous relative unix socket path", func(t *testing.T) {
-		_, err := starter.FormatPorts(starter.NewUnixListener("8080", 3))
+	t.Run("formats a canonical ambiguous relative unix socket path", func(t *testing.T) {
+		spec, err := starter.FormatPorts(starter.NewUnixListener("8080", 3))
+		require.NoError(t, err)
+		require.Equal(t, "./8080=3", spec)
+	})
+
+	t.Run("rejects an ambiguous UnixListener struct literal", func(t *testing.T) {
+		listener := starter.NewUnixListener("relative.sock", 3)
+		listener.Path = "8080"
+		_, err := starter.FormatPorts(listener)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "UnixListener")
-		require.ErrorContains(t, err, "TCPListener")
+		require.ErrorContains(t, err, "different fields")
 	})
 
 	t.Run("formats a TCP hostname beginning with u", func(t *testing.T) {
