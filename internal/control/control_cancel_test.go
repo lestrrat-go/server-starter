@@ -5,10 +5,7 @@ package control
 import (
 	"context"
 	"errors"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
@@ -24,14 +21,7 @@ import (
 func TestStopCancelledContext(t *testing.T) {
 	t.Parallel()
 
-	// context.Background(): this child is a short-lived helper the test
-	// owns and waits on directly, not tied to the ctx under test below.
-	cmd := exec.CommandContext(context.Background(), "/bin/true")
-	require.NoError(t, cmd.Run(), "spawn short-lived child")
-	pid := cmd.Process.Pid
-
 	pidPath := filepath.Join(t.TempDir(), "pid")
-	require.NoError(t, os.WriteFile(pidPath, []byte(strconv.Itoa(pid)+"\n"), 0644))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -61,20 +51,10 @@ func TestStopCancelledContext(t *testing.T) {
 func TestRestartCancelledContext(t *testing.T) {
 	t.Parallel()
 
-	// context.Background(): the test kills and reaps this child itself
-	// (see the deferred Kill/Wait below), independent of the ctx under
-	// test that gets cancelled 200ms from now.
-	cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", `trap "" HUP; exec sleep 30`)
-	require.NoError(t, cmd.Start(), "spawn HUP-immune child")
-	pid := cmd.Process.Pid
-	defer func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	}()
-
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "pid")
-	require.NoError(t, os.WriteFile(pidPath, []byte(strconv.Itoa(pid)+"\n"), 0644))
+	cmd, _ := startControlSignalHelper(t, pidPath)
+	pid := cmd.Process.Pid
 
 	statusPath := filepath.Join(dir, "status")
 	// A status file that never advances past generation 1 keeps Restart

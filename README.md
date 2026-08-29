@@ -29,6 +29,12 @@ and the daemon shuts down its worker before reporting cancellation or a lost
 readiness connection. The regular foreground supervisor retries transient
 worker launch errors. Terminal launch errors stop its lifecycle immediately.
 
+On Unix, `--stop` and `--restart` verify that the PID in the state file belongs
+to its live lock owner before sending a signal. Store the PID file in a
+root-owned or mode-0700 directory that cannot be replaced by another user.
+Older flock-only PID files remain supported; platforms without a kernel query
+for flock ownership additionally require the recorded process to be live.
+
 Many PSGI servers support this. If you want your Go program to support it,
 import the root of this module (`github.com/lestrrat-go/server-starter/v2`, see
 the [package docs](https://github.com/lestrrat-go/server-starter/tree/develop/v2))
