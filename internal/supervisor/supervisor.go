@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -192,63 +191,89 @@ func removeExistingUnixSocket(path string) error {
 		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
 		return nil
 	}
-
-	info, err := os.Lstat(path)
-	if err != nil {
+	if !safeSocketQuarantineAvailable() {
+		_, err := os.Lstat(path)
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("inspect unix socket path %q: %w", path, err)
+		if err != nil {
+			return fmt.Errorf("inspect unix socket path %q: %w", path, err)
+		}
+		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, errSafeSocketCleanupUnavailable)
 	}
-	if info.Mode()&os.ModeSocket == 0 {
-		return fmt.Errorf("unix socket path %q is not a socket", path)
-	}
-	return removeSocketWithIdentity(path, info, os.Rename)
+	return removeSocketWithHooks(path, socketCleanupHooks{})
 }
 
-func removeSocketWithIdentity(path string, selected os.FileInfo, move func(string, string) error) error {
-	closeAnchor, err := anchorSocketEntry(path)
-	if err != nil {
-		return fmt.Errorf("anchor unix socket path %q: %w", path, err)
-	}
-	defer closeAnchor()
+type socketCleanupHooks struct {
+	beforeMove    func()
+	beforeRemove  func(string)
+	beforeCleanup func(string)
+}
 
-	quarantineDir, err := os.MkdirTemp(filepath.Dir(path), ".server-starter-socket-*")
+func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
+	quarantine, err := newSocketQuarantine(path)
 	if err != nil {
-		return fmt.Errorf("create unix socket quarantine for %q: %w", path, err)
+		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, err)
 	}
-	quarantinePath := filepath.Join(quarantineDir, "socket")
-	keepQuarantine := false
-	defer func() {
-		if !keepQuarantine {
-			_ = os.RemoveAll(quarantineDir)
-		}
-	}()
+	defer quarantine.close()
 
-	if err := move(path, quarantinePath); err != nil {
+	if hooks.beforeMove != nil {
+		hooks.beforeMove()
+	}
+	if err := quarantine.moveIn(); err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return finishSocketQuarantine(quarantine, nil)
 		}
-		return fmt.Errorf("quarantine unix socket path %q: %w", path, err)
+		return finishSocketQuarantine(
+			quarantine,
+			fmt.Errorf("quarantine unix socket path %q: %w", path, err),
+		)
 	}
 
-	moved, err := os.Lstat(quarantinePath)
+	isSocket, err := quarantine.entryIsSocket()
 	if err != nil {
-		keepQuarantine = true
-		return fmt.Errorf("inspect quarantined unix socket %q: %w; entry retained at %q", path, err, quarantinePath)
+		return finishSocketQuarantine(
+			quarantine,
+			fmt.Errorf("inspect quarantined unix socket %q: %w; entry retained at %q", path, err, quarantine.location()),
+		)
 	}
-	if !os.SameFile(selected, moved) {
-		if err := restoreSocketEntry(quarantinePath, path); err != nil {
-			keepQuarantine = true
-			return fmt.Errorf("unix socket path %q changed during preparation: %w; entry retained at %q", path, err, quarantinePath)
+	if !isSocket {
+		if err := quarantine.restore(); err != nil {
+			return finishSocketQuarantine(
+				quarantine,
+				fmt.Errorf(
+					"unix socket path %q is not a socket: restore entry: %w; entry retained at %q",
+					path,
+					err,
+					quarantine.location(),
+				),
+			)
 		}
-		return fmt.Errorf("unix socket path %q changed during preparation; replacement preserved", path)
+		return finishSocketQuarantine(quarantine, fmt.Errorf("unix socket path %q is not a socket", path))
 	}
-	if err := os.Remove(quarantinePath); err != nil {
-		keepQuarantine = true
-		return fmt.Errorf("remove quarantined unix socket %q: %w; entry retained at %q", path, err, quarantinePath)
+
+	if hooks.beforeRemove != nil {
+		hooks.beforeRemove(quarantine.location())
 	}
-	return nil
+	if err := quarantine.removeEntry(); err != nil {
+		return finishSocketQuarantine(
+			quarantine,
+			fmt.Errorf("remove quarantined unix socket %q: %w; entry retained at %q", path, err, quarantine.location()),
+		)
+	}
+	if hooks.beforeCleanup != nil {
+		hooks.beforeCleanup(quarantine.location())
+	}
+	return finishSocketQuarantine(quarantine, nil)
+}
+
+func finishSocketQuarantine(quarantine socketQuarantine, operationErr error) error {
+	cleanupErr := quarantine.cleanup()
+	if cleanupErr == nil {
+		return operationErr
+	}
+	cleanupErr = fmt.Errorf("clean unix socket quarantine %q: %w", quarantine.location(), cleanupErr)
+	return errors.Join(operationErr, cleanupErr)
 }
 
 // loop runs the supervisor's main lifecycle: it starts the initial worker,
