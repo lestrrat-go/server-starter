@@ -5,6 +5,7 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -119,6 +121,39 @@ func TestRunWithStartupCheckReturnsInitialWorkerStartError(t *testing.T) {
 	require.Equal(t, "chdir", pathErr.Op)
 	require.Equal(t, dir, pathErr.Path)
 	require.ErrorIs(t, pathErr.Err, fs.ErrNotExist)
+}
+
+func TestRunWithStartupCheckReturnsInitialWorkerExitError(t *testing.T) {
+	dir := t.TempDir()
+	firstAttempt := filepath.Join(dir, "first-attempt")
+	retried := filepath.Join(dir, "retried")
+	sd, err := NewStarter(&config{
+		command: "/bin/sh",
+		args: []string{"-c", `
+			if [ -e "$1" ]; then
+				printf retried > "$2"
+				exec sleep 30
+			fi
+			: > "$1"
+			exit 7
+		`, "worker", firstAttempt, retried},
+		interval: 1,
+		stderr:   io.Discard,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctrl, err := sd.RunWithStartupCheck(ctx)
+	if ctrl != nil {
+		cancel()
+		require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+	}
+
+	require.Nil(t, ctrl)
+	require.ErrorContains(t, err, "exited before passing startup check")
+	require.ErrorContains(t, err, fmt.Sprintf("status:%d", syscall.WaitStatus(7<<8)))
+	require.NoFileExists(t, retried)
 }
 
 func TestStartWorkerReturnsListenerDescriptorError(t *testing.T) {

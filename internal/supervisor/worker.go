@@ -56,7 +56,8 @@ func (s *Starter) workerCommand(ctx context.Context) *exec.Cmd {
 	return cmd
 }
 
-// reportFailedStart writes the "worker failed to start" diagnostic to w.
+// reportFailedStart writes the "worker failed to start" diagnostic to w and
+// returns the observed exit status when one is available.
 //
 // The status can come from two places, tried in this order:
 //
@@ -75,23 +76,34 @@ func (s *Starter) workerCommand(ctx context.Context) *exec.Cmd {
 // exit status could be collected; either way, dereferencing it would panic.
 // When neither source has a status, the message falls back to the pid
 // alone.
-func reportFailedStart(w io.Writer, pid int, reapedStatus syscall.WaitStatus, reapedOK bool, ps *os.ProcessState) {
+func reportFailedStart(
+	w io.Writer,
+	pid int,
+	reapedStatus syscall.WaitStatus,
+	reapedOK bool,
+	ps *os.ProcessState,
+) (syscall.WaitStatus, bool) {
 	switch {
 	case reapedOK:
 		fmt.Fprintf(w, "new worker %d seems to have failed to start, status:%d\n", pid, reapedStatus)
+		return reapedStatus, true
 	case ps != nil:
-		fmt.Fprintf(w, "new worker %d seems to have failed to start, status:%d\n", pid, grabExitStatus(w, ps))
+		status := grabExitStatus(w, ps)
+		fmt.Fprintf(w, "new worker %d seems to have failed to start, status:%d\n", pid, status)
+		return status, true
 	default:
 		fmt.Fprintf(w, "new worker %d seems to have failed to start\n", pid)
+		return successStatus, false
 	}
 }
 
 // startWorker starts the actual command. It returns a non-nil error when worker
 // descriptor setup fails, when its non-empty listener set cannot be formatted
 // into a valid SERVER_STARTER_PORT spec (see starter.FormatPorts), or when the
-// initial worker command cannot start during a synchronous startup check.
-// Other command-start errors remain transient and are retried. startup receives
-// nil after the worker passes a requested synchronous startup check.
+// initial worker command cannot start or exits before passing a synchronous
+// startup check. Without a synchronous startup check, command-start errors and
+// early exits remain transient and are retried. startup receives nil after the
+// worker passes a requested synchronous startup check.
 func (rs *runState) startWorker(
 	ctx context.Context,
 	ch chan<- processState,
@@ -254,7 +266,13 @@ func (rs *runState) startWorker(
 			f.Close()
 		}
 
-		reportFailedStart(rs.cfg.stderr, pid, reapedStatus, reapedOK, cmd.ProcessState)
+		status, statusOK := reportFailedStart(rs.cfg.stderr, pid, reapedStatus, reapedOK, cmd.ProcessState)
+		if startup != nil {
+			if statusOK {
+				return nil, fmt.Errorf("initial worker %d exited before passing startup check, status:%d", pid, status)
+			}
+			return nil, fmt.Errorf("initial worker %d exited before passing startup check", pid)
+		}
 	}
 }
 

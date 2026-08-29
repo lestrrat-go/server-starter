@@ -54,8 +54,9 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 }
 
 // RunWithStartupCheck behaves like Run but waits for the initial worker to pass
-// its startup check. It is used by daemon children that must report an exact
-// startup result to the waiting parent process.
+// its startup check. It returns an error if the worker cannot start or exits
+// during that check, so daemon children can report an exact startup result to
+// the waiting parent process.
 func (s *Starter) RunWithStartupCheck(ctx context.Context) (*Controller, error) {
 	return s.run(ctx, true)
 }
