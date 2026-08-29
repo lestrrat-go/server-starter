@@ -27,7 +27,7 @@ func newSocketQuarantine(path string) (socketQuarantine, error) {
 	if parentPath == "" {
 		parentPath = "." + string(filepath.Separator)
 	}
-	parentFD, err := unix.Open(parentPath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	parentFD, err := openQuarantineDirectory(parentPath)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func newSocketQuarantine(path string) (socketQuarantine, error) {
 		_ = unix.Close(parentFD)
 		return nil, err
 	}
-	dirFD, err := unix.Openat(parentFD, dirName, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	dirFD, err := openQuarantineDirectoryAt(parentFD, dirName)
 	if err != nil {
 		_ = unix.Unlinkat(parentFD, dirName, unix.AT_REMOVEDIR)
 		_ = unix.Close(parentFD)
