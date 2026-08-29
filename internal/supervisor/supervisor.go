@@ -192,7 +192,7 @@ func removeExistingUnixSocket(path string) error {
 	return removeExistingUnixSocketWithConfiguredPaths(path, nil)
 }
 
-func removeExistingUnixSocketWithConfiguredPaths(path string, configuredPaths map[string]struct{}) error {
+func removeExistingUnixSocketWithConfiguredPaths(path string, configuredPaths *configuredSocketPathSet) error {
 	if runtime.GOOS == "linux" &&
 		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
 		return nil
@@ -225,7 +225,7 @@ func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
 
 func removeSocketWithConfiguredPaths(
 	path string,
-	configuredPaths map[string]struct{},
+	configuredPaths *configuredSocketPathSet,
 	hooks socketCleanupHooks,
 ) error {
 	quarantine, err := newSocketQuarantine(path, configuredPaths, hooks)

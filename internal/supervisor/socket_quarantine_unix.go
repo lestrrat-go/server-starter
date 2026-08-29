@@ -27,7 +27,7 @@ type unixSocketQuarantine struct {
 
 func newSocketQuarantine(
 	path string,
-	configuredPaths map[string]struct{},
+	configuredPaths *configuredSocketPathSet,
 	hooks socketCleanupHooks,
 ) (socketQuarantine, error) {
 	parentPath, sourceName := filepath.Split(path)
@@ -38,6 +38,12 @@ func newSocketQuarantine(
 	if err != nil {
 		return nil, err
 	}
+	var parentStat unix.Stat_t
+	if err := unix.Fstat(parentFD, &parentStat); err != nil {
+		_ = unix.Close(parentFD)
+		return nil, err
+	}
+	parentIdentity := socketDirectoryIdentityFromStat(&parentStat)
 	sourceFD, sourceErr := openQuarantineSource(parentFD, sourceName)
 	if sourceErr != nil && !os.IsNotExist(sourceErr) {
 		_ = unix.Close(parentFD)
@@ -52,7 +58,7 @@ func newSocketQuarantine(
 		}
 	}
 
-	dirName := socketQuarantineDirectoryName(parentPath, sourceName, configuredPaths)
+	dirName := socketQuarantineDirectoryName(parentPath, parentIdentity, sourceName, configuredPaths)
 	created, createdStat, err := ensureQuarantineDir(parentFD, dirName)
 	if err != nil {
 		if sourceFD >= 0 {
@@ -83,7 +89,6 @@ func newSocketQuarantine(
 		parentPath: parentPath,
 		dirName:    dirName,
 		sourceName: sourceName,
-		slotName:   socketQuarantineSlotName(parentPath, dirName, sourceName, &sourceStat, configuredPaths),
 		sourceFD:   sourceFD,
 		sourceStat: sourceStat,
 		hooks:      hooks,
@@ -100,7 +105,28 @@ func newSocketQuarantine(
 		quarantine.close()
 		return nil, fmt.Errorf("quarantine directory changed while opening it")
 	}
+	quarantine.slotName = socketQuarantineSlotName(
+		parentPath,
+		dirName,
+		socketDirectoryIdentityFromStat(&quarantine.dirStat),
+		sourceName,
+		&sourceStat,
+		configuredPaths,
+	)
 	return quarantine, nil
+}
+
+func socketDirectoryIdentityForPath(path string) (socketDirectoryIdentity, error) {
+	var stat unix.Stat_t
+	if err := unix.Stat(path, &stat); err != nil {
+		return socketDirectoryIdentity{}, err
+	}
+	return socketDirectoryIdentityFromStat(&stat), nil
+}
+
+func socketDirectoryIdentityFromStat(stat *unix.Stat_t) socketDirectoryIdentity {
+	//nolint:unconvert // Darwin represents Stat_t.Dev as int32.
+	return socketDirectoryIdentity{device: uint64(stat.Dev), inode: stat.Ino}
 }
 
 func ensureQuarantineDir(parentFD int, dirName string) (bool, unix.Stat_t, error) {
@@ -209,9 +235,10 @@ func sameUnixIdentity(a, b *unix.Stat_t) bool {
 func socketQuarantineSlotName(
 	parentPath string,
 	dirName string,
+	parentIdentity socketDirectoryIdentity,
 	sourceName string,
 	sourceStat *unix.Stat_t,
-	configuredPaths map[string]struct{},
+	configuredPaths *configuredSocketPathSet,
 ) string {
 	identity := fmt.Sprintf("%s\x00%d\x00%d", sourceName, sourceStat.Dev, sourceStat.Ino)
 	digest := sha256.Sum256([]byte(identity))
@@ -222,7 +249,7 @@ func socketQuarantineSlotName(
 			name += fmt.Sprintf("-%d", suffix)
 		}
 		path := parentPath + dirName + string(filepath.Separator) + name
-		if _, configured := configuredPaths[normalizeSocketPath(path)]; !configured {
+		if !configuredPaths.contains(parentIdentity, name, path) {
 			return name
 		}
 	}
@@ -230,8 +257,9 @@ func socketQuarantineSlotName(
 
 func socketQuarantineDirectoryName(
 	parentPath string,
+	parentIdentity socketDirectoryIdentity,
 	sourceName string,
-	configuredPaths map[string]struct{},
+	configuredPaths *configuredSocketPathSet,
 ) string {
 	for suffix := 0; ; suffix++ {
 		name := quarantineDirName
@@ -244,7 +272,7 @@ func socketQuarantineDirectoryName(
 			continue
 		}
 		path := parentPath + name
-		if _, configured := configuredPaths[normalizeSocketPath(path)]; configured {
+		if configuredPaths.contains(parentIdentity, name, path) {
 			continue
 		}
 		return name

@@ -2,8 +2,12 @@
 
 package supervisor
 
-func newSocketQuarantine(string, map[string]struct{}, socketCleanupHooks) (socketQuarantine, error) {
+func newSocketQuarantine(string, *configuredSocketPathSet, socketCleanupHooks) (socketQuarantine, error) {
 	return nil, errSafeSocketCleanupUnavailable
+}
+
+func socketDirectoryIdentityForPath(string) (socketDirectoryIdentity, error) {
+	return socketDirectoryIdentity{}, errSafeSocketCleanupUnavailable
 }
 
 func safeSocketQuarantineAvailable() bool {

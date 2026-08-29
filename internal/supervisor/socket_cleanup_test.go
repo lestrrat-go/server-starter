@@ -344,6 +344,50 @@ func TestRunAvoidsConfiguredQuarantineSlot(t *testing.T) {
 	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
 }
 
+func TestRunAvoidsConfiguredQuarantineSlotThroughSymlinkedParent(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	// Keep the parent short enough for the nested AF_UNIX listener path.
+	//nolint:usetesting // t.TempDir paths exceed the AF_UNIX limit after quarantine components are added.
+	realParent, err := os.MkdirTemp("", "ss-")
+	require.NoError(t, err)
+	symlinkParent := realParent + "-alias"
+	require.NoError(t, os.Symlink(realParent, symlinkParent))
+	t.Cleanup(func() {
+		require.NoError(t, os.Remove(symlinkParent))
+		require.NoError(t, os.RemoveAll(realParent))
+	})
+
+	path := filepath.Join(symlinkParent, "listener.sock")
+	makeStaleSocket(t, path)
+	quarantine, err := newSocketQuarantine(path, nil, socketCleanupHooks{})
+	require.NoError(t, err)
+	configuredSlot := filepath.Join(realParent, quarantineDirName, filepath.Base(quarantine.location()))
+	quarantine.close()
+
+	command, args := testWorkerCommand(t)
+	starter, err := NewStarter(&config{
+		command:   command,
+		args:      args,
+		paths:     []string{configuredSlot, path},
+		sigonterm: signalNameKill,
+	})
+	require.NoError(t, err)
+
+	// testing.T.Context requires Go 1.24, but this module supports Go 1.23.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctrl, err := starter.Run(ctx)
+	require.NoError(t, err)
+	for _, listenerPath := range []string{configuredSlot, path} {
+		info, statErr := os.Lstat(listenerPath)
+		require.NoError(t, statErr)
+		require.NotZero(t, info.Mode()&os.ModeSocket)
+	}
+
+	cancel()
+	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+}
+
 func TestRemoveExistingUnixSocketRejectsQuarantineSubstitutionBeforeOpen(t *testing.T) {
 	requireSafeSocketQuarantine(t)
 	path := filepath.Join(t.TempDir(), "listener.sock")

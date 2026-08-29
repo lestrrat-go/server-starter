@@ -27,11 +27,48 @@ type socketQuarantine interface {
 	location() string
 }
 
-func configuredSocketPaths(paths []string) map[string]struct{} {
-	configured := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
-		configured[normalizeSocketPath(path)] = struct{}{}
+type socketDirectoryIdentity struct {
+	device uint64
+	inode  uint64
+}
+
+type configuredSocketPathIdentity struct {
+	parent socketDirectoryIdentity
+	name   string
+}
+
+type configuredSocketPathSet struct {
+	identities map[configuredSocketPathIdentity]struct{}
+	lexical    map[string]struct{}
+}
+
+func configuredSocketPaths(paths []string) *configuredSocketPathSet {
+	configured := &configuredSocketPathSet{
+		identities: make(map[configuredSocketPathIdentity]struct{}, len(paths)),
+		lexical:    make(map[string]struct{}, len(paths)),
 	}
+	for _, path := range paths {
+		configured.lexical[normalizeSocketPath(path)] = struct{}{}
+		parentPath, name := filepath.Split(path)
+		if parentPath == "" {
+			parentPath = "." + string(filepath.Separator)
+		}
+		parent, err := socketDirectoryIdentityForPath(parentPath)
+		if err == nil {
+			configured.identities[configuredSocketPathIdentity{parent: parent, name: name}] = struct{}{}
+		}
+	}
+	return configured
+}
+
+func (s *configuredSocketPathSet) contains(parent socketDirectoryIdentity, name, path string) bool {
+	if s == nil {
+		return false
+	}
+	if _, configured := s.identities[configuredSocketPathIdentity{parent: parent, name: name}]; configured {
+		return true
+	}
+	_, configured := s.lexical[normalizeSocketPath(path)]
 	return configured
 }
 
