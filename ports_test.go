@@ -15,6 +15,8 @@ import (
 // FormatPorts's handling of an unknown Listener implementation.
 type fakeListener struct{}
 
+const addrField = "Addr"
+
 func (fakeListener) Fd() uintptr { return 0 }
 func (fakeListener) Listen() (net.Listener, error) {
 	return nil, errors.New("fakeListener: Listen not implemented")
@@ -171,14 +173,14 @@ func TestFormatPorts(t *testing.T) {
 		_, err := starter.FormatPorts(starter.TCPListener{Addr: "", Port: 8080})
 		require.Error(t, err)
 		require.ErrorContains(t, err, "TCPListener")
-		require.ErrorContains(t, err, "Addr")
+		require.ErrorContains(t, err, addrField)
 	})
 
 	t.Run("rejects empty UDP Addr", func(t *testing.T) {
 		_, err := starter.FormatPorts(starter.UDPListener{Addr: "", Port: 8080})
 		require.Error(t, err)
 		require.ErrorContains(t, err, "UDPListener")
-		require.ErrorContains(t, err, "Addr")
+		require.ErrorContains(t, err, addrField)
 	})
 
 	t.Run("rejects empty unix Path", func(t *testing.T) {
@@ -197,12 +199,12 @@ func TestFormatPorts(t *testing.T) {
 			{
 				name:     "TCP Addr",
 				listener: starter.NewTCPListener("127.0.0.1\x00bad", 8080, 3),
-				field:    "Addr",
+				field:    addrField,
 			},
 			{
 				name:     "UDP Addr",
 				listener: starter.NewUDPListener("127.0.0.1\x00bad", 8080, 3),
-				field:    "Addr",
+				field:    addrField,
 			},
 			{
 				name:     "unix Path",

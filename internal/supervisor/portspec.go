@@ -11,6 +11,8 @@ import (
 )
 
 const (
+	unixNetwork = "unix"
+
 	// Explicit descriptors are a convenience for integrations that require a
 	// stable inherited descriptor number. Keep them bounded because ExtraFiles
 	// must materialize every slot from descriptor 3 through the largest one.
@@ -44,7 +46,7 @@ type listener struct {
 // worker's reader (starter.ParsePorts) on the same validation rules.
 func (l listener) starterListener(fd int) starter.Listener {
 	switch {
-	case l.network == "unix":
+	case l.network == unixNetwork:
 		return starter.NewUnixListener(l.path, uintptr(fd))
 	case strings.HasPrefix(l.network, "udp"):
 		return starter.NewUDPListener(l.host, l.port, uintptr(fd))

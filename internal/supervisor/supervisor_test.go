@@ -29,11 +29,11 @@ func TestRunRejectsSparseDescriptorLayout(t *testing.T) {
 
 func TestTeardownRemovesUnixSocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.sock")
-	l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", path)
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rs := &runState{cfg: &Starter{}, listeners: []listener{{listener: l, network: "unix", path: path}}}
+	rs := &runState{cfg: &Starter{}, listeners: []listener{{listener: l, network: unixNetwork, path: path}}}
 	rs.teardown()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("unix socket path remains, stat error = %v", err)

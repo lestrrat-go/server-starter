@@ -138,13 +138,13 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 			}
 		}
 		_ = os.Remove(path)
-		lc := listenConfig("unix")
-		l, err := lc.Listen(ctx, "unix", path)
+		lc := listenConfig(unixNetwork)
+		l, err := lc.Listen(ctx, unixNetwork, path)
 		if err != nil {
 			fmt.Fprintf(s.stderr, "failed to listen file:%s:%s\n", path, err)
 			return nil, err
 		}
-		rs.listeners = append(rs.listeners, listener{listener: l, network: "unix", path: path})
+		rs.listeners = append(rs.listeners, listener{listener: l, network: unixNetwork, path: path})
 	}
 
 	rs.generation = 0

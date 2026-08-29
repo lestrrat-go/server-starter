@@ -67,7 +67,7 @@ func TestPortSpecWireFormatUnchanged(t *testing.T) {
 			// a unix listener's spec was the raw path, unmodified.
 			want := fmt.Sprintf("%s=%d", tc.path, unixFD)
 
-			l := listener{network: "unix", path: tc.path}
+			l := listener{network: unixNetwork, path: tc.path}
 			got, err := starter.FormatPorts(l.starterListener(unixFD))
 			require.NoError(t, err)
 
