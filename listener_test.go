@@ -102,6 +102,7 @@ func TestNewUnixListenerCanonicalPath(t *testing.T) {
 		{name: "leading UDP grammar", path: "u8080", want: "./u8080"},
 		{name: "trailing UDP grammar", path: "db:u5432", want: "./db:u5432"},
 		{name: "leading space before bare port", path: " 8080", want: "./ 8080"},
+		{name: "trailing space after bare port", path: "8080 ", want: "./8080 "},
 		{
 			name: "leading space before TCP ipv6 grammar",
 			path: " [::1]:5432",
@@ -231,6 +232,12 @@ func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 			list := starter.List{starter.NewUnixListener(path, 9)}
 			roundTrip(t, list)
 		}
+	})
+
+	t.Run("trailing-space network grammar unix socket path", func(t *testing.T) {
+		listener := starter.NewUnixListener("8080 ", 3)
+		require.Equal(t, "./8080 ", listener.Path)
+		roundTrip(t, starter.List{listener})
 	})
 
 	t.Run("mixed multi-target list", func(t *testing.T) {

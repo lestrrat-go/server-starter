@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/lestrrat-go/server-starter/v2/internal/portwire"
 )
@@ -41,14 +40,14 @@ func isIPLiteral(host string) bool {
 // Unix socket path. The explicit UDP prefix is reserved even when its target
 // is invalid, while any other path containing "/" is unambiguously Unix.
 func needsUnixPathPrefix(s string) bool {
-	trimmed := strings.TrimLeftFunc(s, unicode.IsSpace)
-	if strings.HasPrefix(trimmed, udpTransportMarker) {
+	classification := strings.TrimSpace(s)
+	if strings.HasPrefix(classification, udpTransportMarker) {
 		return true
 	}
-	if strings.ContainsRune(trimmed, '/') {
+	if strings.ContainsRune(classification, '/') {
 		return false
 	}
-	for _, candidate := range classifyUDPMarker(trimmed) {
+	for _, candidate := range classifyUDPMarker(classification) {
 		if looksLikeTCPGrammar(candidate.target) {
 			return true
 		}
@@ -150,7 +149,8 @@ func ParsePorts(spec string) (List, error) {
 		if len(pair) != 2 {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: expected exactly one '='", pairString)
 		}
-		hostPort := strings.TrimSpace(pair[0])
+		rawTarget := pair[0]
+		hostPort := strings.TrimSpace(rawTarget)
 		fdString := strings.TrimSpace(pair[1])
 		fd, err := strconv.ParseUint(fdString, 10, 0)
 		if err != nil {
@@ -162,7 +162,7 @@ func ParsePorts(spec string) (List, error) {
 
 		explicitUDP := strings.HasPrefix(hostPort, udpTransportMarker)
 		if !explicitUDP && strings.ContainsRune(hostPort, '/') {
-			ret[i] = UnixListener{Path: hostPort, fd: uintptr(fd)}
+			ret[i] = UnixListener{Path: rawTarget, fd: uintptr(fd)}
 			continue
 		}
 
@@ -211,7 +211,7 @@ func ParsePorts(spec string) (List, error) {
 			}
 		} else {
 			ret[i] = UnixListener{
-				Path: hostPort,
+				Path: rawTarget,
 				fd:   uintptr(fd),
 			}
 		}
