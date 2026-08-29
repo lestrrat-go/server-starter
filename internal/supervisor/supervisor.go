@@ -205,13 +205,15 @@ func removeExistingUnixSocket(path string) error {
 }
 
 type socketCleanupHooks struct {
-	beforeMove    func()
-	beforeRemove  func(string)
-	beforeCleanup func(string)
+	afterQuarantineMkdir       func(string)
+	afterQuarantineOpenFailure func(string)
+	beforeMove                 func()
+	beforeRemove               func(string)
+	beforeCleanup              func(string)
 }
 
 func removeSocketWithHooks(path string, hooks socketCleanupHooks) error {
-	quarantine, err := newSocketQuarantine(path)
+	quarantine, err := newSocketQuarantine(path, hooks)
 	if err != nil {
 		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, err)
 	}

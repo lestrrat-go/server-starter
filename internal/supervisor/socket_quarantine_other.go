@@ -2,7 +2,7 @@
 
 package supervisor
 
-func newSocketQuarantine(string) (socketQuarantine, error) {
+func newSocketQuarantine(string, socketCleanupHooks) (socketQuarantine, error) {
 	return nil, errSafeSocketCleanupUnavailable
 }
 

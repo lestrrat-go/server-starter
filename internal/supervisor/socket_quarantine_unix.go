@@ -3,15 +3,18 @@
 package supervisor
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
 
-const quarantineEntryName = "socket"
+const (
+	quarantineDirPrefix = ".server-starter-socket-"
+	quarantineDirName   = quarantineDirPrefix + "quarantine"
+	quarantineEntryName = "socket"
+)
 
 type unixSocketQuarantine struct {
 	parentFD   int
@@ -22,7 +25,7 @@ type unixSocketQuarantine struct {
 	dirStat    unix.Stat_t
 }
 
-func newSocketQuarantine(path string) (socketQuarantine, error) {
+func newSocketQuarantine(path string, hooks socketCleanupHooks) (socketQuarantine, error) {
 	parentPath, entryName := filepath.Split(path)
 	if parentPath == "" {
 		parentPath = "." + string(filepath.Separator)
@@ -32,14 +35,20 @@ func newSocketQuarantine(path string) (socketQuarantine, error) {
 		return nil, err
 	}
 
-	dirName, err := makeQuarantineDir(parentFD)
+	created, err := ensureQuarantineDir(parentFD)
 	if err != nil {
 		_ = unix.Close(parentFD)
 		return nil, err
 	}
-	dirFD, err := openQuarantineDirectoryAt(parentFD, dirName)
+	dirPath := parentPath + quarantineDirName
+	if created && hooks.afterQuarantineMkdir != nil {
+		hooks.afterQuarantineMkdir(dirPath)
+	}
+	dirFD, err := openQuarantineDirectoryAt(parentFD, quarantineDirName)
 	if err != nil {
-		_ = unix.Unlinkat(parentFD, dirName, unix.AT_REMOVEDIR)
+		if hooks.afterQuarantineOpenFailure != nil {
+			hooks.afterQuarantineOpenFailure(dirPath)
+		}
 		_ = unix.Close(parentFD)
 		return nil, err
 	}
@@ -48,30 +57,42 @@ func newSocketQuarantine(path string) (socketQuarantine, error) {
 		parentFD:   parentFD,
 		dirFD:      dirFD,
 		parentPath: parentPath,
-		dirName:    dirName,
+		dirName:    quarantineDirName,
 		entryName:  entryName,
 	}
 	if err := unix.Fstat(dirFD, &quarantine.dirStat); err != nil {
 		quarantine.close()
 		return nil, err
 	}
+	if err := validateQuarantineDirectory(&quarantine.dirStat); err != nil {
+		quarantine.close()
+		return nil, err
+	}
 	return quarantine, nil
 }
 
-func makeQuarantineDir(parentFD int) (string, error) {
-	for range 8 {
-		var random [16]byte
-		if _, err := rand.Read(random[:]); err != nil {
-			return "", err
+func ensureQuarantineDir(parentFD int) (bool, error) {
+	if err := unix.Mkdirat(parentFD, quarantineDirName, 0o700); err != nil {
+		if err == unix.EEXIST {
+			return false, nil
 		}
-		name := ".server-starter-socket-" + hex.EncodeToString(random[:])
-		if err := unix.Mkdirat(parentFD, name, 0o700); err == nil {
-			return name, nil
-		} else if err != unix.EEXIST {
-			return "", err
-		}
+		return false, err
 	}
-	return "", fmt.Errorf("allocate unique quarantine directory")
+	return true, nil
+}
+
+func validateQuarantineDirectory(stat *unix.Stat_t) error {
+	if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return fmt.Errorf("quarantine path is not a directory")
+	}
+	if stat.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("quarantine directory owner %d does not match effective user %d", stat.Uid, os.Geteuid())
+	}
+	permissions := stat.Mode & 0o777
+	if permissions&0o077 != 0 || permissions&0o300 != 0o300 {
+		return fmt.Errorf("quarantine directory permissions %#o are not private and write-search capable", permissions)
+	}
+	return nil
 }
 
 func (q *unixSocketQuarantine) moveIn() error {
