@@ -19,14 +19,25 @@ const pollInterval = 20 * time.Millisecond
 // to exit. The caller controls how long to wait via ctx; a typical caller
 // wraps ctx with a timeout.
 func Stop(ctx context.Context, pidPath string) error {
+	return stopWithOpenRunningPID(ctx, pidPath, statefile.OpenRunningPID)
+}
+
+func stopWithOpenRunningPID(
+	ctx context.Context,
+	pidPath string,
+	openRunningPID func(string) (*statefile.RunningPID, error),
+) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("stop cancelled before signalling supervisor: %w", err)
 	}
-	running, err := statefile.OpenRunningPID(pidPath)
+	running, err := openRunningPID(pidPath)
 	if err != nil {
 		return err
 	}
 	defer running.Close()
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("stop cancelled before signalling supervisor: %w", err)
+	}
 	pid := running.PID()
 	if err := signalProcess(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err

@@ -57,7 +57,7 @@ func linuxFlockOwnerAt(f *os.File, locksPath string) (int, error) {
 	}
 	locks, err := os.Open(locksPath)
 	if err != nil {
-		return 0, nil
+		return 0, fmt.Errorf("failed to open Linux lock data %q: %w", locksPath, err)
 	}
 	defer locks.Close()
 	major := uint64(unix.Major(stat.Dev))
@@ -85,7 +85,7 @@ func linuxFlockOwnerAt(f *os.File, locksPath string) (int, error) {
 		return pid, nil
 	}
 	if err := scanner.Err(); err != nil {
-		return 0, nil
+		return 0, fmt.Errorf("failed to scan Linux lock data %q: %w", locksPath, err)
 	}
 	return 0, nil
 }

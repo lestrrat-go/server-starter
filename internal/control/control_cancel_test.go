@@ -5,6 +5,7 @@ package control
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -41,6 +42,25 @@ func TestStopCancelledContext(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, context.Canceled), "expected context.Canceled, got %v", err)
 	require.Less(t, elapsed, 2*time.Second, "Stop did not return promptly on an already-cancelled context")
+}
+
+func TestStopDoesNotSignalWhenCancelledDuringPIDOpen(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "pid")
+	_, signalPath := startControlSignalHelper(t, pidPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := stopWithOpenRunningPID(ctx, pidPath, func(path string) (*statefile.RunningPID, error) {
+		running, err := statefile.OpenRunningPID(path)
+		cancel()
+		return running, err
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Never(t, func() bool {
+		_, err := os.Stat(signalPath)
+		return err == nil
+	}, 100*time.Millisecond, 10*time.Millisecond)
 }
 
 // TestRestartCancelledContext verifies that Restart, while genuinely
