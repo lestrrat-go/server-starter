@@ -109,6 +109,40 @@ func TestRemoveExistingUnixSocketRejectsSocketReplacement(t *testing.T) {
 	require.NotZero(t, info.Mode()&os.ModeSocket)
 }
 
+func TestRemoveExistingUnixSocketPinsSelectedSocket(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.sock")
+	createStaleUnixSocket(t, path)
+
+	parent, err := os.Open(dir)
+	require.NoError(t, err)
+	selected, err := pathIdentityAt(parent, filepath.Base(path))
+	require.NoError(t, err)
+	require.NoError(t, parent.Close())
+
+	err = removeExistingUnixSocketWithMove(path, func(
+		oldDir *os.File,
+		oldName string,
+		newDir *os.File,
+		newName string,
+	) error {
+		pinned, inspectErr := pathIdentityAt(newDir, pinnedSocketName)
+		require.NoError(t, inspectErr)
+		require.True(t, samePathIdentity(selected, pinned))
+
+		require.NoError(t, os.Remove(path))
+		createStaleUnixSocket(t, path)
+		replacement, inspectErr := pathIdentityAt(oldDir, oldName)
+		require.NoError(t, inspectErr)
+		require.False(t, samePathIdentity(pinned, replacement))
+		return moveToQuarantineAt(oldDir, oldName, newDir, newName)
+	})
+	require.ErrorContains(t, err, "changed during preparation")
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
+}
+
 func createStaleUnixSocket(t *testing.T, path string) {
 	t.Helper()
 	listener, err := net.ListenUnix(unixNetwork, &net.UnixAddr{Name: path, Net: unixNetwork})
@@ -160,7 +194,7 @@ func TestRenameNoReplaceByLinkAtPreservesDestination(t *testing.T) {
 	require.Equal(t, sourceContents, gotDestination)
 }
 
-func TestRenameNoReplaceByLinkAtRestoresDirectory(t *testing.T) {
+func TestRenameNoReplaceByLinkAtPreservesDirectoryWhenAtomicRestoreIsUnavailable(t *testing.T) {
 	root := t.TempDir()
 	quarantinePath := filepath.Join(root, "quarantine")
 	destinationPath := filepath.Join(root, "destination")
@@ -177,11 +211,12 @@ func TestRenameNoReplaceByLinkAtRestoresDirectory(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, destination.Close()) })
 
-	require.NoError(t, renameNoReplaceByLinkAt(quarantine, sourceName, destination, destinationName))
-	info, err := os.Stat(filepath.Join(destinationPath, destinationName))
+	err = renameNoReplaceByLinkAt(quarantine, sourceName, destination, destinationName)
+	require.ErrorIs(t, err, errRenameNoReplaceUnsupported)
+	info, err := os.Stat(filepath.Join(quarantinePath, sourceName))
 	require.NoError(t, err)
 	require.True(t, info.IsDir())
-	_, err = os.Lstat(filepath.Join(quarantinePath, sourceName))
+	_, err = os.Lstat(filepath.Join(destinationPath, destinationName))
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 

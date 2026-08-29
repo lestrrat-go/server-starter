@@ -3,7 +3,6 @@
 package supervisor
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,9 +15,19 @@ func moveToQuarantineAt(oldDir *os.File, oldName string, newDir *os.File, newNam
 }
 
 type pathIdentity struct {
-	dev  uint64
-	ino  uint64
-	mode uint32
+	dev           uint64
+	ino           uint64
+	mode          uint32
+	creationToken string
+}
+
+func pathIdentityFromStat(stat *unix.Stat_t) pathIdentity {
+	// Stat_t field widths vary across supported Unix targets.
+	return pathIdentity{
+		dev:  uint64(stat.Dev),  //nolint:unconvert
+		ino:  uint64(stat.Ino),  //nolint:unconvert
+		mode: uint32(stat.Mode), //nolint:unconvert
+	}
 }
 
 func pathIdentityAt(dir *os.File, name string) (pathIdentity, error) {
@@ -26,8 +35,9 @@ func pathIdentityAt(dir *os.File, name string) (pathIdentity, error) {
 	if err := unix.Fstatat(int(dir.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return pathIdentity{}, err
 	}
-	// Stat_t field widths vary across supported Unix targets.
-	return pathIdentity{dev: uint64(stat.Dev), ino: uint64(stat.Ino), mode: uint32(stat.Mode)}, nil //nolint:unconvert
+	identity := pathIdentityFromStat(&stat)
+	identity.creationToken = creationTokenAt(dir, name, &stat)
+	return identity, nil
 }
 
 func pathIdentityForFile(file *os.File) (pathIdentity, error) {
@@ -35,8 +45,9 @@ func pathIdentityForFile(file *os.File) (pathIdentity, error) {
 	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
 		return pathIdentity{}, err
 	}
-	// Stat_t field widths vary across supported Unix targets.
-	return pathIdentity{dev: uint64(stat.Dev), ino: uint64(stat.Ino), mode: uint32(stat.Mode)}, nil //nolint:unconvert
+	identity := pathIdentityFromStat(&stat)
+	identity.creationToken = creationTokenForFile(file, &stat)
+	return identity, nil
 }
 
 func samePathIdentity(left, right pathIdentity) bool {
@@ -44,8 +55,31 @@ func samePathIdentity(left, right pathIdentity) bool {
 		left.mode&unix.S_IFMT == right.mode&unix.S_IFMT
 }
 
+func sameCreationIdentity(left, right pathIdentity) bool {
+	if !samePathIdentity(left, right) {
+		return false
+	}
+	return left.creationToken != "" && left.creationToken == right.creationToken
+}
+
 func (identity pathIdentity) isSocket() bool {
 	return identity.mode&unix.S_IFMT == unix.S_IFSOCK
+}
+
+func pinSocketAt(oldDir *os.File, oldName string, pinDir *os.File, pinName string) (pathIdentity, error) {
+	if err := linkAt(oldDir, oldName, pinDir, pinName); err != nil {
+		return pathIdentity{}, err
+	}
+	pinned, err := pathIdentityAt(pinDir, pinName)
+	if err != nil {
+		_ = unix.Unlinkat(int(pinDir.Fd()), pinName, 0)
+		return pathIdentity{}, err
+	}
+	return pinned, nil
+}
+
+func unpinSocketAt(pinDir *os.File, pinName string, expected pathIdentity) error {
+	return removeAt(pinDir, pinName, expected)
 }
 
 func renameNoReplaceEntryAt(
@@ -67,8 +101,8 @@ func renameNoReplaceEntryAt(
 
 // renameNoReplaceByLinkAt restores an entry from the verified private
 // quarantine. Non-directories use an anchored hard link for the no-replace
-// step. Directories use an anchored rename after checking that the destination
-// is absent because filesystems do not permit hard links to directories.
+// step. Directories stay quarantined because filesystems do not permit hard
+// links to directories and these targets have no atomic no-replace rename.
 func renameNoReplaceByLinkAt(
 	oldDir *os.File,
 	oldName string,
@@ -90,16 +124,10 @@ func renameNoReplaceByLinkAtWithBeforeUnlink(
 		return err
 	}
 	if source.mode&unix.S_IFMT == unix.S_IFDIR {
-		var destination unix.Stat_t
-		if err := unix.Fstatat(int(newDir.Fd()), newName, &destination, unix.AT_SYMLINK_NOFOLLOW); err == nil {
-			return os.ErrExist
-		} else if !errors.Is(err, unix.ENOENT) {
-			return err
-		}
-		return unix.Renameat(int(oldDir.Fd()), oldName, int(newDir.Fd()), newName)
+		return errRenameNoReplaceUnsupported
 	}
 
-	if err := unix.Linkat(int(oldDir.Fd()), oldName, int(newDir.Fd()), newName, 0); err != nil {
+	if err := linkAt(oldDir, oldName, newDir, newName); err != nil {
 		return err
 	}
 
@@ -175,7 +203,7 @@ func createPrivateDirAtWithOpen(
 		_ = removeDirAt(dir, name, created)
 		return nil, err
 	}
-	if !samePathIdentity(created, opened) {
+	if !sameCreationIdentity(created, opened) {
 		_ = privateDir.Close()
 		_ = removeDirAt(dir, name, created)
 		return nil, fmt.Errorf("quarantine directory changed between creation and open")
@@ -220,8 +248,30 @@ func removeDirAt(dir *os.File, name string, expected pathIdentity) error {
 	if err != nil {
 		return err
 	}
-	if !samePathIdentity(current, expected) {
+	if !sameCreationIdentity(current, expected) {
 		return fmt.Errorf("quarantine directory changed before removal")
 	}
 	return unix.Unlinkat(int(dir.Fd()), name, unix.AT_REMOVEDIR)
+}
+
+func closeAndRemoveSocketQuarantine(parent, quarantine *os.File, name string) error {
+	opened, err := pathIdentityForFile(quarantine)
+	if err != nil {
+		_ = quarantine.Close()
+		return err
+	}
+	current, err := pathIdentityAt(parent, name)
+	if err != nil {
+		_ = quarantine.Close()
+		return err
+	}
+	if !sameCreationIdentity(opened, current) {
+		_ = quarantine.Close()
+		return fmt.Errorf("quarantine directory changed before removal")
+	}
+	if err := unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR); err != nil {
+		_ = quarantine.Close()
+		return err
+	}
+	return quarantine.Close()
 }

@@ -3,6 +3,7 @@
 package supervisor
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -11,6 +12,50 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
+
+func TestCreatePrivateDirAtRejectsReusedDirectoryIdentity(t *testing.T) {
+	parentPath := t.TempDir()
+	parent, err := os.Open(parentPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, parent.Close()) })
+
+	const quarantineName = "quarantine"
+	quarantinePath := filepath.Join(parentPath, quarantineName)
+	var reused bool
+	quarantine, err := createPrivateDirAtWithOpen(
+		parent,
+		quarantineName,
+		func(dir *os.File, name string) (*os.File, error) {
+			created, inspectErr := pathIdentityAt(dir, name)
+			require.NoError(t, inspectErr)
+			require.NoError(t, os.Remove(quarantinePath))
+			for range 1000 {
+				require.NoError(t, os.Mkdir(quarantinePath, 0700))
+				replacement, replacementErr := pathIdentityAt(dir, name)
+				require.NoError(t, replacementErr)
+				if samePathIdentity(created, replacement) {
+					reused = true
+					break
+				}
+				require.NoError(t, os.Remove(quarantinePath))
+			}
+			if !reused {
+				return nil, errors.New("filesystem did not reuse the directory identity")
+			}
+			return openPrivateDirAt(dir, name)
+		},
+	)
+	if quarantine != nil {
+		require.NoError(t, quarantine.Close())
+	}
+	if !reused {
+		t.Skip("filesystem did not reuse the directory identity")
+	}
+	require.ErrorContains(t, err, "changed between creation and open")
+	info, err := os.Stat(quarantinePath)
+	require.NoError(t, err)
+	require.True(t, info.IsDir())
+}
 
 func TestRemoveExistingUnixSocketProtectsQuarantineFromNameExchange(t *testing.T) {
 	dir := t.TempDir()

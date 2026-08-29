@@ -192,7 +192,10 @@ func removeExistingUnixSocket(path string) error {
 	return removeExistingUnixSocketWithMove(path, moveToQuarantineAt)
 }
 
-const quarantinedSocketName = "socket"
+const (
+	quarantinedSocketName = "socket"
+	pinnedSocketName      = "selected"
+)
 
 func removeExistingUnixSocketWithMove(
 	path string,
@@ -236,8 +239,25 @@ func removeExistingUnixSocketWithMove(
 	}
 	defer quarantine.Close()
 
-	if err := movePath(parent, name, quarantine, quarantinedSocketName); err != nil {
+	selected, err = pinSocketAt(parent, name, quarantine, pinnedSocketName)
+	if err != nil {
 		if cleanupErr := closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName); cleanupErr != nil {
+			return fmt.Errorf("pin unix socket path %q: %w; remove quarantine directory: %v", path, err, cleanupErr)
+		}
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("pin unix socket path %q: %w", path, err)
+	}
+	if !selected.isSocket() {
+		if cleanupErr := removePinnedSocketQuarantine(parent, quarantine, quarantineName, selected); cleanupErr != nil {
+			return fmt.Errorf("unix socket path %q is not a socket; remove quarantine directory: %v", path, cleanupErr)
+		}
+		return fmt.Errorf("unix socket path %q is not a socket", path)
+	}
+
+	if err := movePath(parent, name, quarantine, quarantinedSocketName); err != nil {
+		if cleanupErr := removePinnedSocketQuarantine(parent, quarantine, quarantineName, selected); cleanupErr != nil {
 			return fmt.Errorf("move unix socket path %q: %w; remove quarantine directory: %v", path, err, cleanupErr)
 		}
 		if os.IsNotExist(err) {
@@ -254,7 +274,7 @@ func removeExistingUnixSocketWithMove(
 		if err := removeAt(quarantine, quarantinedSocketName, moved); err != nil {
 			return fmt.Errorf("remove moved unix socket path %q: %w", path, err)
 		}
-		if err := closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName); err != nil {
+		if err := removePinnedSocketQuarantine(parent, quarantine, quarantineName, selected); err != nil {
 			return fmt.Errorf("remove quarantine directory for unix socket path %q: %w", path, err)
 		}
 		return nil
@@ -271,21 +291,25 @@ func removeExistingUnixSocketWithMove(
 			err,
 		)
 	}
-	if err := closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName); err != nil {
+	if err := removePinnedSocketQuarantine(parent, quarantine, quarantineName, selected); err != nil {
 		return fmt.Errorf("remove quarantine directory for changed unix socket path %q: %w", path, err)
 	}
-	return fmt.Errorf("unix socket path %q changed during preparation and is not a socket", path)
+	if !moved.isSocket() {
+		return fmt.Errorf("unix socket path %q changed during preparation and is not a socket", path)
+	}
+	return fmt.Errorf("unix socket path %q changed during preparation", path)
 }
 
-func closeAndRemoveSocketQuarantine(parent, quarantine *os.File, name string) error {
-	identity, err := pathIdentityForFile(quarantine)
-	if err != nil {
+func removePinnedSocketQuarantine(
+	parent *os.File,
+	quarantine *os.File,
+	quarantineName string,
+	selected pathIdentity,
+) error {
+	if err := unpinSocketAt(quarantine, pinnedSocketName, selected); err != nil {
 		return err
 	}
-	if err := quarantine.Close(); err != nil {
-		return err
-	}
-	return removeDirAt(parent, name, identity)
+	return closeAndRemoveSocketQuarantine(parent, quarantine, quarantineName)
 }
 
 func newSocketQuarantineName() (string, error) {

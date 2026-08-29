@@ -36,6 +36,14 @@ func (identity pathIdentity) isSocket() bool {
 	return identity.info.Mode()&os.ModeSocket != 0
 }
 
+func pinSocketAt(oldDir *os.File, oldName string, _ *os.File, _ string) (pathIdentity, error) {
+	return pathIdentityAt(oldDir, oldName)
+}
+
+func unpinSocketAt(_ *os.File, _ string, _ pathIdentity) error {
+	return nil
+}
+
 func renameNoReplaceEntryAt(
 	oldDir *os.File,
 	oldName string,
@@ -110,4 +118,15 @@ func removeDirAt(dir *os.File, name string, expected pathIdentity) error {
 		return fmt.Errorf("quarantine directory changed before removal")
 	}
 	return os.Remove(filepath.Join(dir.Name(), name))
+}
+
+func closeAndRemoveSocketQuarantine(parent, quarantine *os.File, name string) error {
+	identity, err := pathIdentityForFile(quarantine)
+	if err != nil {
+		return err
+	}
+	if err := quarantine.Close(); err != nil {
+		return err
+	}
+	return removeDirAt(parent, name, identity)
 }

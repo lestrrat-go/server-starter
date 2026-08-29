@@ -39,6 +39,14 @@ func (identity pathIdentity) isSocket() bool {
 	return identity.info.Mode()&os.ModeSocket != 0
 }
 
+func pinSocketAt(oldDir *os.File, oldName string, _ *os.File, _ string) (pathIdentity, error) {
+	return pathIdentityAt(oldDir, oldName)
+}
+
+func unpinSocketAt(_ *os.File, _ string, _ pathIdentity) error {
+	return nil
+}
+
 type fileRenameInformation struct {
 	replaceIfExists uint32
 	rootDirectory   windows.Handle
@@ -171,6 +179,17 @@ func createPrivateDirAt(dir *os.File, name string) (*os.File, error) {
 
 func removeDirAt(dir *os.File, name string, expected pathIdentity) error {
 	return removeExpectedPath(filepath.Join(dir.Name(), name), expected)
+}
+
+func closeAndRemoveSocketQuarantine(parent, quarantine *os.File, name string) error {
+	identity, err := pathIdentityForFile(quarantine)
+	if err != nil {
+		return err
+	}
+	if err := quarantine.Close(); err != nil {
+		return err
+	}
+	return removeDirAt(parent, name, identity)
 }
 
 func removeExpectedPath(path string, expected pathIdentity) error {
