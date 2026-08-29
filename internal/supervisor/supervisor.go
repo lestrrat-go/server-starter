@@ -25,8 +25,9 @@ const defaultShutdownGracePeriod = 5 * time.Second
 type runState struct {
 	cfg *Starter
 
-	pidFile   *statefile.PIDFile
-	listeners []listener
+	pidFile     *statefile.PIDFile
+	listeners   []listener
+	descriptors []int
 
 	generation int
 
@@ -55,6 +56,25 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 		cfg:       s,
 		listeners: make([]listener, 0, len(s.ports)+len(s.paths)),
 	}
+	targets := make([]portTarget, 0, len(s.ports))
+	requestedDescriptors := make([]int, 0, len(s.ports)+len(s.paths))
+	for _, addr := range s.ports {
+		target, err := parsePortTarget(addr)
+		if err != nil {
+			fmt.Fprintf(s.stderr, "failed to parse addr spec '%s': %s", addr, err)
+			return nil, err
+		}
+		targets = append(targets, target)
+		requestedDescriptors = append(requestedDescriptors, target.fd)
+	}
+	for range s.paths {
+		requestedDescriptors = append(requestedDescriptors, -1)
+	}
+	descriptors, err := assignListenerDescriptors(requestedDescriptors)
+	if err != nil {
+		return nil, err
+	}
+	rs.descriptors = descriptors
 
 	// Setup can fail partway through (e.g. the second of three listeners
 	// refuses to bind). Until the loop goroutine takes ownership, this
@@ -78,23 +98,7 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 		rs.pidFile = f
 	}
 
-	requestedFDs := make(map[int]struct{})
-	for _, addr := range s.ports {
-		target, err := parsePortTarget(addr)
-		if err != nil {
-			fmt.Fprintf(s.stderr, "failed to parse addr spec '%s': %s", addr, err)
-			return nil, err
-		}
-		if target.fd >= 0 {
-			if target.fd < 3 {
-				return nil, fmt.Errorf("listener descriptor %d conflicts with standard streams", target.fd)
-			}
-			if _, ok := requestedFDs[target.fd]; ok {
-				return nil, fmt.Errorf("listener descriptor %d is specified more than once", target.fd)
-			}
-			requestedFDs[target.fd] = struct{}{}
-		}
-
+	for _, target := range targets {
 		var l net.Listener
 		var pc net.PacketConn
 		if strings.HasPrefix(target.network, "udp") {
@@ -111,7 +115,6 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 		rs.listeners = append(rs.listeners, listener{
 			listener: l,
 			packet:   pc,
-			fd:       target.fd,
 			network:  target.network,
 			host:     target.host,
 			port:     target.port,

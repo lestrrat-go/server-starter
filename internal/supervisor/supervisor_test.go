@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -10,6 +11,21 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestRunRejectsSparseDescriptorLayout(t *testing.T) {
+	command, err := os.Executable()
+	require.NoError(t, err)
+
+	sd, err := NewStarter(&config{
+		command: command,
+		ports:   []string{fmt.Sprintf("0=%d", maxSparseListenerFDSlots+4)},
+	})
+	require.NoError(t, err)
+
+	ctrl, err := sd.Run(context.Background())
+	require.Nil(t, ctrl)
+	require.ErrorContains(t, err, fmt.Sprintf("maximum is %d", maxSparseListenerFDSlots))
+}
 
 func TestTeardownRemovesUnixSocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.sock")

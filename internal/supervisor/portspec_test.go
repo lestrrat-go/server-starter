@@ -1,7 +1,10 @@
 package supervisor
 
 import (
+	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestParsePortTarget(t *testing.T) {
@@ -24,4 +27,33 @@ func TestParsePortTarget(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParsePortTargetRejectsDescriptorAboveLimit(t *testing.T) {
+	_, err := parsePortTarget(fmt.Sprintf("8080=%d", maxInheritedListenerFD+1))
+	require.ErrorContains(t, err, fmt.Sprintf("exceeds maximum %d", maxInheritedListenerFD))
+}
+
+func TestAssignListenerDescriptors(t *testing.T) {
+	t.Run("fills automatic descriptors around explicit descriptors", func(t *testing.T) {
+		descriptors, err := assignListenerDescriptors([]int{-1, 5, -1})
+		require.NoError(t, err)
+		require.Equal(t, []int{3, 5, 4}, descriptors)
+	})
+
+	t.Run("accepts the sparse padding boundary", func(t *testing.T) {
+		descriptors, err := assignListenerDescriptors([]int{maxSparseListenerFDSlots + 3})
+		require.NoError(t, err)
+		require.Equal(t, []int{maxSparseListenerFDSlots + 3}, descriptors)
+	})
+
+	t.Run("rejects excessive sparse padding", func(t *testing.T) {
+		_, err := assignListenerDescriptors([]int{maxSparseListenerFDSlots + 4})
+		require.ErrorContains(t, err, fmt.Sprintf("maximum is %d", maxSparseListenerFDSlots))
+	})
+
+	t.Run("rejects duplicate explicit descriptors", func(t *testing.T) {
+		_, err := assignListenerDescriptors([]int{3, 3})
+		require.ErrorContains(t, err, "specified more than once")
+	})
 }

@@ -112,29 +112,7 @@ func (rs *runState) startWorker(
 		// This whole section here basically sets up the env
 		// var and the file descriptors that are inherited by the
 		// external process
-		descriptors := make([]int, len(rs.listeners))
-		used := make(map[int]struct{}, len(rs.listeners))
-		for i, l := range rs.listeners {
-			if l.fd >= 0 {
-				descriptors[i] = l.fd
-				used[l.fd] = struct{}{}
-			}
-		}
-		nextFD := 3
-		for i := range descriptors {
-			if descriptors[i] != 0 {
-				continue
-			}
-			for {
-				if _, ok := used[nextFD]; !ok {
-					descriptors[i] = nextFD
-					used[nextFD] = struct{}{}
-					nextFD++
-					break
-				}
-				nextFD++
-			}
-		}
+		descriptors := rs.descriptors
 		maxFD := 2
 		for _, fd := range descriptors {
 			if fd > maxFD {
