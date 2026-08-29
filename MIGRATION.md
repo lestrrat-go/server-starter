@@ -18,13 +18,12 @@ gone; everything it exported now lives at the module root, in package
 | v0 | v2 |
 |---|---|
 | `listener.ListenAll()` | `starter.ListenAll()` |
-| `listener.ListenPacketAll()` | `starter.ListenPacketAll()` |
 | `listener.Ports()` returning `[]Listener` | `starter.Ports()` returning `List` |
 | `listener.GetPortsSpecification()` | removed; read `os.Getenv(starter.PortEnvName)` |
 | `listener.ServerStarterEnvVarName` | `starter.PortEnvName` |
 | `listener.ErrNoListeningTarget` | `starter.ErrNoListeningTarget` |
 | `listener.Listener` / `List` / `TCPListener` / `UnixListener` | same names, module root |
-| — | new: `UDPListener`, `ParsePorts`, `FormatPorts`, `NewTCPListener`, `NewUDPListener`, `NewUnixListener`, `Generation`, `GenerationEnvName`, `IsUnderStartServer` |
+| — | new: `UDPListener`, `ListenPacketAll`, `ParsePorts`, `FormatPorts`, `NewTCPListener`, `NewUDPListener`, `NewUnixListener`, `Generation`, `GenerationEnvName`, `IsUnderStartServer` |
 
 `GenerationEnvName` names the environment variable that carries the worker
 generation. Use `starter.GenerationEnvName` instead of spelling
