@@ -26,8 +26,8 @@ By using ```start_server``` it is much easier to write a hot-deployable server. 
 When `--daemonize` is used on Unix, the launching process waits until the first
 worker passes its startup check. Startup failures are returned to the launcher,
 and the daemon shuts down its worker before reporting cancellation or a lost
-readiness connection. The regular foreground supervisor keeps retrying workers
-that fail to start.
+readiness connection. The regular foreground supervisor retries transient
+worker launch errors. Terminal launch errors stop its lifecycle immediately.
 
 Many PSGI servers support this. If you want your Go program to support it,
 import the root of this module (`github.com/lestrrat-go/server-starter/v2`, see
