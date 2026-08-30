@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux
 
 package supervisor
 
@@ -22,6 +22,8 @@ type unixSocketQuarantine struct {
 	dirStat    unix.Stat_t
 	sourceFD   int
 	sourceStat unix.Stat_t
+	entryFD    int
+	entryStat  unix.Stat_t
 	hooks      socketCleanupHooks
 }
 
@@ -38,6 +40,16 @@ func newSocketQuarantine(
 	if err != nil {
 		return nil, err
 	}
+	return newSocketQuarantineAt(parentFD, parentPath, sourceName, configuredPaths, hooks)
+}
+
+func newSocketQuarantineAt(
+	parentFD int,
+	parentPath string,
+	sourceName string,
+	configuredPaths *configuredSocketPathSet,
+	hooks socketCleanupHooks,
+) (socketQuarantine, error) {
 	var parentStat unix.Stat_t
 	if err := unix.Fstat(parentFD, &parentStat); err != nil {
 		_ = unix.Close(parentFD)
@@ -91,6 +103,7 @@ func newSocketQuarantine(
 		sourceName: sourceName,
 		sourceFD:   sourceFD,
 		sourceStat: sourceStat,
+		entryFD:    -1,
 		hooks:      hooks,
 	}
 	if err := unix.Fstat(dirFD, &quarantine.dirStat); err != nil {
@@ -116,6 +129,27 @@ func newSocketQuarantine(
 	return quarantine, nil
 }
 
+func removeOwnedUnixSocketAt(
+	parentFD int,
+	parentPath string,
+	sourceName string,
+	path string,
+	configuredPaths *configuredSocketPathSet,
+	identity socketIdentity,
+) error {
+	quarantine, err := newSocketQuarantineAt(
+		parentFD,
+		parentPath,
+		sourceName,
+		configuredPaths,
+		socketCleanupHooks{},
+	)
+	if err != nil {
+		return fmt.Errorf("prepare owned unix socket quarantine for %q: %w", path, err)
+	}
+	return removeOwnedUnixSocketFromQuarantine(quarantine, path, identity)
+}
+
 func socketDirectoryIdentityForPath(path string) (socketDirectoryIdentity, error) {
 	var stat unix.Stat_t
 	if err := unix.Stat(path, &stat); err != nil {
@@ -133,13 +167,11 @@ func socketIdentityForPath(path string) (socketIdentity, error) {
 }
 
 func socketIdentityFromStat(stat *unix.Stat_t) socketIdentity {
-	//nolint:unconvert // Darwin represents Stat_t.Dev as int32.
-	return socketIdentity{device: uint64(stat.Dev), inode: stat.Ino}
+	return socketIdentity{device: stat.Dev, inode: stat.Ino}
 }
 
 func socketDirectoryIdentityFromStat(stat *unix.Stat_t) socketDirectoryIdentity {
-	//nolint:unconvert // Darwin represents Stat_t.Dev as int32.
-	return socketDirectoryIdentity{device: uint64(stat.Dev), inode: stat.Ino}
+	return socketDirectoryIdentity{device: stat.Dev, inode: stat.Ino}
 }
 
 func ensureQuarantineDir(parentFD int, dirName string) (bool, unix.Stat_t, error) {
@@ -177,12 +209,45 @@ func (q *unixSocketQuarantine) moveIn() error {
 	if q.sourceFD < 0 {
 		return errSocketSourceUnavailable
 	}
-	return renameSocketEntryNoReplace(q.parentFD, q.sourceName, q.dirFD, q.slotName)
+	entryFD, err := openQuarantineSource(q.parentFD, q.sourceName)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return errSocketSourceUnavailable
+		}
+		return err
+	}
+	var entryStat unix.Stat_t
+	if err := unix.Fstat(entryFD, &entryStat); err != nil {
+		_ = unix.Close(entryFD)
+		return err
+	}
+	if entryStat.Mode&unix.S_IFMT != unix.S_IFSOCK {
+		_ = unix.Close(entryFD)
+		return errSocketSourceNotSocket
+	}
+	if err := renameSocketEntryNoReplace(q.parentFD, q.sourceName, q.dirFD, q.slotName); err != nil {
+		_ = unix.Close(entryFD)
+		return err
+	}
+	q.entryFD = entryFD
+	q.entryStat = entryStat
+
+	var movedStat unix.Stat_t
+	if err := unix.Fstatat(q.dirFD, q.slotName, &movedStat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if sameUnixIdentity(&entryStat, &movedStat) {
+		return nil
+	}
+	if restoreErr := q.restore(); restoreErr != nil {
+		return fmt.Errorf("unix socket path changed during quarantine: restore retained entry: %w", restoreErr)
+	}
+	return errSocketSourceChanged
 }
 
 func (q *unixSocketQuarantine) entryIsSocket() (bool, error) {
 	var stat unix.Stat_t
-	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := unix.Fstat(q.entryFD, &stat); err != nil {
 		return false, err
 	}
 	if !sameUnixIdentity(&q.sourceStat, &stat) {
@@ -193,7 +258,7 @@ func (q *unixSocketQuarantine) entryIsSocket() (bool, error) {
 
 func (q *unixSocketQuarantine) entryMatchesIdentity(identity socketIdentity) (bool, error) {
 	var stat unix.Stat_t
-	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := unix.Fstat(q.entryFD, &stat); err != nil {
 		return false, err
 	}
 	if !sameUnixIdentity(&q.sourceStat, &stat) {
@@ -203,25 +268,20 @@ func (q *unixSocketQuarantine) entryMatchesIdentity(identity socketIdentity) (bo
 }
 
 func (q *unixSocketQuarantine) restore() error {
-	var stat unix.Stat_t
-	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if q.entryFD < 0 {
+		return errSocketSourceUnavailable
+	}
+	if err := linkSocketFDNoReplace(q.entryFD, q.parentFD, q.sourceName); err != nil {
 		return err
 	}
-	if !sameUnixIdentity(&q.sourceStat, &stat) {
-		return fmt.Errorf("quarantined unix socket changed before restore")
-	}
-	return renameSocketEntryNoReplace(q.dirFD, q.slotName, q.parentFD, q.sourceName)
-}
-
-func (q *unixSocketQuarantine) removeEntry() error {
-	var stat unix.Stat_t
-	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	var restoredStat unix.Stat_t
+	if err := unix.Fstatat(q.parentFD, q.sourceName, &restoredStat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
-	if !sameUnixIdentity(&q.sourceStat, &stat) {
-		return fmt.Errorf("quarantined unix socket changed before removal")
+	if !sameUnixIdentity(&q.entryStat, &restoredStat) {
+		return fmt.Errorf("restored unix socket changed after publication")
 	}
-	return unix.Unlinkat(q.dirFD, q.slotName, 0)
+	return nil
 }
 
 func (q *unixSocketQuarantine) retainEntry() error {
@@ -229,7 +289,7 @@ func (q *unixSocketQuarantine) retainEntry() error {
 	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
-	if !sameUnixIdentity(&q.sourceStat, &stat) {
+	if !sameUnixIdentity(&q.entryStat, &stat) {
 		return fmt.Errorf("quarantined unix socket changed before retention")
 	}
 	if q.hooks.afterRetentionIdentityCheck != nil {
@@ -257,6 +317,9 @@ func (q *unixSocketQuarantine) cleanup() error {
 func (q *unixSocketQuarantine) close() {
 	_ = unix.Close(q.dirFD)
 	_ = unix.Close(q.parentFD)
+	if q.entryFD >= 0 {
+		_ = unix.Close(q.entryFD)
+	}
 	if q.sourceFD >= 0 {
 		_ = unix.Close(q.sourceFD)
 	}

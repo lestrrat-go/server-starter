@@ -17,12 +17,13 @@ var errSocketSourceUnavailable = errors.New("unix socket path was not present wh
 
 var errSocketSourceChanged = errors.New("unix socket path changed before quarantine")
 
+var errSocketSourceNotSocket = errors.New("unix socket path is not a socket")
+
 type socketQuarantine interface {
 	moveIn() error
 	entryIsSocket() (bool, error)
 	entryMatchesIdentity(socketIdentity) (bool, error)
 	restore() error
-	removeEntry() error
 	retainEntry() error
 	cleanup() error
 	close()
@@ -32,6 +33,13 @@ type socketQuarantine interface {
 type socketIdentity struct {
 	device uint64
 	inode  uint64
+}
+
+type socketCleanupState struct {
+	parentFD   int
+	parentPath string
+	publicName string
+	identity   socketIdentity
 }
 
 type socketDirectoryIdentity struct {

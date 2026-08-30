@@ -1,4 +1,4 @@
-//go:build !linux && !darwin
+//go:build !linux
 
 package supervisor
 
@@ -13,6 +13,6 @@ func listenFilesystemUnixSocket(
 	context.Context,
 	string,
 	socketPublicationHooks,
-) (net.Listener, socketIdentity, error) {
-	return nil, socketIdentity{}, errSafeSocketCleanupUnavailable
+) (net.Listener, *socketCleanupState, error) {
+	return nil, nil, errSafeSocketCleanupUnavailable
 }

@@ -39,13 +39,15 @@ func TestTeardownRemovesOwnedUnixSocket(t *testing.T) {
 	l.(*net.UnixListener).SetUnlinkOnClose(false)
 	identity, err := socketIdentityForPath(path)
 	require.NoError(t, err)
+	cleanup, err := socketCleanupStateForPath(path, identity)
+	require.NoError(t, err)
 	rs := &runState{
 		cfg: &Starter{paths: []string{path}},
 		listeners: []listener{{
-			listener:       l,
-			network:        unixNetwork,
-			path:           path,
-			socketIdentity: &identity,
+			listener:      l,
+			network:       unixNetwork,
+			path:          path,
+			socketCleanup: cleanup,
 		}},
 	}
 	rs.teardown()
@@ -76,14 +78,16 @@ func TestTeardownPreservesUnixSocketPathReplacement(t *testing.T) {
 	bound.(*net.UnixListener).SetUnlinkOnClose(false)
 	identity, err := socketIdentityForPath(path)
 	require.NoError(t, err)
+	cleanup, err := socketCleanupStateForPath(path, identity)
+	require.NoError(t, err)
 
 	rs := &runState{
 		cfg: &Starter{paths: []string{path}},
 		listeners: []listener{{
-			listener:       &replacementOnCloseListener{Listener: bound, path: path},
-			network:        unixNetwork,
-			path:           path,
-			socketIdentity: &identity,
+			listener:      &replacementOnCloseListener{Listener: bound, path: path},
+			network:       unixNetwork,
+			path:          path,
+			socketCleanup: cleanup,
 		}},
 	}
 	rs.teardown()
@@ -94,6 +98,36 @@ func TestTeardownPreservesUnixSocketPathReplacement(t *testing.T) {
 	info, err := os.Lstat(path + ".owned")
 	require.NoError(t, err)
 	require.NotZero(t, info.Mode()&os.ModeSocket)
+}
+
+func TestTeardownUsesRetainedUnixSocketParent(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	realParent := t.TempDir()
+	aliasParent := filepath.Join(t.TempDir(), "alias")
+	require.NoError(t, os.Symlink(realParent, aliasParent))
+	path := filepath.Join(aliasParent, "listener.sock")
+	command, args := testWorkerCommand(t)
+	starter, err := NewStarter(&config{
+		command:   command,
+		args:      args,
+		paths:     []string{path},
+		sigonterm: signalNameKill,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctrl, err := starter.Run(ctx)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(aliasParent))
+	replacementParent := t.TempDir()
+	require.NoError(t, os.Symlink(replacementParent, aliasParent))
+	cancel()
+	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+
+	_, err = os.Lstat(filepath.Join(realParent, "listener.sock"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Lstat(filepath.Join(replacementParent, "listener.sock"))
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 // TestRunErrServerClosed proves that cancelling the context passed to Run

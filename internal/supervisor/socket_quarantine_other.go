@@ -1,4 +1,4 @@
-//go:build !darwin && !linux
+//go:build !linux
 
 package supervisor
 
@@ -17,3 +17,13 @@ func socketIdentityForPath(string) (socketIdentity, error) {
 func safeSocketQuarantineAvailable() bool {
 	return false
 }
+
+func socketCleanupStateForPath(string, socketIdentity) (*socketCleanupState, error) {
+	return nil, errSafeSocketCleanupUnavailable
+}
+
+func (s *socketCleanupState) remove(*configuredSocketPathSet) error {
+	return nil
+}
+
+func (s *socketCleanupState) close() {}

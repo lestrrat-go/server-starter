@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux
 
 package supervisor
 
@@ -45,7 +45,7 @@ func TestListenFilesystemUnixSocketPublishesFromRetainedPrivateDirectory(t *test
 	var replacementPath string
 	var lc net.ListenConfig
 
-	listener, identity, err := listenFilesystemUnixSocket(
+	listener, cleanup, err := listenFilesystemUnixSocket(
 		context.Background(),
 		publicPath,
 		socketPublicationHooks{beforePublish: func(string) error {
@@ -71,15 +71,63 @@ func TestListenFilesystemUnixSocketPublishesFromRetainedPrivateDirectory(t *test
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, listener.Close())
+		cleanup.close()
 		require.NoError(t, replacementListener.Close())
 	})
 
 	publishedIdentity, err := socketIdentityForPath(publicPath)
 	require.NoError(t, err)
-	require.Equal(t, identity, publishedIdentity)
+	require.Equal(t, cleanup.identity, publishedIdentity)
 	replacementIdentity, err := socketIdentityForPath(replacementPath)
 	require.NoError(t, err)
-	require.NotEqual(t, identity, replacementIdentity)
+	require.NotEqual(t, cleanup.identity, replacementIdentity)
+}
+
+func TestListenFilesystemUnixSocketPublishesRetainedSocketAfterNameReplacement(t *testing.T) {
+	parent := t.TempDir()
+	publicPath := filepath.Join(parent, "listener.sock")
+	var ownedPath string
+	var replacementPath string
+	var replacementListener net.Listener
+	var lc net.ListenConfig
+
+	listener, cleanup, err := listenFilesystemUnixSocket(
+		context.Background(),
+		publicPath,
+		socketPublicationHooks{beforePublish: func(string) error {
+			entries, readErr := os.ReadDir(parent)
+			if readErr != nil {
+				return readErr
+			}
+			if len(entries) != 1 {
+				return fmt.Errorf("private directory count is %d, want 1", len(entries))
+			}
+			privateDirectory := filepath.Join(parent, entries[0].Name())
+			replacementPath = filepath.Join(privateDirectory, "s")
+			ownedPath = replacementPath + ".owned"
+			if renameErr := os.Rename(replacementPath, ownedPath); renameErr != nil {
+				return renameErr
+			}
+			replacementListener, readErr = lc.Listen(context.Background(), unixNetwork, replacementPath)
+			return readErr
+		}},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, listener.Close())
+		cleanup.close()
+		require.NoError(t, replacementListener.Close())
+	})
+
+	publishedIdentity, err := socketIdentityForPath(publicPath)
+	require.NoError(t, err)
+	require.Equal(t, cleanup.identity, publishedIdentity)
+	ownedIdentity, err := socketIdentityForPath(ownedPath)
+	require.NoError(t, err)
+	require.Equal(t, cleanup.identity, ownedIdentity)
+	replacementIdentity, err := socketIdentityForPath(replacementPath)
+	require.NoError(t, err)
+	require.NotEqual(t, cleanup.identity, replacementIdentity)
 }
 
 func TestListenFilesystemUnixSocketAcceptsNearLimitPublicPath(t *testing.T) {
@@ -97,9 +145,10 @@ func TestListenFilesystemUnixSocketAcceptsNearLimitPublicPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, directListener.Close())
 
-	listener, _, err := listenFilesystemUnixSocket(context.Background(), publicPath, socketPublicationHooks{})
+	listener, cleanup, err := listenFilesystemUnixSocket(context.Background(), publicPath, socketPublicationHooks{})
 	require.NoError(t, err)
 	require.NoError(t, listener.Close())
+	cleanup.close()
 }
 
 func TestListenFilesystemUnixSocketRejectsChangedPrivateSocket(t *testing.T) {
@@ -132,6 +181,33 @@ func TestListenFilesystemUnixSocketRejectsChangedPrivateSocket(t *testing.T) {
 	require.NoFileExists(t, publicPath)
 	require.NotNil(t, replacementListener)
 	require.NoError(t, replacementListener.Close())
+}
+
+func TestListenFilesystemUnixSocketRetainsPrivateDirectoryReplacement(t *testing.T) {
+	parent := t.TempDir()
+	publicPath := filepath.Join(parent, "listener.sock")
+	var originalDirectory string
+	var replacementDirectory string
+
+	listener, cleanup, err := listenFilesystemUnixSocket(
+		context.Background(),
+		publicPath,
+		socketPublicationHooks{afterPrivateDirectoryIdentityCheck: func(privateName string) {
+			originalDirectory = filepath.Join(parent, privateName+".retained")
+			replacementDirectory = filepath.Join(parent, privateName)
+			require.NoError(t, os.Rename(replacementDirectory, originalDirectory))
+			require.NoError(t, os.Mkdir(replacementDirectory, 0o700))
+		}},
+	)
+	require.NoError(t, err)
+	require.NoError(t, listener.Close())
+	cleanup.close()
+
+	for _, directory := range []string{originalDirectory, replacementDirectory} {
+		info, statErr := os.Stat(directory)
+		require.NoError(t, statErr)
+		require.True(t, info.IsDir())
+	}
 }
 
 func TestRunCapturesUnixSocketIdentityBeforePublication(t *testing.T) {
