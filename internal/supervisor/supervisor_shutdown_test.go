@@ -77,6 +77,45 @@ func TestShutdownForcesStubbornWorkerAndCompletesTeardown(t *testing.T) {
 	require.ErrorIs(t, waitErr, syscall.ECHILD)
 }
 
+func TestShutdownPreservesReplacementAtUnixSocketPath(t *testing.T) {
+	dir := t.TempDir()
+	socketPath := filepath.Join(dir, "server.sock")
+	replacement := []byte("replacement contents")
+	command, args := testWorkerCommand(t)
+
+	sd, err := NewStarter(&config{
+		command:   command,
+		args:      args,
+		paths:     []string{socketPath},
+		sigonterm: "KILL",
+		stderr:    io.Discard,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Remove(socketPath))
+	require.NoError(t, os.WriteFile(socketPath, replacement, 0o600))
+	before, err := os.Lstat(socketPath)
+	require.NoError(t, err)
+
+	cancel()
+	select {
+	case <-ctrl.Done():
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out waiting for supervisor shutdown")
+	}
+	require.ErrorIs(t, ctrl.Err(), ErrServerClosed)
+
+	after, err := os.Lstat(socketPath)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(before, after))
+	require.Equal(t, replacement, requireFileContents(t, socketPath))
+}
+
 func TestShutdownStopsWaitingWhenWorkerCannotBeReaped(t *testing.T) {
 	const nonexistentPID = 1 << 30
 	const gracePeriod = 20 * time.Millisecond
@@ -109,4 +148,12 @@ func waitForPath(t *testing.T, path string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", path)
+}
+
+func requireFileContents(t *testing.T, path string) []byte {
+	t.Helper()
+
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return contents
 }

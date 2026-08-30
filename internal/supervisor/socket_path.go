@@ -7,6 +7,13 @@ import (
 	"strings"
 )
 
+func canonicalUnixSocketPath(path string) string {
+	if runtime.GOOS == "linux" && strings.HasPrefix(path, "\x00") {
+		return "@" + strings.TrimPrefix(path, "\x00")
+	}
+	return path
+}
+
 // validateUnixSocketPathAvailable enforces the fail-closed filesystem
 // lifecycle contract. Existing entries are never removed or replaced because
 // a pathname check cannot be bound to the same entry at a later operation.

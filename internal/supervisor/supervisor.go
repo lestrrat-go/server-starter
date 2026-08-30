@@ -87,10 +87,15 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 		return nil, err
 	}
 	rs.descriptors = descriptors
+	paths := make([]string, len(s.paths))
+	for i, path := range s.paths {
+		paths[i] = canonicalUnixSocketPath(path)
+	}
 	// Apply the public wire-format validation before acquiring the pid file or
-	// binding any listener. startWorker applies the same rule when it emits
-	// SERVER_STARTER_PORT.
-	if err := validateListenerWireFormat(targets, s.paths, descriptors); err != nil {
+	// binding any listener. Empty Unix paths are validated after the kernel
+	// chooses their concrete addresses. startWorker applies the same rule when
+	// it emits SERVER_STARTER_PORT.
+	if err := validateListenerWireFormat(targets, paths, descriptors); err != nil {
 		return nil, err
 	}
 
@@ -139,7 +144,7 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 		})
 	}
 
-	for _, path := range s.paths {
+	for i, path := range paths {
 		if err := validateUnixSocketPathAvailable(path); err != nil {
 			fmt.Fprintf(s.stderr, "failed to prepare unix socket file:%s:%s\n", path, err)
 			return nil, err
@@ -158,7 +163,14 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 			// Listen returned; cleanup must never unlink an unrelated entry.
 			ul.SetUnlinkOnClose(false)
 		}
+		if path == "" {
+			path = l.Addr().String()
+			paths[i] = path
+		}
 		rs.listeners = append(rs.listeners, listener{listener: l, network: unixNetwork, path: path})
+	}
+	if err := validateListenerWireFormat(nil, paths, descriptors[len(targets):]); err != nil {
+		return nil, err
 	}
 
 	rs.generation = 0

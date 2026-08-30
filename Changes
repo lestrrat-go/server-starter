@@ -21,6 +21,8 @@ Changes
    - start_server rejects --port address components and --path values
      containing ';' or '=' before binding because SERVER_STARTER_PORT
      reserves those wire delimiters
+   - Linux empty Unix paths use a kernel-generated abstract address, and
+     abstract addresses reach workers in the environment-safe @ spelling
    - UDP targets use an explicit udp:// marker in --port and
      SERVER_STARTER_PORT. The parser keeps unambiguous legacy UDP forms, but
      treats ordinary hostnames beginning with "u" as TCP targets and preserves
