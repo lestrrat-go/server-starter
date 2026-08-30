@@ -9,11 +9,10 @@ import (
 )
 
 // BSD flock and fcntl locks conflict on supported non-Linux Unix systems.
-// New supervisors therefore use only the inspectable record lock, while
-// OpenRunningPID keeps a compatibility path for old flock-only supervisors.
+// Keep the flock lifetime lock so separate opens in one process still contend;
+// lockOwnerPID uses the conflicting record-lock query to identify its owner.
 func lockFile(f *os.File, _ string) error {
-	lock := pidFileRecordLock()
-	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock)
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 }
 
 func lockOwnerPID(f *os.File, _ string) (int, error) {

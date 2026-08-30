@@ -4,6 +4,7 @@ package statefile
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -18,6 +19,25 @@ func TestAcquiredPIDFileCanBeControlled(t *testing.T) {
 
 	running, err := OpenRunningPID(path)
 	require.NoError(t, err)
-	defer running.Close()
 	require.Equal(t, os.Getpid(), running.PID())
+	require.NoError(t, running.Close())
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestPIDFileControlCloseLockHelper$")
+	cmd.Env = append(os.Environ(), pidFileControlCloseHelperEnv+"="+path)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+const pidFileControlCloseHelperEnv = "SERVER_STARTER_PID_FILE_CONTROL_CLOSE_HELPER"
+
+func TestPIDFileControlCloseLockHelper(t *testing.T) {
+	path := os.Getenv(pidFileControlCloseHelperEnv)
+	if path == "" {
+		return
+	}
+	contender, err := Acquire(path)
+	if contender != nil {
+		_ = contender.Close()
+	}
+	require.ErrorIs(t, err, ErrPIDFileLocked)
 }

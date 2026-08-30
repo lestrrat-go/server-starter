@@ -30,14 +30,13 @@ readiness connection. The regular foreground supervisor retries transient
 worker launch errors. Terminal launch errors stop its lifecycle immediately.
 
 On Unix, `--stop` and `--restart` attribute the state-file PID to the live lock
-owner for new record-locked supervisors and Linux legacy flock-only
-supervisors. Linux legacy flock-only control requires readable `/proc/locks`;
-if that file is unavailable or cannot be read, control fails safely without
-signaling the recorded PID. Other Unix systems fail closed for legacy
-flock-only files because their kernels do not expose a portable lock-owner
-query; new supervisors use inspectable record locks. Store the PID file in a
-root-owned or mode-0700 directory that another user cannot replace, and ensure
-no traversed ancestor lets another user replace the next path entry.
+owner. Linux supervisors add an inspectable record lock, while legacy
+flock-only control requires readable `/proc/locks`; if that file is unavailable
+or cannot be read, control fails safely without signaling the recorded PID.
+Supported non-Linux Unix systems retain the flock lifetime lock and identify
+its owner through the kernel's conflicting record-lock query. Store the PID
+file in a root-owned or mode-0700 directory that another user cannot replace,
+and ensure no traversed ancestor lets another user replace the next path entry.
 
 Many PSGI servers support this. If you want your Go program to support it,
 import the root of this module (`github.com/lestrrat-go/server-starter/v2`, see
