@@ -336,7 +336,7 @@ func TestRunDoesNotMutateSupervisorEnvironment(t *testing.T) {
 		args:      args,
 		ports:     testWorkerPorts(),
 		envdir:    envdir,
-		sigonterm: "KILL",
+		sigonterm: killSignalName,
 	})
 	if err != nil {
 		t.Fatalf("failed to create starter: %s", err)

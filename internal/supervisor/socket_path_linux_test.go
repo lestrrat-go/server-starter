@@ -33,7 +33,7 @@ func TestRunSupportsLinuxNonFilesystemUnixAddresses(t *testing.T) {
 				command:   testShellPath,
 				args:      []string{"-c", `printf '%s\n' "$SERVER_STARTER_PORT" > "$1"; exec sleep 30`, "worker", reportPath},
 				paths:     []string{test.path},
-				sigonterm: "KILL",
+				sigonterm: killSignalName,
 				stderr:    io.Discard,
 			})
 			require.NoError(t, err)
@@ -56,7 +56,8 @@ func TestRunSupportsLinuxNonFilesystemUnixAddresses(t *testing.T) {
 			}
 			require.NotContains(t, portSpec, "\x00")
 
-			conn, err := net.DialTimeout(unixNetwork, unixListener.Path, time.Second)
+			dialer := net.Dialer{Timeout: time.Second}
+			conn, err := dialer.DialContext(ctx, unixNetwork, unixListener.Path)
 			require.NoError(t, err)
 			require.NoError(t, conn.Close())
 

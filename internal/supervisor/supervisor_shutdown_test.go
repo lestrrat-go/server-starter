@@ -87,7 +87,7 @@ func TestShutdownPreservesReplacementAtUnixSocketPath(t *testing.T) {
 		command:   command,
 		args:      args,
 		paths:     []string{socketPath},
-		sigonterm: "KILL",
+		sigonterm: killSignalName,
 		stderr:    io.Discard,
 	})
 	require.NoError(t, err)
