@@ -22,6 +22,18 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Require a v2 release-branch tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch origin v2:refs/remotes/origin/v2
+          tag_commit="$(git rev-parse "${TAG}^{commit}")"
+          release_branch_commit="$(git rev-parse origin/v2)"
+          if ! git merge-base --is-ancestor "$tag_commit" "$release_branch_commit"; then
+            echo "tag $TAG must point to a commit on the v2 branch" >&2
+            exit 1
+          fi
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
