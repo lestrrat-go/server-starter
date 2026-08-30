@@ -323,8 +323,3 @@ func closePIDFile(f *os.File, path string) error {
 func TryLock(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
 }
-
-func processIsLive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
