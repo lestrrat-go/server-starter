@@ -29,17 +29,18 @@ func TestRunRejectsSparseDescriptorLayout(t *testing.T) {
 
 const testShellPath = "/bin/sh"
 
-func TestTeardownRemovesUnixSocket(t *testing.T) {
+func TestTeardownRetainsUnixSocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.sock")
 	l, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
 	rs := &runState{cfg: &Starter{}, listeners: []listener{{listener: l, network: unixNetwork, path: path}}}
 	rs.teardown()
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("unix socket path remains, stat error = %v", err)
-	}
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
 }
 
 // TestRunErrServerClosed proves that cancelling the context passed to Run

@@ -66,12 +66,41 @@ func TestShutdownForcesStubbornWorkerAndCompletesTeardown(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(started), sd.shutdownGracePeriod)
 	require.NoFileExists(t, statusPath)
 	require.NoFileExists(t, pidPath)
-	require.NoFileExists(t, socketPath)
+	info, err := os.Lstat(socketPath)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
 
 	var waitStatus syscall.WaitStatus
 	waited, waitErr := syscall.Wait4(workerPID, &waitStatus, syscall.WNOHANG, nil)
 	require.Equal(t, -1, waited)
 	require.ErrorIs(t, waitErr, syscall.ECHILD)
+}
+
+func TestShutdownDoesNotRemoveReplacementUnixSocket(t *testing.T) {
+	dir := t.TempDir()
+	socketPath := filepath.Join(dir, "server.sock")
+	command, args := testWorkerCommand(t)
+	starter, err := NewStarter(&config{
+		command:   command,
+		args:      args,
+		paths:     []string{socketPath},
+		sigonterm: signalNameKill,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctrl, err := starter.Run(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Rename(socketPath, socketPath+".active"))
+	require.NoError(t, os.WriteFile(socketPath, []byte("replacement"), 0o600))
+
+	cancel()
+	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+	contents, err := os.ReadFile(socketPath)
+	require.NoError(t, err)
+	require.Equal(t, []byte("replacement"), contents)
 }
 
 func TestShutdownStopsWaitingWhenWorkerCannotBeReaped(t *testing.T) {

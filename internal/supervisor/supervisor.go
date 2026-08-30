@@ -153,6 +153,13 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 			fmt.Fprintf(s.stderr, "failed to listen file:%s:%s\n", path, err)
 			return nil, err
 		}
+		unixListener, ok := l.(*net.UnixListener)
+		if !ok {
+			_ = l.Close()
+			return nil, fmt.Errorf("listen file %q returned %T, want *net.UnixListener", path, l)
+		}
+		// Keep the bound entry after Close so teardown cannot unlink a replacement installed at the same path.
+		unixListener.SetUnlinkOnClose(false)
 		rs.listeners = append(rs.listeners, listener{listener: l, network: unixNetwork, path: path})
 	}
 
