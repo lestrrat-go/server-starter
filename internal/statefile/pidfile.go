@@ -151,6 +151,9 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 			return nil, closeWithError(fmt.Errorf("pid file %q records process %d, which does not match lock owner %d", path, pid, ownerPID))
 		}
 	} else {
+		if requireLockOwner() {
+			return nil, closeWithError(fmt.Errorf("pid file %q lock owner could not be verified", path))
+		}
 		lockErr := TryLock(f)
 		if lockErr == nil {
 			return nil, closeWithError(fmt.Errorf("pid file %q is not locked by a running supervisor", path))
