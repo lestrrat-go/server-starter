@@ -116,20 +116,6 @@ func readPIDText(f *os.File, data []byte) (int, error) {
 	return int(bytesRead), nil
 }
 
-func lockFile(f *os.File) error {
-	// Start with the legacy exclusive byte-zero lock so old and current
-	// supervisors cannot both acquire the PID file.
-	var overlapped windows.Overlapped
-	return windows.LockFileEx(
-		windows.Handle(f.Fd()),
-		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
-		0,
-		1,
-		0,
-		&overlapped,
-	)
-}
-
 func validatePIDFileLinkCount(f *os.File, path string) error {
 	var handleInfo windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &handleInfo); err != nil {
@@ -176,14 +162,63 @@ func finishPIDFileLock(f *os.File) error {
 	return windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, &overlapped)
 }
 
-func lockUnavailable(err error) bool {
-	return errors.Is(err, windows.ERROR_LOCK_VIOLATION)
+func prepareRunningPIDPath(path string) (*runningPIDPath, error) {
+	return &runningPIDPath{path: path}, nil
 }
 
-// TryLock is used by control.Stop to poll for the supervisor having
-// exited. --stop itself is unsupported on Windows (see signal_windows.go),
-// so this is unreachable in practice; it exists to keep the platform seam
-// symmetric and to fail loudly rather than silently if that ever changes.
-func TryLock(f *os.File) error {
+func (p *runningPIDPath) open() (*os.File, error) {
+	return openPIDFile(p.path)
+}
+
+func (p *runningPIDPath) validate(f *os.File) error {
+	openedInfo, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	pathInfo, err := os.Lstat(p.path)
+	if err != nil {
+		return err
+	}
+	if !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
+		return fmt.Errorf("pid file %q was replaced while being validated", p.path)
+	}
+	return nil
+}
+
+func (*runningPIDPath) close() error {
+	return nil
+}
+
+func lockFile(f *os.File, _ string) error {
+	// Start with the legacy exclusive byte-zero lock so old and current
+	// supervisors cannot both acquire the PID file.
+	var overlapped windows.Overlapped
+	return windows.LockFileEx(
+		windows.Handle(f.Fd()),
+		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
+		0,
+		1,
+		0,
+		&overlapped,
+	)
+}
+
+func TryLock(*os.File) error {
 	return fmt.Errorf("waiting for a stopped process is not supported on windows")
+}
+
+func lockOwnerPID(*os.File, string) (int, error) {
+	return 0, fmt.Errorf("inspecting pid-file lock ownership is not supported on windows")
+}
+
+func lockNoLongerOwnedByPID(*os.File, int) (bool, error) {
+	return false, fmt.Errorf("waiting for a stopped process is not supported on windows")
+}
+
+func processIsLive(int) bool {
+	return false
+}
+
+func lockUnavailable(err error) bool {
+	return errors.Is(err, windows.ERROR_LOCK_VIOLATION)
 }
