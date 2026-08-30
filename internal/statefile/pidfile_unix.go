@@ -97,11 +97,109 @@ func prepareRunningPIDPath(path string) (*runningPIDPath, error) {
 		absPath = workingDirectory + string(os.PathSeparator) + path
 	}
 	parentPath, name := filepath.Split(absPath)
+	if useRootAnchoredDirectoryPath {
+		parent, relativeParent, err := openRootAnchoredDirectoryPath(parentPath, path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open pid file %q parent directory %q: %w", path, parentPath, err)
+		}
+		return &runningPIDPath{path: path, parent: parent, name: filepath.Join(relativeParent, name)}, nil
+	}
 	parent, err := openDirectoryPath(parentPath, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open pid file %q parent directory %q: %w", path, parentPath, err)
 	}
 	return &runningPIDPath{path: path, parent: parent, name: name}, nil
+}
+
+// openRootAnchoredDirectoryPath supports systems without a search-only
+// directory descriptor. It validates every component relative to a retained
+// root descriptor, then uses that descriptor for the final PID-file open.
+// The accepted hierarchy cannot be replaced by an untrusted uid under the
+// validation policy below; root and the effective uid are explicitly trusted.
+func openRootAnchoredDirectoryPath(path, controlPath string) (*os.File, string, error) {
+	directoryFlags := unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	root, err := os.OpenFile(string(os.PathSeparator), directoryFlags, 0)
+	if err != nil {
+		return nil, "", err
+	}
+	components := pathComponents(path)
+	resolved := make([]string, 0, len(components))
+	for _, name := range components {
+		if name == ".." {
+			if len(resolved) > 0 {
+				resolved = resolved[:len(resolved)-1]
+			}
+			continue
+		}
+
+		parentEntry := "."
+		if len(resolved) > 0 {
+			parentEntry = strings.Join(resolved, string(os.PathSeparator))
+		}
+		var parent unix.Stat_t
+		if err := unix.Fstatat(int(root.Fd()), parentEntry, &parent, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			_ = root.Close()
+			return nil, "", err
+		}
+
+		entryParts := append(append([]string(nil), resolved...), name)
+		entryPath := strings.Join(entryParts, string(os.PathSeparator))
+		var entry unix.Stat_t
+		if err := unix.Fstatat(int(root.Fd()), entryPath, &entry, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			_ = root.Close()
+			return nil, "", err
+		}
+		parentMode := uint64(parent.Mode)
+		parentPath := string(os.PathSeparator) + strings.Join(resolved, string(os.PathSeparator))
+		if err := validatePIDControlPathEntryMetadata(
+			parent.Uid,
+			uint32(parentMode&0777),
+			parentMode&unix.S_ISVTX != 0,
+			entry.Uid,
+			controlPath,
+			parentPath,
+		); err != nil {
+			_ = root.Close()
+			return nil, "", err
+		}
+		entryMode := uint64(entry.Mode)
+		if entryMode&unix.S_IFMT == unix.S_IFLNK {
+			_ = root.Close()
+			return nil, "", fmt.Errorf(
+				"pid file %q parent directory %q contains symbolic link component %q",
+				controlPath,
+				path,
+				name,
+			)
+		}
+		if entryMode&unix.S_IFMT != unix.S_IFDIR {
+			_ = root.Close()
+			return nil, "", fmt.Errorf("path component %q is not a directory", name)
+		}
+		resolved = entryParts
+	}
+
+	parentEntry := "."
+	if len(resolved) > 0 {
+		parentEntry = strings.Join(resolved, string(os.PathSeparator))
+	}
+	var parent unix.Stat_t
+	if err := unix.Fstatat(int(root.Fd()), parentEntry, &parent, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		_ = root.Close()
+		return nil, "", err
+	}
+	parentMode := uint64(parent.Mode)
+	parentPath := string(os.PathSeparator) + strings.Join(resolved, string(os.PathSeparator))
+	if err := validatePIDControlDirectoryMetadata(
+		parent.Uid,
+		uint32(parentMode&0777),
+		controlPath,
+		parentPath,
+	); err != nil {
+		_ = root.Close()
+		return nil, "", err
+	}
+	return root, strings.Join(resolved, string(os.PathSeparator)), nil
 }
 
 func openDirectoryPath(path, controlPath string) (*os.File, error) {
@@ -205,18 +303,35 @@ func validatePIDControlPathEntry(parent *os.File, entryUID uint32, path, parentP
 	if err != nil {
 		return fmt.Errorf("failed to inspect pid file %q ancestor directory %q: %w", path, parentPath, err)
 	}
-	trustedUID := uint32(os.Geteuid())
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return fmt.Errorf("failed to inspect owner of pid file %q ancestor directory %q", path, parentPath)
 	}
-	if stat.Uid != 0 && stat.Uid != trustedUID {
-		return fmt.Errorf("pid file %q has untrusted ancestor directory %q owned by uid %d", path, parentPath, stat.Uid)
+	return validatePIDControlPathEntryMetadata(
+		stat.Uid,
+		uint32(info.Mode().Perm()),
+		info.Mode()&os.ModeSticky != 0,
+		entryUID,
+		path,
+		parentPath,
+	)
+}
+
+func validatePIDControlPathEntryMetadata(
+	parentUID uint32,
+	parentPermissions uint32,
+	parentSticky bool,
+	entryUID uint32,
+	path, parentPath string,
+) error {
+	trustedUID := uint32(os.Geteuid())
+	if parentUID != 0 && parentUID != trustedUID {
+		return fmt.Errorf("pid file %q has untrusted ancestor directory %q owned by uid %d", path, parentPath, parentUID)
 	}
-	if info.Mode().Perm()&0022 == 0 {
+	if parentPermissions&0022 == 0 {
 		return nil
 	}
-	if info.Mode()&os.ModeSticky != 0 && (entryUID == 0 || entryUID == trustedUID) {
+	if parentSticky && (entryUID == 0 || entryUID == trustedUID) {
 		return nil
 	}
 	return fmt.Errorf("pid file %q ancestor directory %q allows untrusted replacement", path, parentPath)
@@ -230,15 +345,19 @@ func validatePIDControlDirectory(parent *os.File, path, parentPath string) error
 	if err != nil {
 		return fmt.Errorf("failed to inspect pid file %q parent directory %q: %w", path, parentPath, err)
 	}
-	trustedUID := uint32(os.Geteuid())
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return fmt.Errorf("failed to inspect owner of %q", parentPath)
 	}
-	if stat.Uid != 0 && stat.Uid != trustedUID {
-		return fmt.Errorf("pid file %q has untrusted parent directory %q owned by uid %d", path, parentPath, stat.Uid)
+	return validatePIDControlDirectoryMetadata(stat.Uid, uint32(info.Mode().Perm()), path, parentPath)
+}
+
+func validatePIDControlDirectoryMetadata(parentUID, parentPermissions uint32, path, parentPath string) error {
+	trustedUID := uint32(os.Geteuid())
+	if parentUID != 0 && parentUID != trustedUID {
+		return fmt.Errorf("pid file %q has untrusted parent directory %q owned by uid %d", path, parentPath, parentUID)
 	}
-	if info.Mode().Perm()&0022 != 0 {
+	if parentPermissions&0022 != 0 {
 		return fmt.Errorf("pid file %q parent directory %q allows untrusted replacement", path, parentPath)
 	}
 	return nil

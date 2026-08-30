@@ -1,8 +1,8 @@
-//go:build linux
+//go:build darwin
 
 package statefile
 
 import "golang.org/x/sys/unix"
 
-const directoryAccessFlag = unix.O_PATH
+const directoryAccessFlag = unix.O_EVTONLY
 const useRootAnchoredDirectoryPath = false

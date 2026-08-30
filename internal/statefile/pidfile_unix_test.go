@@ -110,3 +110,51 @@ func TestPrepareRunningPIDPathRejectsReplaceableAncestor(t *testing.T) {
 	require.ErrorContains(t, err, "allows untrusted replacement")
 	require.Nil(t, preparedPath)
 }
+
+func TestRootAnchoredDirectoryPathSupportsExecuteOnlyAncestor(t *testing.T) {
+	dir := t.TempDir()
+	ancestor := filepath.Join(dir, "supervisor")
+	require.NoError(t, os.Mkdir(ancestor, 0700))
+	path := filepath.Join(ancestor, "server.pid")
+	require.NoError(t, os.WriteFile(path, []byte("1\n"), 0600))
+	require.NoError(t, os.Chmod(ancestor, 0100))
+	t.Cleanup(func() { _ = os.Chmod(ancestor, 0700) })
+
+	parent, relativeParent, err := openRootAnchoredDirectoryPath(ancestor, path)
+	require.NoError(t, err)
+	prepared := &runningPIDPath{
+		path:   path,
+		parent: parent,
+		name:   filepath.Join(relativeParent, filepath.Base(path)),
+	}
+	t.Cleanup(func() { _ = prepared.close() })
+
+	f, err := prepared.open()
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+}
+
+func TestRootAnchoredDirectoryPathRejectsSymlinkedAncestor(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	link := filepath.Join(dir, "current")
+	require.NoError(t, os.Mkdir(target, 0700))
+	require.NoError(t, os.Symlink(target, link))
+
+	parent, _, err := openRootAnchoredDirectoryPath(link, filepath.Join(link, "server.pid"))
+	require.ErrorContains(t, err, "contains symbolic link component")
+	require.Nil(t, parent)
+}
+
+func TestRootAnchoredDirectoryPathRejectsReplaceableAncestor(t *testing.T) {
+	dir := t.TempDir()
+	replaceable := filepath.Join(dir, "replaceable")
+	parentPath := filepath.Join(replaceable, "supervisor")
+	require.NoError(t, os.Mkdir(replaceable, 0777))
+	require.NoError(t, os.Chmod(replaceable, 0777))
+	require.NoError(t, os.Mkdir(parentPath, 0700))
+
+	parent, _, err := openRootAnchoredDirectoryPath(parentPath, filepath.Join(parentPath, "server.pid"))
+	require.ErrorContains(t, err, "allows untrusted replacement")
+	require.Nil(t, parent)
+}
