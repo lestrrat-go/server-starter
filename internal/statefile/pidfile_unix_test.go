@@ -88,9 +88,14 @@ func TestPrepareRunningPIDPathRejectsSymlinkedAncestor(t *testing.T) {
 	require.NoError(t, os.Mkdir(parent, 0700))
 	require.NoError(t, os.Symlink(parent, pidParent))
 
-	preparedPath, err := prepareRunningPIDPath(filepath.Join(pidParent, "server.pid"))
-	require.ErrorContains(t, err, "contains symbolic link component")
-	require.Nil(t, preparedPath)
+	for _, path := range []string{
+		filepath.Join(pidParent, "server.pid"),
+		pidParent + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "server.pid",
+	} {
+		preparedPath, err := prepareRunningPIDPath(path)
+		require.ErrorContains(t, err, "contains symbolic link component")
+		require.Nil(t, preparedPath)
+	}
 }
 
 func TestPrepareRunningPIDPathRejectsReplaceableAncestor(t *testing.T) {

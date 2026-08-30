@@ -88,16 +88,20 @@ func (p *runningPIDPath) open() (*os.File, error) {
 }
 
 func prepareRunningPIDPath(path string) (*runningPIDPath, error) {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve pid file %q: %w", path, err)
+	absPath := path
+	if !filepath.IsAbs(absPath) {
+		workingDirectory, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve pid file %q: %w", path, err)
+		}
+		absPath = workingDirectory + string(os.PathSeparator) + path
 	}
-	parentPath := filepath.Dir(absPath)
+	parentPath, name := filepath.Split(absPath)
 	parent, err := openDirectoryPath(parentPath, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open pid file %q parent directory %q: %w", path, parentPath, err)
 	}
-	return &runningPIDPath{path: path, parent: parent, name: filepath.Base(absPath)}, nil
+	return &runningPIDPath{path: path, parent: parent, name: name}, nil
 }
 
 func openDirectoryPath(path, controlPath string) (*os.File, error) {
