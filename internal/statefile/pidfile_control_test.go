@@ -69,6 +69,32 @@ func TestReadableLegacyPIDFileCanStillBeControlled(t *testing.T) {
 	require.NoError(t, running.Close())
 }
 
+func TestOpenRunningPIDSupportsExecuteOnlyAncestor(t *testing.T) {
+	dir := t.TempDir()
+	ancestor := filepath.Join(dir, "supervisor")
+	require.NoError(t, os.Mkdir(ancestor, 0700))
+	path := filepath.Join(ancestor, "server.pid")
+	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestLegacyPIDFileHelper$")
+	cmd.Env = append(os.Environ(), legacyPIDFileHelperEnv+"="+path)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}, time.Second, 10*time.Millisecond)
+	require.NoError(t, os.Chmod(ancestor, 0100))
+	t.Cleanup(func() { _ = os.Chmod(ancestor, 0700) })
+
+	running, err := OpenRunningPID(path)
+	require.NoError(t, err)
+	require.Equal(t, cmd.Process.Pid, running.PID())
+	require.NoError(t, running.Close())
+}
+
 func TestOpenRunningPIDRejectsMismatchedLockOwner(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.pid")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)

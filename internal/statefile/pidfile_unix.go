@@ -105,7 +105,8 @@ func prepareRunningPIDPath(path string) (*runningPIDPath, error) {
 }
 
 func openDirectoryPath(path, controlPath string) (*os.File, error) {
-	current, err := os.OpenFile(string(os.PathSeparator), os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	directoryFlags := directoryAccessFlag | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	current, err := os.OpenFile(string(os.PathSeparator), directoryFlags, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +151,7 @@ func openDirectoryPath(path, controlPath string) (*os.File, error) {
 		fd, openErr := unix.Openat(
 			int(current.Fd()),
 			name,
-			unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC,
+			directoryFlags,
 			0,
 		)
 		if openErr != nil {
