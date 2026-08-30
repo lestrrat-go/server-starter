@@ -6,4 +6,4 @@ between v0 and v2, please read the [Changes-v2.md](./Changes-v2.md) file. For a
 step-by-step migration guide with code examples, see [MIGRATION.md](./MIGRATION.md).
 
 UNRELEASED
-  * Initial release
+  * Initial v2 release. Brings the tool up-to-date with 2026 standards after 12 year hiatus.
