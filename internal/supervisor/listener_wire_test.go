@@ -17,29 +17,26 @@ import (
 )
 
 // TestPortSpecWireFormat guards the shared SERVER_STARTER_PORT contract
-// between the supervisor's parser and FormatPorts. TCP and Unix formatting
-// must remain compatible with v0 workers, while v2-only UDP formatting must
-// remain stable for v2 workers, including canonicalising legacy UDP spellings
-// to the explicit udp:// marker. Ambiguous relative Unix paths are
+// between the supervisor's parser and FormatPorts. TCP, UDP, and Unix
+// formatting must remain compatible with Server::Starter. UDP type metadata
+// is carried separately for v2 workers. Ambiguous relative Unix paths are
 // canonicalised so workers keep their listener type.
 func TestPortSpecWireFormat(t *testing.T) {
 	const fd = 3
 
 	tcpUDPCases := []struct {
-		name string
-		raw  string
-		want string
+		name     string
+		raw      string
+		want     string
+		wantType string
 	}{
-		{name: "tcp bare port", raw: "8080", want: "8080=3"},
-		{name: "tcp host:port", raw: "127.0.0.1:9090", want: "127.0.0.1:9090=3"},
-		{name: "tcp hostname beginning with u", raw: "ubuntu.internal:9090", want: "ubuntu.internal:9090=3"},
-		{name: "tcp ipv6", raw: "[::1]:9090", want: "[::1]:9090=3"},
-		{name: "udp bare port", raw: "udp://8080", want: "udp://8080=3"},
-		{name: "udp host:port", raw: "udp://127.0.0.1:9090", want: "udp://127.0.0.1:9090=3"},
-		{name: "udp hostname", raw: "udp://upstream:9090", want: "udp://upstream:9090=3"},
-		{name: "legacy udp bare port", raw: "u8080", want: "udp://8080=3"},
-		{name: "legacy udp IP host:port", raw: "u127.0.0.1:9090", want: "udp://127.0.0.1:9090=3"},
-		{name: "legacy udp hostname suffix", raw: "upstream:u9090", want: "udp://upstream:9090=3"},
+		{name: "tcp bare port", raw: "8080", want: "8080=3", wantType: "3=tcp"},
+		{name: "tcp host:port", raw: "127.0.0.1:9090", want: "127.0.0.1:9090=3", wantType: "3=tcp"},
+		{name: "tcp hostname beginning with u", raw: "ubuntu.internal:9090", want: "ubuntu.internal:9090=3", wantType: "3=tcp"},
+		{name: "tcp ipv6", raw: "[::1]:9090", want: "[::1]:9090=3", wantType: "3=tcp"},
+		{name: "udp bare port", raw: "u8080", want: "8080=3", wantType: "3=udp"},
+		{name: "udp host:port", raw: "127.0.0.1:u9090", want: "127.0.0.1:9090=3", wantType: "3=udp"},
+		{name: "udp hostname", raw: "upstream:u9090", want: "upstream:9090=3", wantType: "3=udp"},
 	}
 	for _, tc := range tcpUDPCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,6 +49,9 @@ func TestPortSpecWireFormat(t *testing.T) {
 
 			require.Equal(t, tc.want, got)
 			require.Equal(t, strings.TrimSuffix(tc.want, "=3"), target.spec)
+			socketTypes, err := starter.FormatSocketTypes(l.starterListener(fd))
+			require.NoError(t, err)
+			require.Equal(t, tc.wantType, socketTypes)
 		})
 	}
 
@@ -66,7 +66,7 @@ func TestPortSpecWireFormat(t *testing.T) {
 		{name: "unix numeric", path: "8080", want: "./8080=5"},
 		{name: "unix host and port", path: "db:5432", want: "./db:5432=5"},
 		{name: "unix legacy UDP", path: "u8080", want: "./u8080=5"},
-		{name: "unix explicit UDP", path: "udp://8080", want: "./udp://8080=5"},
+		{name: "unix path beginning with udp", path: "udp://8080", want: "udp://8080=5"},
 		{name: "unix path with spaces", path: "  relative.sock  ", want: "  relative.sock  =5"},
 	}
 	for _, tc := range unixCases {
@@ -130,7 +130,7 @@ func TestRunRejectsPortAddressesReservedByWireFormatBeforeBinding(t *testing.T) 
 		},
 		{
 			name:     "UDP address",
-			raw:      "udp://host;next:8080",
+			raw:      "host;next:u8080",
 			listener: starter.NewUDPListener("host;next", 8080, 3),
 		},
 	} {

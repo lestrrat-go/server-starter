@@ -8,17 +8,23 @@ import (
 // PortEnvName is the environment variable that carries the listener
 // specification, as a list of "spec=fd" pairs joined by ";".
 //
-// Each spec is either a TCP target (a bare port, "host:port", or
-// "[ipv6]:port"), a UDP target prefixed with "udp://", or a unix socket
-// path. Because ";" separates entries and "=" separates each target from
-// its descriptor, TCP/UDP addresses and unix socket paths cannot contain
-// either delimiter. A path containing "/" is read as a unix socket unless
-// it uses the UDP prefix. A relative unix socket path that matches a TCP or
-// UDP spelling, such as "8080", "db:5432", "u8080", or "udp://8080", would
-// otherwise be interpreted as that transport. Prefix raw paths with "./" to
-// disambiguate them. NewUnixListener adds the prefix automatically and stores
-// the canonical path.
+// Each spec is a TCP target (a bare port, "host:port", or "[ipv6]:port") or a
+// Unix socket path. UDP sockets use the same representation as TCP, matching
+// Perl's Server::Starter. SocketTypesEnvName identifies them for v2 workers.
+// Because ";" separates entries and "=" separates each target from its
+// descriptor, TCP addresses and Unix socket paths cannot contain either
+// delimiter. A relative Unix socket path that matches a TCP or legacy UDP
+// spelling, such as "8080", "db:5432", "u8080", or "db:u5432", would
+// otherwise be interpreted as a network target. Prefix raw paths with "./"
+// to disambiguate them. NewUnixListener adds the prefix automatically and
+// stores the canonical path.
 const PortEnvName = "SERVER_STARTER_PORT"
+
+// SocketTypesEnvName identifies socket types for workers started by this
+// implementation. It contains "fd=type" entries joined by ";", where type
+// is tcp, udp, or unix. Perl's Server::Starter does not set or read this
+// variable, so its SERVER_STARTER_PORT format remains unchanged.
+const SocketTypesEnvName = "LSS2_SOCKET_TYPES"
 
 // GenerationEnvName is the environment variable the supervisor sets to the
 // worker's generation number on every spawn. The first worker is generation

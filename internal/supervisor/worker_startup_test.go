@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	starter "github.com/lestrrat-go/server-starter/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -223,9 +224,16 @@ func TestStartWorkerReturnsListenerDescriptorError(t *testing.T) {
 func TestBuildWorkerEnvOmitsDaemonReadinessDescriptor(t *testing.T) {
 	t.Setenv("SERVER_STARTER_DAEMON_READY_FD", "9")
 
-	for _, entry := range buildWorkerEnv(nil, "", 1) {
-		require.NotEqual(t, "SERVER_STARTER_DAEMON_READY_FD", strings.SplitN(entry, "=", 2)[0])
+	env := buildWorkerEnv(nil, "8080=3", "3=udp", 1)
+	values := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		require.True(t, ok)
+		values[key] = value
 	}
+	require.NotContains(t, values, "SERVER_STARTER_DAEMON_READY_FD")
+	require.Equal(t, "8080=3", values[starter.PortEnvName])
+	require.Equal(t, "3=udp", values[starter.SocketTypesEnvName])
 }
 
 func TestSIGTERMDuringFailedReplacementDoesNotPanic(t *testing.T) {

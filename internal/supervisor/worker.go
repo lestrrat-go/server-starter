@@ -186,7 +186,7 @@ func reportFailedStart(
 
 // startWorker starts the actual command. It returns a non-nil error when worker
 // descriptor setup fails, when its non-empty listener set cannot be formatted
-// into a valid SERVER_STARTER_PORT spec (see starter.FormatPorts), or when the
+// into valid SERVER_STARTER_PORT and LSS2_SOCKET_TYPES values, or when the
 // command has a terminal launch error, or the initial worker exits before
 // passing a synchronous startup check. Transient launch errors and unchecked
 // early exits are retried. Context cancellation always returns ctx.Err(); the
@@ -273,16 +273,22 @@ func (rs *runState) startWorker(
 		cmd.ExtraFiles = files
 
 		portSpec := ""
+		socketTypes := ""
 		if len(portList) > 0 {
 			portSpec, err = starter.FormatPorts(portList...)
 			if err != nil {
 				closeWorkerFiles(files)
 				return nil, fmt.Errorf("failed to format listeners for worker: %w", err)
 			}
+			socketTypes, err = starter.FormatSocketTypes(portList...)
+			if err != nil {
+				closeWorkerFiles(files)
+				return nil, fmt.Errorf("failed to format worker socket types: %w", err)
+			}
 		}
 
 		rs.generation++
-		cmd.Env = buildWorkerEnv(rs.envOverlay, portSpec, rs.generation)
+		cmd.Env = buildWorkerEnv(rs.envOverlay, portSpec, socketTypes, rs.generation)
 
 		// Now start!
 		startErr := cmd.Start()
@@ -373,8 +379,8 @@ func closeWorkerFiles(files []*os.File) {
 // first and flattening it afterward guarantees each key appears once in the
 // result: a duplicate KEY= entry in cmd.Env is resolved by "last one wins"
 // on Linux, but that is not something to depend on for readability.
-func buildWorkerEnv(overlay map[string]string, portSpec string, generation int) []string {
-	merged := make(map[string]string, len(overlay)+2)
+func buildWorkerEnv(overlay map[string]string, portSpec, socketTypes string, generation int) []string {
+	merged := make(map[string]string, len(overlay)+3)
 	for _, kv := range os.Environ() {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			// The readiness descriptor belongs only to the daemon child. A
@@ -388,6 +394,7 @@ func buildWorkerEnv(overlay map[string]string, portSpec string, generation int) 
 	}
 	maps.Copy(merged, overlay)
 	merged[starter.PortEnvName] = portSpec
+	merged[starter.SocketTypesEnvName] = socketTypes
 	merged[starter.GenerationEnvName] = strconv.Itoa(generation)
 
 	env := make([]string, 0, len(merged))

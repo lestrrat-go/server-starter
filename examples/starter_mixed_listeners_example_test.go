@@ -13,16 +13,26 @@ import (
 // file descriptors from a running supervisor.
 func Example_starter_mixedListeners() {
 	prior, hadPrior := os.LookupEnv(starter.PortEnvName)
+	priorTypes, hadPriorTypes := os.LookupEnv(starter.SocketTypesEnvName)
 	defer func() {
 		if hadPrior {
 			_ = os.Setenv(starter.PortEnvName, prior)
-			return
+		} else {
+			_ = os.Unsetenv(starter.PortEnvName)
 		}
-		_ = os.Unsetenv(starter.PortEnvName)
+		if hadPriorTypes {
+			_ = os.Setenv(starter.SocketTypesEnvName, priorTypes)
+		} else {
+			_ = os.Unsetenv(starter.SocketTypesEnvName)
+		}
 	}()
 
-	if err := os.Setenv(starter.PortEnvName, "8080=3;udp://8081=4;/tmp/app.sock=5"); err != nil {
+	if err := os.Setenv(starter.PortEnvName, "8080=3;8081=4;/tmp/app.sock=5"); err != nil {
 		fmt.Printf("failed to set ports env: %s\n", err)
+		return
+	}
+	if err := os.Setenv(starter.SocketTypesEnvName, "3=tcp;4=udp;5=unix"); err != nil {
+		fmt.Printf("failed to set socket types: %s\n", err)
 		return
 	}
 
@@ -47,6 +57,6 @@ func Example_starter_mixedListeners() {
 
 	// Output:
 	// stream: 8080=3 via Listen
-	// packet: udp://8081=4 via ListenPacket
+	// packet: 8081=4 via ListenPacket
 	// stream: /tmp/app.sock=5 via Listen
 }

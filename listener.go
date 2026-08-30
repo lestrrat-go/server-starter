@@ -62,8 +62,10 @@ func NewTCPListener(addr string, port int, fd uintptr) TCPListener {
 	return TCPListener{Addr: addr, Port: port, fd: fd}
 }
 
-// UDPListener is a UDP endpoint passed through SERVER_STARTER_PORT. Create its
-// packet connection with ListenPacket rather than Listen.
+// UDPListener is a UDP endpoint passed through SERVER_STARTER_PORT. Its type
+// is carried separately in SocketTypesEnvName, because Perl's wire format
+// represents UDP and TCP sockets identically. Create its packet connection
+// with ListenPacket rather than Listen.
 type UDPListener struct {
 	Addr string
 	Port int
@@ -142,18 +144,15 @@ func (l TCPListener) Listen() (net.Listener, error) {
 	return listener, nil
 }
 
-// String returns a human-readable "udp://spec=fd" rendering of l. It is a
-// display form: it does not validate l, so it can render an unnormalised
-// listener (for example one built directly as a struct literal, bypassing
-// NewUDPListener), or an Addr containing ';' or '=', into a spec that reads
-// back as something else. For the authoritative SERVER_STARTER_PORT encoder,
-// see FormatPorts.
+// String returns the Server::Starter-compatible "spec=fd" rendering of l.
+// It does not encode the UDP type. FormatSocketTypes carries that information
+// for workers started by this implementation.
 func (l UDPListener) String() string {
 	address := strconv.Itoa(l.Port)
 	if l.Addr != wildcardIPv4 {
 		address = net.JoinHostPort(l.Addr, strconv.Itoa(l.Port))
 	}
-	return fmt.Sprintf("%s%s=%d", udpTransportMarker, address, l.fd)
+	return fmt.Sprintf("%s=%d", address, l.fd)
 }
 
 // Fd returns the underlying file descriptor.

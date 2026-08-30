@@ -71,25 +71,21 @@ caller outside package `server-starter` could construct the argument.
 `WorkerState`'s two values, `WorkerStarted` and `ErrFailedToStart`, were
 referenced nowhere else in the codebase.
 
-## Runtime compatibility and the UDP extension
+## Runtime compatibility and UDP metadata
 
 `SERVER_STARTER_PORT`, `SERVER_STARTER_GENERATION`, and file descriptors
-numbered starting at 3 retain their v0 behavior for TCP and unix sockets. A
+numbered starting at 3 retain their v0 behavior for TCP and Unix sockets. A
 worker binary built against v0's `listener` package still handles those
 targets under a v2 `start_server`, and a worker built against v2's `starter`
 package handles them under a v0 `start_server`.
 
-UDP targets are a v2 extension. V0 workers support TCP and Unix listeners,
-but not UDP listeners, so a v2 `start_server` configured with a UDP target
-requires a worker built against v2's `starter` package. Their canonical
-command-line and
-`SERVER_STARTER_PORT` spelling is `udp://PORT`, `udp://host:PORT`, or
-`udp://[ipv6]:PORT`. The v2 parser still reads unambiguous legacy forms such
-as `uPORT`, `host:uPORT`, and `u[ipv6]:PORT`. A leading `u` on an otherwise
-valid hostname is no longer treated as a transport marker, so
-`ubuntu.internal:8080` is TCP. In the legacy `host:uPORT` form, the suffix is
-the marker, so `ubuntu.internal:u8080` preserves the full hostname. Spell new
-UDP targets with `udp://`.
+UDP targets use the same command-line syntax as Perl's Server::Starter:
+`uPORT` or `host:uPORT`. As in Perl, their `SERVER_STARTER_PORT` entry omits
+the transport marker and uses the normal `target=fd` form. A Perl worker that
+knows a descriptor is UDP continues to open it as UDP. This implementation
+also sets `LSS2_SOCKET_TYPES`, using `fd=type` entries such as
+`3=tcp;4=udp;5=unix`, so a v2 worker can select `UDPListener` and
+`ListenPacket` automatically. Perl workers ignore that additional variable.
 
 ## Listener-spec validation is stricter
 
@@ -108,8 +104,8 @@ an empty Unix path is bound first and its kernel-generated address is then
 validated. A NUL-prefixed Linux abstract address is converted to the
 environment-safe `@` spelling before validation. Other invalid listener names
 fail synchronously during `Run`. Valid TCP and unix listener specs keep the v0
-wire format described above, while UDP targets use the explicit `udp://`
-extension.
+wire format described above. UDP type information is carried separately in
+`LSS2_SOCKET_TYPES` for v2 workers.
 
 ## Three deliberate divergences from Perl's Server::Starter
 

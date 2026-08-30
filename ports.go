@@ -3,7 +3,6 @@ package starter
 import (
 	"fmt"
 	"net"
-	"net/netip"
 	"os"
 	"regexp"
 	"strconv"
@@ -16,8 +15,6 @@ import (
 var reLooksLikeHostPort = regexp.MustCompile(`^(.+?):(\d+)$`)
 var reLooksLikePort = regexp.MustCompile(`^\d+$`)
 
-const udpTransportMarker = "udp://"
-
 // looksLikeTCPGrammar reports whether s parses as a bare port, "host:port",
 // or "[ipv6]:port" — the grammar shared by TCP and UDP specs.
 func looksLikeTCPGrammar(s string) bool {
@@ -28,31 +25,14 @@ func looksLikeTCPGrammar(s string) bool {
 	return err == nil && host != "" && reLooksLikePort.MatchString(port)
 }
 
-func isIPLiteral(host string) bool {
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = host[1 : len(host)-1]
-	}
-	_, err := netip.ParseAddr(host)
-	return err == nil
-}
-
-// stripLeadingUDPMarker accepts the leading "u" marker only when the
-// remainder is a bare port or an IP literal with a port. Restricting the
-// marker this way keeps ordinary TCP hostnames such as "upstream" from
-// being consumed as UDP.
+// stripLeadingUDPMarker accepts Server::Starter's leading "u" marker for a
+// bare UDP port. A leading u in a hostname remains part of that hostname.
 func stripLeadingUDPMarker(s string) (string, bool) {
 	stripped, ok := strings.CutPrefix(s, "u")
-	if !ok {
-		return s, false
-	}
-	if reLooksLikePort.MatchString(stripped) {
+	if ok && reLooksLikePort.MatchString(stripped) {
 		return stripped, true
 	}
-	matches := reLooksLikeHostPort.FindStringSubmatch(stripped)
-	if matches == nil || !isIPLiteral(matches[1]) {
-		return s, false
-	}
-	return stripped, true
+	return s, false
 }
 
 // stripTrailingUDPMarker strips a "u" immediately after the last ":" in s,
@@ -72,15 +52,10 @@ type udpCandidate struct {
 	target string
 }
 
-// classifyUDPMarker returns, in priority order, the candidate transport
-// interpretations of hostPort. The explicit "udp://" marker wins. A trailing
-// legacy marker is authoritative, then a constrained leading marker is tried
-// for bare ports and IP literals. An unmarked TCP target is tried last.
+// classifyUDPMarker recognizes the UDP forms accepted by Server::Starter: a
+// bare uPORT or host:uPORT. It never writes those markers into
+// SERVER_STARTER_PORT; SocketTypesEnvName preserves the type for v2 workers.
 func classifyUDPMarker(hostPort string) []udpCandidate {
-	if target, ok := strings.CutPrefix(hostPort, udpTransportMarker); ok {
-		return []udpCandidate{{udp: true, target: target}}
-	}
-
 	var candidates []udpCandidate
 
 	if trailingStripped, hasTrailing := stripTrailingUDPMarker(hostPort); hasTrailing {
@@ -102,7 +77,7 @@ func classifyPortTarget(hostPort string) (bool, string, bool) {
 		}
 	}
 
-	if !strings.HasPrefix(hostPort, udpTransportMarker) && reLooksLikeHostPort.MatchString(hostPort) {
+	if reLooksLikeHostPort.MatchString(hostPort) {
 		return false, hostPort, true
 	}
 	return false, hostPort, false
@@ -112,9 +87,6 @@ func classifyPortTarget(hostPort string) (bool, string, bool) {
 // ParsePorts would otherwise classify path as TCP or UDP.
 func canonicalUnixPath(path string) string {
 	wireTarget := strings.TrimSpace(path)
-	if strings.HasPrefix(wireTarget, udpTransportMarker) {
-		return "./" + path
-	}
 	if strings.ContainsRune(wireTarget, '/') {
 		return path
 	}
@@ -127,19 +99,16 @@ func canonicalUnixPath(path string) string {
 // ParsePorts parses the "spec=fd;spec=fd;..." value carried by
 // SERVER_STARTER_PORT (see PortEnvName) into concrete Listener values.
 //
-// Each spec is classified in this order: a spec beginning with "udp://" is
-// a UDP target; otherwise the legacy UDP form "host:uPORT" is considered;
-// otherwise the constrained leading-marker forms "uPORT", "uIPv4:PORT", and
-// "u[IPv6]:PORT" are considered; otherwise a spec that parses as a
-// port/host:port is a TCP target; otherwise the spec is a unix socket path,
-// taken verbatim. In the "host:uPORT" form, the suffix is the marker, so a
-// leading "u" remains part of the hostname. A spec containing "/" is always a
-// unix socket path unless it begins with "udp://". TCP/UDP addresses and unix
-// socket paths cannot contain ";" or "=" because those characters delimit
-// entries and file descriptors in the wire format.
+// Each spec is classified in this order: the legacy UDP form "host:uPORT" is
+// considered first, then a bare "uPORT", then a TCP port or host:port, and
+// finally a Unix socket path. In the "host:uPORT" form, the suffix is the
+// marker, so a leading "u" remains part of the hostname. A spec containing
+// "/" is always a Unix socket path. TCP addresses and Unix socket paths cannot
+// contain ";" or "=" because those characters delimit entries and file
+// descriptors in the wire format.
 //
 // Raw relative unix socket paths that match a TCP or UDP spelling, such as
-// "8080", "db:5432", "u8080", or "udp://8080", are read as that transport.
+// "8080", "db:5432", "u8080", or "db:u5432", are read as that transport.
 // Prefix them with "./" to disambiguate them. NewUnixListener adds the prefix
 // automatically and stores the canonical path.
 //
@@ -172,16 +141,12 @@ func ParsePorts(spec string) (List, error) {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: file descriptor must be at least 3", pairString)
 		}
 
-		explicitUDP := strings.HasPrefix(hostPort, udpTransportMarker)
-		if !explicitUDP && strings.ContainsRune(hostPort, '/') {
+		if strings.ContainsRune(hostPort, '/') {
 			ret[i] = NewUnixListener(rawTarget, uintptr(fd))
 			continue
 		}
 
-		udp, target, matched := classifyPortTarget(hostPort)
-		if explicitUDP && !matched {
-			return nil, fmt.Errorf("failed to parse %q as UDP listen target", pairString)
-		}
+		udp, target, _ := classifyPortTarget(hostPort)
 
 		if matches := reLooksLikeHostPort.FindStringSubmatch(target); matches != nil {
 			port, err := strconv.ParseInt(matches[2], 10, 0)
@@ -219,21 +184,17 @@ func ParsePorts(spec string) (List, error) {
 	return ret, nil
 }
 
-// FormatPorts encodes ls into the "spec=fd;spec=fd;..." wire format read
-// by ParsePorts and carried by SERVER_STARTER_PORT. It is the authoritative
-// encoder for that format: each Listener's own String() method is a
-// display form for humans and does not validate its receiver, so a
-// TCPListener, UDPListener, or UnixListener built directly as a struct
-// literal (bypassing New*Listener's normalisation) can render into a spec
-// that ParsePorts reads back as something else entirely, with no error
-// anywhere in the chain. FormatPorts closes that gap by rejecting a
-// malformed listener instead of silently encoding it.
+// FormatPorts encodes ls into the "spec=fd;spec=fd;..." wire format carried
+// by SERVER_STARTER_PORT. It matches Perl's Server::Starter format, which does
+// not encode whether a network socket is TCP or UDP. Use FormatSocketTypes to
+// encode that extra detail for v2 workers.
 //
 // ls is variadic so a single listener can be formatted ad-hoc, and so a
 // List can be passed directly as FormatPorts(list...).
 //
-// An empty list returns an empty string so FormatPorts and ParsePorts are
-// inverses for that valid parse-layer value.
+// An empty list returns an empty string. TCP and Unix listeners round-trip
+// through ParsePorts. UDP listeners require SocketTypesEnvName to retain their
+// transport type.
 //
 // FormatPorts rejects the following inputs:
 //
@@ -321,6 +282,11 @@ func FormatPorts(ls ...Listener) (string, error) {
 		)
 	}
 	for i, l := range ls {
+		if udp, ok := l.(UDPListener); ok {
+			if parsed[i] == NewTCPListener(udp.Addr, udp.Port, udp.Fd()) {
+				continue
+			}
+		}
 		if parsed[i] != l {
 			return "", fmt.Errorf(
 				"starter: cannot format listener %d (%T): encoded value parses as %T with different fields",
@@ -334,10 +300,96 @@ func FormatPorts(ls ...Listener) (string, error) {
 	return spec, nil
 }
 
+// FormatSocketTypes encodes listener types as "fd=type" entries joined by
+// ";" for SocketTypesEnvName. It is used together with FormatPorts: the
+// latter remains compatible with Perl's SERVER_STARTER_PORT format, while this
+// value lets v2 workers distinguish UDP sockets from TCP sockets.
+func FormatSocketTypes(ls ...Listener) (string, error) {
+	if len(ls) == 0 {
+		return "", nil
+	}
+
+	types := make([]string, len(ls))
+	seen := make(map[uintptr]struct{}, len(ls))
+	for i, l := range ls {
+		fd := l.Fd()
+		if _, ok := seen[fd]; ok {
+			return "", fmt.Errorf("starter: cannot format socket types: duplicate file descriptor %d", fd)
+		}
+		seen[fd] = struct{}{}
+
+		var socketType string
+		switch l.(type) {
+		case TCPListener:
+			socketType = "tcp"
+		case UDPListener:
+			socketType = "udp"
+		case UnixListener:
+			socketType = "unix"
+		default:
+			return "", fmt.Errorf("starter: cannot format socket type for %T", l)
+		}
+		types[i] = strconv.FormatUint(uint64(fd), 10) + "=" + socketType
+	}
+	return strings.Join(types, ";"), nil
+}
+
+func applySocketTypes(list List, spec string) (List, error) {
+	types := make(map[uintptr]string, len(list))
+	for _, entry := range strings.Split(spec, ";") {
+		fdText, socketType, ok := strings.Cut(entry, "=")
+		if !ok || fdText == "" || socketType == "" {
+			return nil, fmt.Errorf("starter: invalid %s entry %q", SocketTypesEnvName, entry)
+		}
+		fd, err := strconv.ParseUint(fdText, 10, 0)
+		if err != nil {
+			return nil, fmt.Errorf("starter: invalid %s descriptor %q: %w", SocketTypesEnvName, fdText, err)
+		}
+		key := uintptr(fd)
+		if _, ok := types[key]; ok {
+			return nil, fmt.Errorf("starter: duplicate %s descriptor %d", SocketTypesEnvName, key)
+		}
+		types[key] = socketType
+	}
+
+	ret := make(List, len(list))
+	for i, listener := range list {
+		socketType, ok := types[listener.Fd()]
+		if !ok {
+			return nil, fmt.Errorf("starter: %s has no type for descriptor %d", SocketTypesEnvName, listener.Fd())
+		}
+		delete(types, listener.Fd())
+
+		switch typed := listener.(type) {
+		case TCPListener:
+			switch socketType {
+			case "tcp":
+				ret[i] = typed
+			case "udp":
+				ret[i] = NewUDPListener(typed.Addr, typed.Port, typed.Fd())
+			default:
+				return nil, fmt.Errorf("starter: %s type %q conflicts with TCP descriptor %d", SocketTypesEnvName, socketType, typed.Fd())
+			}
+		case UnixListener:
+			if socketType != "unix" {
+				return nil, fmt.Errorf("starter: %s type %q conflicts with Unix descriptor %d", SocketTypesEnvName, socketType, typed.Fd())
+			}
+			ret[i] = typed
+		default:
+			return nil, fmt.Errorf("starter: cannot apply %s to %T", SocketTypesEnvName, listener)
+		}
+	}
+	if len(types) != 0 {
+		return nil, fmt.Errorf("starter: %s has descriptors that are not in %s", SocketTypesEnvName, PortEnvName)
+	}
+	return ret, nil
+}
+
 // Ports parses environment variable SERVER_STARTER_PORT (see PortEnvName).
 // The returned List can contain TCPListener, UnixListener, and UDPListener
-// values. For a mixed list, type-switch on UDPListener and call ListenPacket;
-// call Listen on the other built-in Listener values.
+// values. UDPListener values require SocketTypesEnvName, which this
+// implementation sets for its workers. For a mixed list, type-switch on
+// UDPListener and call ListenPacket; call Listen on the other built-in types.
 //
 // It returns ErrNoListeningTarget when the variable is empty or unset.
 func Ports() (List, error) {
@@ -345,7 +397,15 @@ func Ports() (List, error) {
 	if spec == "" {
 		return nil, ErrNoListeningTarget
 	}
-	return ParsePorts(spec)
+	list, err := ParsePorts(spec)
+	if err != nil {
+		return nil, err
+	}
+	types, ok := os.LookupEnv(SocketTypesEnvName)
+	if !ok || types == "" {
+		return list, nil
+	}
+	return applySocketTypes(list, types)
 }
 
 // ListenAll parses SERVER_STARTER_PORT and creates net.Listener objects. It is

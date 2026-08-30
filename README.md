@@ -101,7 +101,9 @@ wg.Wait()
 `ListenPacketAll` expects every endpoint to be UDP. For a mixed list, call
 `Ports` and switch on the exported `TCPListener`, `UnixListener`, and
 `UDPListener` types: use `ListenPacket` for UDP and `Listen` for the stream
-listener types. The verified
+listener types. The supervisor uses the Perl-compatible `SERVER_STARTER_PORT`
+format and sets `LSS2_SOCKET_TYPES` for v2 workers to identify UDP sockets.
+The verified
 [`starter_mixedListeners` example](./examples/starter_mixed_listeners_example_test.go)
 shows that workflow.
 

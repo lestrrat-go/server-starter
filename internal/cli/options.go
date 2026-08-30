@@ -16,7 +16,7 @@ type options struct {
 	OptCommand             string
 	OptDir                 string   `long:"dir" arg:"path" description:"working directory, start_server do chdir to before exec (optional)"`
 	OptInterval            int      `long:"interval" arg:"seconds" description:"minimum interval (in seconds) to respawn the server program (default: 1)"`
-	OptPorts               []string `long:"port" arg:"target[=fd]" description:"TCP target or udp://target; address components cannot contain ';' or '='; explicit\ndescriptors must be 3..1024 and may leave at most 256 unused slots (optional)"`
+	OptPorts               []string `long:"port" arg:"target[=fd]" description:"TCP target or a UDP target using uPORT or host:uPORT; address components cannot contain ';' or '='; explicit\ndescriptors must be 3..1024 and may leave at most 256 unused slots (optional)"`
 	OptPaths               []string `long:"path" arg:"path" description:"path at which to listen using a unix socket; ';' and '=' are not allowed (optional)"`
 	OptSignalOnHUP         string   `long:"signal-on-hup" arg:"Signal" description:"name of the signal to be sent to the server process when start_server\nreceives a SIGHUP (default: TERM; unknown names are rejected). If you use\nthis option, be sure to also use '--signal-on-term' below."`
 	OptSignalOnTERM        string   `long:"signal-on-term" arg:"Signal" description:"name of the signal to be sent to the server process when start_server\nreceives a SIGTERM (default: TERM; unknown names are rejected)"`
