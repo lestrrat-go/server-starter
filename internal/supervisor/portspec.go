@@ -168,9 +168,10 @@ func validatePortTargetDelimiter(target string) error {
 }
 
 // validateListenerWireFormat applies the public SERVER_STARTER_PORT encoder
-// before Run binds anything. The descriptors are already assigned at this
-// point, so this validates the same Listener values startWorker will later
-// format for the child process.
+// before Run binds anything. Empty Unix paths are autobind requests whose
+// concrete address is validated after Listen returns. The descriptors are
+// already assigned at this point, so every other entry matches the Listener
+// value startWorker will later format for the child process.
 func validateListenerWireFormat(targets []portTarget, paths []string, descriptors []int) error {
 	listeners := make(starter.List, 0, len(targets)+len(paths))
 	for i, target := range targets {
@@ -182,6 +183,9 @@ func validateListenerWireFormat(targets []portTarget, paths []string, descriptor
 		listeners = append(listeners, l.starterListener(descriptors[i]))
 	}
 	for i, path := range paths {
+		if path == "" {
+			continue
+		}
 		l := listener{network: "unix", path: path}
 		listeners = append(listeners, l.starterListener(descriptors[len(targets)+i]))
 	}

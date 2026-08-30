@@ -66,12 +66,54 @@ func TestShutdownForcesStubbornWorkerAndCompletesTeardown(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(started), sd.shutdownGracePeriod)
 	require.NoFileExists(t, statusPath)
 	require.NoFileExists(t, pidPath)
-	require.NoFileExists(t, socketPath)
+	// The supervisor deliberately leaves the pathname in place. Removing by
+	// pathname during teardown could unlink a replacement installed by another
+	// process after the listener was created.
+	require.FileExists(t, socketPath)
 
 	var waitStatus syscall.WaitStatus
 	waited, waitErr := syscall.Wait4(workerPID, &waitStatus, syscall.WNOHANG, nil)
 	require.Equal(t, -1, waited)
 	require.ErrorIs(t, waitErr, syscall.ECHILD)
+}
+
+func TestShutdownPreservesReplacementAtUnixSocketPath(t *testing.T) {
+	dir := t.TempDir()
+	socketPath := filepath.Join(dir, "server.sock")
+	replacement := []byte("replacement contents")
+	command, args := testWorkerCommand(t)
+
+	sd, err := NewStarter(&config{
+		command:   command,
+		args:      args,
+		paths:     []string{socketPath},
+		sigonterm: killSignalName,
+		stderr:    io.Discard,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctrl, err := sd.Run(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Remove(socketPath))
+	require.NoError(t, os.WriteFile(socketPath, replacement, 0o600))
+	before, err := os.Lstat(socketPath)
+	require.NoError(t, err)
+
+	cancel()
+	select {
+	case <-ctrl.Done():
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out waiting for supervisor shutdown")
+	}
+	require.ErrorIs(t, ctrl.Err(), ErrServerClosed)
+
+	after, err := os.Lstat(socketPath)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(before, after))
+	require.Equal(t, replacement, requireFileContents(t, socketPath))
 }
 
 func TestShutdownStopsWaitingWhenWorkerCannotBeReaped(t *testing.T) {
@@ -106,4 +148,12 @@ func waitForPath(t *testing.T, path string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", path)
+}
+
+func requireFileContents(t *testing.T, path string) []byte {
+	t.Helper()
+
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return contents
 }

@@ -103,8 +103,11 @@ bypassing or modifying `NewUnixListener`, and other malformed listener values.
 The supervisor's `Config` accepts only string port and path metadata, so
 struct-literal listeners do not enter that API. Before acquiring its pid file
 or binding a listener, the supervisor applies the same public `FormatPorts`
-rule used to build worker metadata. Invalid listener names therefore fail
-synchronously during `Run`. Valid TCP and unix listener specs keep the v0
+rule used to build worker metadata for every fully specified address. On Linux,
+an empty Unix path is bound first and its kernel-generated address is then
+validated. A NUL-prefixed Linux abstract address is converted to the
+environment-safe `@` spelling before validation. Other invalid listener names
+fail synchronously during `Run`. Valid TCP and unix listener specs keep the v0
 wire format described above, while UDP targets use the explicit `udp://`
 extension.
 

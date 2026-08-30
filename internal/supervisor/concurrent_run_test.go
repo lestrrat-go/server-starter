@@ -33,7 +33,7 @@ func TestRunConcurrentOnSharedStarter(t *testing.T) {
 		command:   command,
 		args:      args,
 		ports:     testWorkerPorts(),
-		sigonterm: "KILL",
+		sigonterm: killSignalName,
 	})
 	require.NoError(t, err)
 
