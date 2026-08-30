@@ -53,7 +53,7 @@ type runState struct {
 // Cancelling ctx is the only way to stop the run; the returned Controller's
 // Hangup method requests a graceful worker restart.
 func (s *Starter) Run(ctx context.Context) (*Controller, error) {
-	return s.run(ctx, false)
+	return s.run(ctx, false, socketPublicationHooks{})
 }
 
 // RunWithStartupCheck behaves like Run but waits for the initial worker to pass
@@ -61,10 +61,14 @@ func (s *Starter) Run(ctx context.Context) (*Controller, error) {
 // during that check, so daemon children can report an exact startup result to
 // the waiting parent process.
 func (s *Starter) RunWithStartupCheck(ctx context.Context) (*Controller, error) {
-	return s.run(ctx, true)
+	return s.run(ctx, true, socketPublicationHooks{})
 }
 
-func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, error) {
+func (s *Starter) run(
+	ctx context.Context,
+	waitForStartup bool,
+	publicationHooks socketPublicationHooks,
+) (*Controller, error) {
 	rs := &runState{
 		cfg:       s,
 		listeners: make([]listener, 0, len(s.ports)+len(s.paths)),
@@ -147,27 +151,29 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 			fmt.Fprintf(s.stderr, "failed to prepare socket file:%s:%s\n", path, err)
 			return nil, err
 		}
-		lc := listenConfig(unixNetwork)
-		l, err := lc.Listen(ctx, unixNetwork, path)
-		if err != nil {
-			fmt.Fprintf(s.stderr, "failed to listen file:%s:%s\n", path, err)
-			return nil, err
-		}
-		unixListener, ok := l.(*net.UnixListener)
-		if !ok {
-			_ = l.Close()
-			return nil, fmt.Errorf("listen file %q returned %T, want *net.UnixListener", path, l)
-		}
-		// Keep the bound entry after Close so teardown cannot unlink a replacement installed at the same path.
-		unixListener.SetUnlinkOnClose(false)
 		var identity *socketIdentity
 		if safeSocketQuarantineAvailable() && isFilesystemUnixSocketPath(path) {
-			boundIdentity, identityErr := socketIdentityForPath(path)
-			if identityErr != nil {
-				_ = l.Close()
-				return nil, fmt.Errorf("capture bound unix socket identity for %q: %w", path, identityErr)
+			boundListener, boundIdentity, listenErr := listenFilesystemUnixSocket(ctx, path, publicationHooks)
+			if listenErr != nil {
+				fmt.Fprintf(s.stderr, "failed to listen file:%s:%s\n", path, listenErr)
+				return nil, listenErr
 			}
+			l = boundListener
 			identity = &boundIdentity
+		} else {
+			lc := listenConfig(unixNetwork)
+			l, err = lc.Listen(ctx, unixNetwork, path)
+			if err != nil {
+				fmt.Fprintf(s.stderr, "failed to listen file:%s:%s\n", path, err)
+				return nil, err
+			}
+			unixListener, ok := l.(*net.UnixListener)
+			if !ok {
+				_ = l.Close()
+				return nil, fmt.Errorf("listen file %q returned %T, want *net.UnixListener", path, l)
+			}
+			// Keep the bound entry after Close so the listener does not unlink a replacement.
+			unixListener.SetUnlinkOnClose(false)
 		}
 		rs.listeners = append(rs.listeners, listener{
 			listener:       l,
