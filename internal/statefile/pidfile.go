@@ -24,9 +24,8 @@ type PIDFile struct {
 // RunningPID is a validated reference to a running supervisor. The retained
 // file keeps the validated inode available while callers check for exit.
 type RunningPID struct {
-	file                    *os.File
-	pid                     int
-	legacyLockUninspectable bool
+	file *os.File
+	pid  int
 }
 
 type runningPIDPath struct {
@@ -140,8 +139,6 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 		return nil, closeWithError(fmt.Errorf("invalid pid file %q", path))
 	}
 	pid := int(parsedPID)
-	legacyLockUninspectable := false
-
 	ownerPID, err := lockOwnerPID(f, path)
 	if err != nil {
 		return nil, closeWithError(fmt.Errorf("failed to inspect pid file %q lock: %w", path, err))
@@ -151,27 +148,14 @@ func OpenRunningPID(path string) (*RunningPID, error) {
 			return nil, closeWithError(fmt.Errorf("pid file %q records process %d, which does not match lock owner %d", path, pid, ownerPID))
 		}
 	} else {
-		if requireLockOwner() {
-			return nil, closeWithError(fmt.Errorf("pid file %q lock owner could not be verified", path))
-		}
-		lockErr := TryLock(f)
-		if lockErr == nil {
-			return nil, closeWithError(fmt.Errorf("pid file %q is not locked by a running supervisor", path))
-		}
-		if !lockUnavailable(lockErr) {
-			return nil, closeWithError(fmt.Errorf("failed to inspect legacy pid file %q lock: %w", path, lockErr))
-		}
-		if !processIsLive(pid) {
-			return nil, closeWithError(fmt.Errorf("pid file %q records process %d, which is not running", path, pid))
-		}
-		legacyLockUninspectable = true
+		return nil, closeWithError(fmt.Errorf("pid file %q lock owner could not be verified", path))
 	}
 
 	if err := preparedPath.validate(f); err != nil {
 		return nil, closeWithError(err)
 	}
 
-	return &RunningPID{file: f, pid: pid, legacyLockUninspectable: legacyLockUninspectable}, nil
+	return &RunningPID{file: f, pid: pid}, nil
 }
 
 // PID returns the validated supervisor process id.
@@ -182,9 +166,6 @@ func (p *RunningPID) PID() int {
 // Exited reports whether the validated supervisor has exited or no longer owns
 // its inspectable lifetime lock.
 func (p *RunningPID) Exited() (bool, error) {
-	if p.legacyLockUninspectable {
-		return !processIsLive(p.pid), nil
-	}
 	return lockNoLongerOwnedByPID(p.file, p.pid)
 }
 
