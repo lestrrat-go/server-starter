@@ -27,10 +27,7 @@ func TestLegacyPIDFileCanStillBeControlled(t *testing.T) {
 		_ = cmd.Wait()
 	})
 
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(path)
-		return err == nil
-	}, time.Second, 10*time.Millisecond)
+	requireLegacyPIDFileReady(t, path, cmd.Process.Pid)
 
 	running, err := OpenRunningPID(path)
 	require.NoError(t, err)
@@ -48,10 +45,7 @@ func TestReadableLegacyPIDFileCanStillBeControlled(t *testing.T) {
 		_ = cmd.Wait()
 	})
 
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(path)
-		return err == nil
-	}, time.Second, 10*time.Millisecond)
+	requireLegacyPIDFileReady(t, path, cmd.Process.Pid)
 	require.NoError(t, os.Chmod(path, 0400))
 
 	running, err := OpenRunningPID(path)
@@ -82,10 +76,7 @@ func TestOpenRunningPIDSupportsExecuteOnlyAncestor(t *testing.T) {
 		_ = cmd.Wait()
 	})
 
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(path)
-		return err == nil
-	}, time.Second, 10*time.Millisecond)
+	requireLegacyPIDFileReady(t, path, cmd.Process.Pid)
 	require.NoError(t, os.Chmod(ancestor, 0100))
 	t.Cleanup(func() { _ = os.Chmod(ancestor, 0700) })
 
@@ -108,6 +99,19 @@ func TestOpenRunningPIDRejectsMismatchedLockOwner(t *testing.T) {
 	_, err = OpenRunningPID(path)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "does not match lock owner")
+}
+
+func requireLegacyPIDFileReady(t *testing.T, path string, pid int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		running, err := OpenRunningPID(path)
+		if err != nil {
+			return false
+		}
+		matches := running.PID() == pid
+		closed := running.Close()
+		return matches && closed == nil
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestLegacyPIDFileHelper(t *testing.T) {
