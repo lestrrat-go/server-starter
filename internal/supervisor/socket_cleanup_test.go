@@ -92,6 +92,35 @@ func TestRunStartsOverStaleUnixSocket(t *testing.T) {
 	require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
 }
 
+func TestRunRemovesOwnedUnixSocketAcrossRepeatedRuns(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	parent := t.TempDir()
+	path := filepath.Join(parent, "listener.sock")
+	command, args := testWorkerCommand(t)
+	starter, err := NewStarter(&config{
+		command:   command,
+		args:      args,
+		paths:     []string{path},
+		sigonterm: signalNameKill,
+	})
+	require.NoError(t, err)
+
+	for range 3 {
+		// testing.T.Context requires Go 1.24, but this module supports Go 1.23.
+		ctx, cancel := context.WithCancel(context.Background())
+		ctrl, runErr := starter.Run(ctx)
+		require.NoError(t, runErr)
+		cancel()
+		require.ErrorIs(t, ctrl.Wait(), ErrServerClosed)
+		_, statErr := os.Lstat(path)
+		require.ErrorIs(t, statErr, os.ErrNotExist)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(parent, quarantineDirName))
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
 func TestRunReservesQuarantineBasenames(t *testing.T) {
 	requireSafeSocketQuarantine(t)
 	parent := t.TempDir()
@@ -159,7 +188,7 @@ func TestRemoveExistingUnixSocketRejectsNonSocket(t *testing.T) {
 	}
 }
 
-func TestRemoveExistingUnixSocketClassifiesQuarantinedEntry(t *testing.T) {
+func TestRemoveExistingUnixSocketRejectsChangedQuarantinedEntry(t *testing.T) {
 	requireSafeSocketQuarantine(t)
 	path := filepath.Join(t.TempDir(), "listener.sock")
 	makeStaleSocket(t, path)
@@ -168,10 +197,40 @@ func TestRemoveExistingUnixSocketClassifiesQuarantinedEntry(t *testing.T) {
 		require.NoError(t, os.Remove(path))
 		require.NoError(t, os.WriteFile(path, []byte("keep"), 0o600))
 	}})
-	require.ErrorContains(t, err, "is not a socket")
-	contents, readErr := os.ReadFile(path)
+	require.ErrorContains(t, err, "changed before restore")
+	require.NoFileExists(t, path)
+	entries, readErr := os.ReadDir(filepath.Join(filepath.Dir(path), quarantineDirName))
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+	contents, readErr := os.ReadFile(filepath.Join(filepath.Dir(path), quarantineDirName, entries[0].Name()))
 	require.NoError(t, readErr)
 	require.Equal(t, []byte("keep"), contents)
+}
+
+func TestSocketQuarantineRestoreRejectsSlotReplacement(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	path := filepath.Join(t.TempDir(), "listener.sock")
+	makeStaleSocket(t, path)
+
+	quarantine, err := newSocketQuarantine(path, nil, socketCleanupHooks{})
+	require.NoError(t, err)
+	t.Cleanup(quarantine.close)
+	require.NoError(t, quarantine.moveIn())
+
+	retainedPath := quarantine.location() + ".retained"
+	require.NoError(t, os.Rename(quarantine.location(), retainedPath))
+	require.NoError(t, os.WriteFile(quarantine.location(), []byte("keep"), 0o600))
+
+	err = quarantine.restore()
+	require.ErrorContains(t, err, "changed before restore")
+	contents, readErr := os.ReadFile(quarantine.location())
+	require.NoError(t, readErr)
+	require.Equal(t, []byte("keep"), contents)
+	info, statErr := os.Lstat(retainedPath)
+	require.NoError(t, statErr)
+	require.NotZero(t, info.Mode()&os.ModeSocket)
+	_, statErr = os.Lstat(path)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestRemoveExistingUnixSocketRetainsSocketThroughQuarantineHandle(t *testing.T) {

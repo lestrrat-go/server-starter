@@ -20,11 +20,18 @@ var errSocketSourceChanged = errors.New("unix socket path changed before quarant
 type socketQuarantine interface {
 	moveIn() error
 	entryIsSocket() (bool, error)
+	entryMatchesIdentity(socketIdentity) (bool, error)
 	restore() error
+	removeEntry() error
 	retainEntry() error
 	cleanup() error
 	close()
 	location() string
+}
+
+type socketIdentity struct {
+	device uint64
+	inode  uint64
 }
 
 type socketDirectoryIdentity struct {

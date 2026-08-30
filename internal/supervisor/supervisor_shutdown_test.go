@@ -66,9 +66,7 @@ func TestShutdownForcesStubbornWorkerAndCompletesTeardown(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(started), sd.shutdownGracePeriod)
 	require.NoFileExists(t, statusPath)
 	require.NoFileExists(t, pidPath)
-	info, err := os.Lstat(socketPath)
-	require.NoError(t, err)
-	require.NotZero(t, info.Mode()&os.ModeSocket)
+	require.NoFileExists(t, socketPath)
 
 	var waitStatus syscall.WaitStatus
 	waited, waitErr := syscall.Wait4(workerPID, &waitStatus, syscall.WNOHANG, nil)

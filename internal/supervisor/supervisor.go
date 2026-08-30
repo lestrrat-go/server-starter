@@ -160,7 +160,21 @@ func (s *Starter) run(ctx context.Context, waitForStartup bool) (*Controller, er
 		}
 		// Keep the bound entry after Close so teardown cannot unlink a replacement installed at the same path.
 		unixListener.SetUnlinkOnClose(false)
-		rs.listeners = append(rs.listeners, listener{listener: l, network: unixNetwork, path: path})
+		var identity *socketIdentity
+		if safeSocketQuarantineAvailable() && isFilesystemUnixSocketPath(path) {
+			boundIdentity, identityErr := socketIdentityForPath(path)
+			if identityErr != nil {
+				_ = l.Close()
+				return nil, fmt.Errorf("capture bound unix socket identity for %q: %w", path, identityErr)
+			}
+			identity = &boundIdentity
+		}
+		rs.listeners = append(rs.listeners, listener{
+			listener:       l,
+			network:        unixNetwork,
+			path:           path,
+			socketIdentity: identity,
+		})
 	}
 
 	rs.generation = 0
@@ -200,8 +214,7 @@ func removeExistingUnixSocket(path string) error {
 }
 
 func removeExistingUnixSocketWithConfiguredPaths(path string, configuredPaths *configuredSocketPathSet) error {
-	if runtime.GOOS == "linux" &&
-		(path == "" || strings.HasPrefix(path, "@") || strings.HasPrefix(path, "\x00")) {
+	if !isFilesystemUnixSocketPath(path) {
 		return nil
 	}
 	if !safeSocketQuarantineAvailable() {
@@ -215,6 +228,11 @@ func removeExistingUnixSocketWithConfiguredPaths(path string, configuredPaths *c
 		return fmt.Errorf("prepare unix socket quarantine for %q: %w", path, errSafeSocketCleanupUnavailable)
 	}
 	return removeSocketWithConfiguredPaths(path, configuredPaths, socketCleanupHooks{})
+}
+
+func isFilesystemUnixSocketPath(path string) bool {
+	return runtime.GOOS != "linux" ||
+		(path != "" && !strings.HasPrefix(path, "@") && !strings.HasPrefix(path, "\x00"))
 }
 
 type socketCleanupHooks struct {
@@ -307,6 +325,40 @@ func finishSocketQuarantine(quarantine socketQuarantine, operationErr error) err
 	}
 	cleanupErr = fmt.Errorf("clean unix socket quarantine %q: %w", quarantine.location(), cleanupErr)
 	return errors.Join(operationErr, cleanupErr)
+}
+
+func removeOwnedUnixSocket(
+	path string,
+	configuredPaths *configuredSocketPathSet,
+	identity socketIdentity,
+) error {
+	quarantine, err := newSocketQuarantine(path, configuredPaths, socketCleanupHooks{})
+	if err != nil {
+		return fmt.Errorf("prepare owned unix socket quarantine for %q: %w", path, err)
+	}
+	defer quarantine.close()
+
+	if err := quarantine.moveIn(); err != nil {
+		if errors.Is(err, errSocketSourceUnavailable) || os.IsNotExist(err) {
+			return finishSocketQuarantine(quarantine, nil)
+		}
+		return finishSocketQuarantine(quarantine, fmt.Errorf("quarantine owned unix socket path %q: %w", path, err))
+	}
+
+	matches, err := quarantine.entryMatchesIdentity(identity)
+	if err != nil {
+		return finishSocketQuarantine(quarantine, fmt.Errorf("inspect owned unix socket path %q: %w", path, err))
+	}
+	if !matches {
+		if err := quarantine.restore(); err != nil {
+			return finishSocketQuarantine(quarantine, fmt.Errorf("restore replacement at unix socket path %q: %w", path, err))
+		}
+		return finishSocketQuarantine(quarantine, nil)
+	}
+	if err := quarantine.removeEntry(); err != nil {
+		return finishSocketQuarantine(quarantine, fmt.Errorf("remove owned unix socket path %q: %w", path, err))
+	}
+	return finishSocketQuarantine(quarantine, nil)
 }
 
 // loop runs the supervisor's main lifecycle: it starts the initial worker,
@@ -634,10 +686,18 @@ func (rs *runState) teardown() {
 
 	for _, l := range rs.listeners {
 		if l.listener != nil {
-			l.listener.Close()
+			closeErr := l.listener.Close()
+			if closeErr == nil && l.network == unixNetwork && l.socketIdentity != nil {
+				configuredPaths := configuredSocketPaths(rs.cfg.paths)
+				if err := removeOwnedUnixSocket(l.path, configuredPaths, *l.socketIdentity); err != nil && rs.cfg.stderr != nil {
+					fmt.Fprintf(rs.cfg.stderr, "failed to remove owned unix socket file:%s:%s\n", l.path, err)
+				}
+			} else if closeErr != nil && rs.cfg.stderr != nil {
+				fmt.Fprintf(rs.cfg.stderr, "failed to close listener:%s\n", closeErr)
+			}
 		}
 		if l.packet != nil {
-			l.packet.Close()
+			_ = l.packet.Close()
 		}
 	}
 }

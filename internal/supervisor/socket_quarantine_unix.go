@@ -124,6 +124,19 @@ func socketDirectoryIdentityForPath(path string) (socketDirectoryIdentity, error
 	return socketDirectoryIdentityFromStat(&stat), nil
 }
 
+func socketIdentityForPath(path string) (socketIdentity, error) {
+	var stat unix.Stat_t
+	if err := unix.Lstat(path, &stat); err != nil {
+		return socketIdentity{}, err
+	}
+	return socketIdentityFromStat(&stat), nil
+}
+
+func socketIdentityFromStat(stat *unix.Stat_t) socketIdentity {
+	//nolint:unconvert // Darwin represents Stat_t.Dev as int32.
+	return socketIdentity{device: uint64(stat.Dev), inode: stat.Ino}
+}
+
 func socketDirectoryIdentityFromStat(stat *unix.Stat_t) socketDirectoryIdentity {
 	//nolint:unconvert // Darwin represents Stat_t.Dev as int32.
 	return socketDirectoryIdentity{device: uint64(stat.Dev), inode: stat.Ino}
@@ -178,8 +191,37 @@ func (q *unixSocketQuarantine) entryIsSocket() (bool, error) {
 	return stat.Mode&unix.S_IFMT == unix.S_IFSOCK, nil
 }
 
+func (q *unixSocketQuarantine) entryMatchesIdentity(identity socketIdentity) (bool, error) {
+	var stat unix.Stat_t
+	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return false, err
+	}
+	if !sameUnixIdentity(&q.sourceStat, &stat) {
+		return false, errSocketSourceChanged
+	}
+	return socketIdentityFromStat(&stat) == identity, nil
+}
+
 func (q *unixSocketQuarantine) restore() error {
+	var stat unix.Stat_t
+	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if !sameUnixIdentity(&q.sourceStat, &stat) {
+		return fmt.Errorf("quarantined unix socket changed before restore")
+	}
 	return renameSocketEntryNoReplace(q.dirFD, q.slotName, q.parentFD, q.sourceName)
+}
+
+func (q *unixSocketQuarantine) removeEntry() error {
+	var stat unix.Stat_t
+	if err := unix.Fstatat(q.dirFD, q.slotName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if !sameUnixIdentity(&q.sourceStat, &stat) {
+		return fmt.Errorf("quarantined unix socket changed before removal")
+	}
+	return unix.Unlinkat(q.dirFD, q.slotName, 0)
 }
 
 func (q *unixSocketQuarantine) retainEntry() error {

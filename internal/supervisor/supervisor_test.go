@@ -29,16 +29,69 @@ func TestRunRejectsSparseDescriptorLayout(t *testing.T) {
 
 const testShellPath = "/bin/sh"
 
-func TestTeardownRetainsUnixSocket(t *testing.T) {
+func TestTeardownRemovesOwnedUnixSocket(t *testing.T) {
+	requireSafeSocketQuarantine(t)
 	path := filepath.Join(t.TempDir(), "server.sock")
 	l, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	l.(*net.UnixListener).SetUnlinkOnClose(false)
-	rs := &runState{cfg: &Starter{}, listeners: []listener{{listener: l, network: unixNetwork, path: path}}}
+	identity, err := socketIdentityForPath(path)
+	require.NoError(t, err)
+	rs := &runState{
+		cfg: &Starter{paths: []string{path}},
+		listeners: []listener{{
+			listener:       l,
+			network:        unixNetwork,
+			path:           path,
+			socketIdentity: &identity,
+		}},
+	}
 	rs.teardown()
-	info, err := os.Lstat(path)
+	_, err = os.Lstat(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+type replacementOnCloseListener struct {
+	net.Listener
+	path string
+}
+
+func (l *replacementOnCloseListener) Close() error {
+	if err := os.Rename(l.path, l.path+".owned"); err != nil {
+		return err
+	}
+	if err := l.Listener.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(l.path, []byte("keep"), 0o600)
+}
+
+func TestTeardownPreservesUnixSocketPathReplacement(t *testing.T) {
+	requireSafeSocketQuarantine(t)
+	path := filepath.Join(t.TempDir(), "server.sock")
+	bound, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)
+	require.NoError(t, err)
+	bound.(*net.UnixListener).SetUnlinkOnClose(false)
+	identity, err := socketIdentityForPath(path)
+	require.NoError(t, err)
+
+	rs := &runState{
+		cfg: &Starter{paths: []string{path}},
+		listeners: []listener{{
+			listener:       &replacementOnCloseListener{Listener: bound, path: path},
+			network:        unixNetwork,
+			path:           path,
+			socketIdentity: &identity,
+		}},
+	}
+	rs.teardown()
+
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, []byte("keep"), contents)
+	info, err := os.Lstat(path + ".owned")
 	require.NoError(t, err)
 	require.NotZero(t, info.Mode()&os.ModeSocket)
 }

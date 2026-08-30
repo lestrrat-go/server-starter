@@ -40,6 +40,10 @@ type listener struct {
 	host    string
 	port    int
 	path    string
+
+	// socketIdentity identifies the socket entry created by Run. Teardown uses
+	// it to distinguish that entry from a replacement installed at the same path.
+	socketIdentity *socketIdentity
 }
 
 // starterListener converts l, bound to fd, into the root package's Listener
