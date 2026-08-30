@@ -29,6 +29,13 @@ and the daemon shuts down its worker before reporting cancellation or a lost
 readiness connection. The regular foreground supervisor retries transient
 worker launch errors. Terminal launch errors stop its lifecycle immediately.
 
+Filesystem Unix socket paths must be absent before startup. The supervisor
+rejects every existing entry, including stale sockets, regular files,
+directories, and symlinks, and never removes the pathname during startup or
+shutdown. This fail-closed behavior preserves an entry that another process
+may install after the initial check; operators must remove stale socket files
+before starting the supervisor again.
+
 On Unix, `--stop` and `--restart` attribute the state-file PID to the live lock
 owner. Linux supervisors add an inspectable record lock, while legacy
 flock-only control requires readable `/proc/locks`; if that file is unavailable

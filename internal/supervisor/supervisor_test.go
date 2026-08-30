@@ -29,16 +29,108 @@ func TestRunRejectsSparseDescriptorLayout(t *testing.T) {
 
 const testShellPath = "/bin/sh"
 
-func TestTeardownRemovesUnixSocket(t *testing.T) {
+func TestTeardownPreservesUnixSocketPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "server.sock")
 	l, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
 	rs := &runState{cfg: &Starter{}, listeners: []listener{{listener: l, network: unixNetwork, path: path}}}
 	rs.teardown()
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("unix socket path remains, stat error = %v", err)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("unix socket path was removed, stat error = %v", err)
+	}
+}
+
+func TestValidateUnixSocketPathAvailableRejectsExistingEntries(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+
+	tests := []struct {
+		name string
+		make func(t *testing.T) string
+	}{
+		{name: "regular file", make: func(t *testing.T) string {
+			path := filepath.Join(dir, "regular")
+			require.NoError(t, os.WriteFile(path, []byte("keep"), 0o600))
+			return path
+		}},
+		{name: "directory", make: func(t *testing.T) string {
+			path := filepath.Join(dir, "directory")
+			require.NoError(t, os.Mkdir(path, 0o700))
+			return path
+		}},
+		{name: "symlink", make: func(t *testing.T) string {
+			path := filepath.Join(dir, "symlink")
+			require.NoError(t, os.Symlink(target, path))
+			return path
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := test.make(t)
+			require.ErrorContains(t, validateUnixSocketPathAvailable(path), "already exists")
+			_, err := os.Lstat(path)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestRunPreservesExistingUnixEntries(t *testing.T) {
+	command, err := os.Executable()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+
+	entries := []struct {
+		name string
+		make func(t *testing.T) string
+	}{
+		{name: "regular file", make: func(t *testing.T) string {
+			path := filepath.Join(dir, "regular")
+			require.NoError(t, os.WriteFile(path, []byte("keep"), 0o600))
+			return path
+		}},
+		{name: "directory", make: func(t *testing.T) string {
+			path := filepath.Join(dir, "directory")
+			require.NoError(t, os.Mkdir(path, 0o700))
+			return path
+		}},
+		{name: "symlink", make: func(t *testing.T) string {
+			path := filepath.Join(dir, "symlink")
+			require.NoError(t, os.Symlink(target, path))
+			return path
+		}},
+		{name: "stale socket", make: func(t *testing.T) string {
+			path := filepath.Join(dir, "stale.sock")
+			listener, err := (&net.ListenConfig{}).Listen(context.Background(), unixNetwork, path)
+			require.NoError(t, err)
+			listener.(*net.UnixListener).SetUnlinkOnClose(false)
+			require.NoError(t, listener.Close())
+			return path
+		}},
+	}
+
+	for _, entry := range entries {
+		t.Run(entry.name, func(t *testing.T) {
+			path := entry.make(t)
+			sd, err := NewStarter(&config{command: command, paths: []string{path}})
+			require.NoError(t, err)
+
+			ctrl, err := sd.Run(context.Background())
+			require.Nil(t, ctrl)
+			require.ErrorContains(t, err, "already exists")
+			_, err = os.Lstat(path)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateUnixSocketPathAvailableAllowsNonFilesystemAddresses(t *testing.T) {
+	for _, path := range []string{"", "@server-starter-test", "\x00server-starter-test"} {
+		require.NoError(t, validateUnixSocketPathAvailable(path))
 	}
 }
 

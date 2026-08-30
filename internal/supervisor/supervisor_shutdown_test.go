@@ -66,7 +66,10 @@ func TestShutdownForcesStubbornWorkerAndCompletesTeardown(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(started), sd.shutdownGracePeriod)
 	require.NoFileExists(t, statusPath)
 	require.NoFileExists(t, pidPath)
-	require.NoFileExists(t, socketPath)
+	// The supervisor deliberately leaves the pathname in place. Removing by
+	// pathname during teardown could unlink a replacement installed by another
+	// process after the listener was created.
+	require.FileExists(t, socketPath)
 
 	var waitStatus syscall.WaitStatus
 	waited, waitErr := syscall.Wait4(workerPID, &waitStatus, syscall.WNOHANG, nil)
