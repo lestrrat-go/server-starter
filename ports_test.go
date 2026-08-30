@@ -25,33 +25,118 @@ func (fakeListener) Listen() (net.Listener, error) {
 func (fakeListener) String() string { return "fake" }
 
 func TestPorts(t *testing.T) {
-	expect := starter.List{
-		starter.NewTCPListener("127.0.0.1", 9090, 4),
-		starter.NewTCPListener("", 8080, 5),
-		starter.NewUnixListener("/foo/bar/baz.sock", 6),
-	}
+	t.Run("configured", func(t *testing.T) {
+		expect := starter.List{
+			starter.NewTCPListener("127.0.0.1", 9090, 4),
+			starter.NewTCPListener("", 8080, 5),
+			starter.NewUnixListener("/foo/bar/baz.sock", 6),
+		}
 
-	spec, err := starter.FormatPorts(expect...)
-	require.NoError(t, err)
-	t.Setenv(starter.PortEnvName, spec)
-	ports, err := starter.Ports()
-	require.NoError(t, err)
-	require.Len(t, ports, len(expect))
+		spec, err := starter.FormatPorts(expect...)
+		require.NoError(t, err)
+		t.Setenv(starter.PortEnvName, spec)
+		ports, err := starter.Ports()
+		require.NoError(t, err)
+		require.Len(t, ports, len(expect))
 
-	for i, port := range ports {
-		require.Equal(t, expect[i].Fd(), port.Fd())
-		_, gotTCP := port.(starter.TCPListener)
-		_, expectTCP := expect[i].(starter.TCPListener)
-		require.Equal(t, expectTCP, gotTCP)
-	}
+		for i, port := range ports {
+			require.Equal(t, expect[i].Fd(), port.Fd())
+			_, gotTCP := port.(starter.TCPListener)
+			_, expectTCP := expect[i].(starter.TCPListener)
+			require.Equal(t, expectTCP, gotTCP)
+		}
+	})
+
+	t.Run("environment is missing", func(t *testing.T) {
+		t.Setenv(starter.PortEnvName, "")
+
+		ports, err := starter.Ports()
+		require.ErrorIs(t, err, starter.ErrNoListeningTarget)
+		require.Nil(t, ports)
+	})
 }
 
-func TestPortsNoEnv(t *testing.T) {
-	t.Setenv(starter.PortEnvName, "")
+// TestPortSpecRoundTrip checks that the two listener protocol variables
+// preserve every listener type the v2 supervisor can emit.
+func TestPortSpecRoundTrip(t *testing.T) {
+	roundTrip := func(t *testing.T, list starter.List) {
+		t.Helper()
+		spec, err := starter.FormatPorts(list...)
+		require.NoError(t, err)
+		types, err := starter.FormatSocketTypes(list...)
+		require.NoError(t, err)
+		if len(list) == 0 {
+			got, err := starter.ParsePorts(spec)
+			require.NoError(t, err)
+			require.Equal(t, list, got)
+			return
+		}
+		t.Setenv(starter.PortEnvName, spec)
+		t.Setenv(starter.SocketTypesEnvName, types)
+		got, err := starter.Ports()
+		require.NoError(t, err)
+		require.Equal(t, list, got)
+	}
 
-	ports, err := starter.Ports()
-	require.ErrorIs(t, err, starter.ErrNoListeningTarget)
-	require.Nil(t, ports)
+	t.Run("empty list", func(t *testing.T) {
+		var list starter.List
+		roundTrip(t, list)
+	})
+
+	t.Run("bare TCP port", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewTCPListener("", 8080, 3)})
+	})
+
+	t.Run("TCP host and port", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewTCPListener("10.0.0.5", 9090, 4)})
+	})
+
+	t.Run("TCP ipv6 host and port", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewTCPListener("::1", 9090, 5)})
+	})
+
+	t.Run("bare UDP port", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewUDPListener("", 8080, 6)})
+	})
+
+	t.Run("UDP host and port", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewUDPListener("192.168.1.20", 9092, 7)})
+	})
+
+	t.Run("UDP hostname and port", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewUDPListener("upstream", 9092, 7)})
+	})
+
+	t.Run("UDP ipv6 host and port", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewUDPListener("2001:db8::1", 9093, 8)})
+	})
+
+	t.Run("absolute unix socket path", func(t *testing.T) {
+		roundTrip(t, starter.List{starter.NewUnixListener("/var/run/app.sock", 9)})
+	})
+
+	t.Run("grammar-ambiguous unix socket paths", func(t *testing.T) {
+		for _, path := range []string{
+			"8080", "db:5432", "a:b:8080", "ubuntu.internal:8080", "u8080",
+			"db:u5432", "ubuntu.internal:u8080", " 8080", " [::1]:5432", " u8080", "8080 ",
+		} {
+			list := starter.List{starter.NewUnixListener(path, 9)}
+			roundTrip(t, list)
+		}
+	})
+
+	t.Run("mixed multi-target list", func(t *testing.T) {
+		roundTrip(t, starter.List{
+			starter.NewTCPListener("", 8080, 3),
+			starter.NewTCPListener("10.0.0.5", 9090, 4),
+			starter.NewTCPListener("::1", 9091, 5),
+			starter.NewUDPListener("", 8081, 6),
+			starter.NewUDPListener("192.168.1.20", 9092, 7),
+			starter.NewUDPListener("2001:db8::1", 9093, 8),
+			starter.NewUnixListener("/var/run/app.sock", 9),
+			starter.NewUnixListener("8080", 10),
+		})
+	})
 }
 
 func TestPortsUsesSocketTypeMetadata(t *testing.T) {
@@ -426,16 +511,45 @@ func TestFormatPorts(t *testing.T) {
 	})
 
 	// Round-trip coverage against Ports for every valid shape the supervisor can
-	// emit, including UDP, lives in TestListFormatPortsPortsRoundTrip in
-	// listener_test.go.
+	// emit, including UDP, lives in TestPortSpecRoundTrip.
 
-	t.Run("formats a List via variadic unpacking", func(t *testing.T) {
-		list := starter.List{
-			starter.NewTCPListener("127.0.0.1", 9090, 4),
-			starter.NewUnixListener("/tmp/app.sock", 5),
+	t.Run("formats Lists", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			list      starter.List
+			wantPorts string
+			wantTypes string
+		}{
+			{
+				name: "TCP and unix",
+				list: starter.List{
+					starter.NewTCPListener("127.0.0.1", 9090, 4),
+					starter.NewUnixListener("/tmp/app.sock", 5),
+				},
+				wantPorts: "127.0.0.1:9090=4;/tmp/app.sock=5",
+				wantTypes: "4=tcp;5=unix",
+			},
+			{
+				name: "mixed transports",
+				list: starter.List{
+					starter.NewTCPListener("10.0.0.5", 9090, 3),
+					starter.NewUDPListener("192.168.1.20", 9092, 4),
+					starter.NewUnixListener("/var/run/app.sock", 5),
+				},
+				wantPorts: "10.0.0.5:9090=3;192.168.1.20:9092=4;/var/run/app.sock=5",
+				wantTypes: "3=tcp;4=udp;5=unix",
+			},
 		}
-		spec, err := starter.FormatPorts(list...)
-		require.NoError(t, err)
-		require.Equal(t, "127.0.0.1:9090=4;/tmp/app.sock=5", spec)
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				spec, err := starter.FormatPorts(test.list...)
+				require.NoError(t, err)
+				require.Equal(t, test.wantPorts, spec)
+				types, err := starter.FormatSocketTypes(test.list...)
+				require.NoError(t, err)
+				require.Equal(t, test.wantTypes, types)
+			})
+		}
 	})
 }
