@@ -2,5 +2,8 @@ Changes
 =======
 
 v2 has many incompatibilities with v0. To see the full list of differences
-between v0 and v2, please read the [Changes-v2](./Changes-v2) file. For a
+between v0 and v2, please read the [Changes-v2.md](./Changes-v2.md) file. For a
 step-by-step migration guide with code examples, see [MIGRATION.md](./MIGRATION.md).
+
+UNRELEASED
+  * Initial release
