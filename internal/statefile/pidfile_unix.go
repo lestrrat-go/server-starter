@@ -112,7 +112,6 @@ func openDirectoryPath(path, controlPath string) (*os.File, error) {
 		}
 	}
 	components := pathComponents(path)
-	symlinks := 0
 	for len(components) > 0 {
 		name := components[0]
 		components = components[1:]
@@ -135,25 +134,13 @@ func openDirectoryPath(path, controlPath string) (*os.File, error) {
 			return nil, err
 		}
 		if entry.Mode&unix.S_IFMT == unix.S_IFLNK {
-			symlinks++
-			if symlinks > 40 {
-				closeDirectories()
-				return nil, fmt.Errorf("too many symbolic links in %q", path)
-			}
-			target, readErr := readDirectoryLink(current, name)
-			if readErr != nil {
-				closeDirectories()
-				return nil, readErr
-			}
-			if filepath.IsAbs(target) {
-				for len(directories) > 1 {
-					_ = directories[len(directories)-1].Close()
-					directories = directories[:len(directories)-1]
-				}
-				current = directories[0]
-			}
-			components = append(pathComponents(target), components...)
-			continue
+			closeDirectories()
+			return nil, fmt.Errorf(
+				"pid file %q parent directory %q contains symbolic link component %q",
+				controlPath,
+				path,
+				name,
+			)
 		}
 
 		fd, openErr := unix.Openat(
