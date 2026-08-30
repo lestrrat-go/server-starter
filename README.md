@@ -67,6 +67,7 @@ gives you only the worker-facing side of the protocol, described below.
 
 Coming from the v0 line of this module (the `listener` subpackage and the
 importable supervisor)? See [MIGRATION.md](./MIGRATION.md).
+Maintainers should follow [RELEASING.md](./RELEASING.md) for v2 releases.
 
 ## WORKER-SIDE USAGE
 
