@@ -34,22 +34,22 @@ func TestTCPListenerFd(t *testing.T) {
 func TestUDPListenerString(t *testing.T) {
 	t.Run("wildcard address", func(t *testing.T) {
 		l := starter.NewUDPListener("0.0.0.0", 8080, 3)
-		require.Equal(t, "udp://8080=3", l.String())
+		require.Equal(t, "8080=3", l.String())
 	})
 
 	t.Run("specific address", func(t *testing.T) {
 		l := starter.NewUDPListener("192.168.1.20", 9092, 5)
-		require.Equal(t, "udp://192.168.1.20:9092=5", l.String())
+		require.Equal(t, "192.168.1.20:9092=5", l.String())
 	})
 
 	t.Run("ipv6 address", func(t *testing.T) {
 		l := starter.NewUDPListener("2001:db8::1", 9093, 6)
-		require.Equal(t, "udp://[2001:db8::1]:9093=6", l.String())
+		require.Equal(t, "[2001:db8::1]:9093=6", l.String())
 	})
 
 	t.Run("hostname", func(t *testing.T) {
 		l := starter.NewUDPListener("upstream", 9094, 7)
-		require.Equal(t, "udp://upstream:9094=7", l.String())
+		require.Equal(t, "upstream:9094=7", l.String())
 	})
 }
 
@@ -84,7 +84,7 @@ func TestNewTCPListenerNormalisesEmptyAddr(t *testing.T) {
 func TestNewUDPListenerNormalisesEmptyAddr(t *testing.T) {
 	l := starter.NewUDPListener("", 8080, 1)
 	require.Equal(t, "0.0.0.0", l.Addr)
-	require.Equal(t, "udp://8080=1", l.String())
+	require.Equal(t, "8080=1", l.String())
 }
 
 func TestNewUnixListenerCanonicalPath(t *testing.T) {
@@ -101,13 +101,13 @@ func TestNewUnixListenerCanonicalPath(t *testing.T) {
 		{name: "host and port grammar", path: "db:5432", want: "./db:5432"},
 		{name: "multi-colon host and port", path: "a:b:8080", want: "./a:b:8080"},
 		{name: "TCP hostname beginning with u", path: "ubuntu.internal:8080", want: "./ubuntu.internal:8080"},
-		{name: "explicit UDP grammar", path: "udp://8080", want: "./udp://8080"},
-		{name: "reserved UDP prefix", path: "udp://relative.sock", want: "./udp://relative.sock"},
+		{name: "path beginning with udp", path: "udp://8080", want: "udp://8080"},
+		{name: "relative path beginning with udp", path: "udp://relative.sock", want: "udp://relative.sock"},
 		{name: "leading UDP grammar", path: "u8080", want: "./u8080"},
 		{name: "trailing UDP grammar", path: "db:u5432", want: "./db:u5432"},
 		{name: "leading space before bare port", path: " 8080", want: "./ 8080"},
 		{name: "trailing space after bare port", path: "8080 ", want: "./8080 "},
-		{name: "leading space before explicit UDP grammar", path: " udp://8080", want: "./ udp://8080"},
+		{name: "leading space before udp path", path: " udp://8080", want: " udp://8080"},
 		{name: "leading space before legacy UDP grammar", path: " u8080", want: "./ u8080"},
 	}
 	for _, tc := range tests {
@@ -128,7 +128,10 @@ func TestListFormatPorts(t *testing.T) {
 	}
 	spec, err := starter.FormatPorts(list...)
 	require.NoError(t, err)
-	require.Equal(t, "10.0.0.5:9090=3;udp://192.168.1.20:9092=4;/var/run/app.sock=5", spec)
+	require.Equal(t, "10.0.0.5:9090=3;192.168.1.20:9092=4;/var/run/app.sock=5", spec)
+	types, err := starter.FormatSocketTypes(list...)
+	require.NoError(t, err)
+	require.Equal(t, "3=tcp;4=udp;5=unix", types)
 }
 
 func TestListStringCompatibility(t *testing.T) {
@@ -137,21 +140,27 @@ func TestListStringCompatibility(t *testing.T) {
 		starter.NewUDPListener("192.168.1.20", 9092, 4),
 		starter.NewUnixListener("/var/run/app.sock", 5),
 	}
-	require.Equal(t, "10.0.0.5:9090=3;udp://192.168.1.20:9092=4;/var/run/app.sock=5", list.String())
+	require.Equal(t, "10.0.0.5:9090=3;192.168.1.20:9092=4;/var/run/app.sock=5", list.String())
 }
 
-// TestListFormatPortsParsePortsRoundTrip checks that FormatPorts and
-// ParsePorts are inverses of each other, scoped to the shapes the
-// supervisor can actually emit: a bare TCP port, "host:port",
-// "[ipv6]:port" (each with and without the UDP "udp://" prefix), empty
-// lists, and unix socket paths, including relative paths that overlap the
-// network grammar.
-func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
+// TestListFormatPortsPortsRoundTrip checks that the two listener protocol
+// variables preserve every listener type the v2 supervisor can emit.
+func TestListFormatPortsPortsRoundTrip(t *testing.T) {
 	roundTrip := func(t *testing.T, list starter.List) {
 		t.Helper()
 		spec, err := starter.FormatPorts(list...)
 		require.NoError(t, err)
-		got, err := starter.ParsePorts(spec)
+		types, err := starter.FormatSocketTypes(list...)
+		require.NoError(t, err)
+		if len(list) == 0 {
+			got, err := starter.ParsePorts(spec)
+			require.NoError(t, err)
+			require.Equal(t, list, got)
+			return
+		}
+		t.Setenv(starter.PortEnvName, spec)
+		t.Setenv(starter.SocketTypesEnvName, types)
+		got, err := starter.Ports()
 		require.NoError(t, err)
 		require.Equal(t, list, got)
 	}
@@ -195,10 +204,8 @@ func TestListFormatPortsParsePortsRoundTrip(t *testing.T) {
 
 	t.Run("grammar-ambiguous unix socket paths", func(t *testing.T) {
 		for _, path := range []string{
-			"8080", "db:5432", "a:b:8080", "ubuntu.internal:8080",
-			"udp://8080", "udp://relative.sock", "u8080", "db:u5432",
-			"ubuntu.internal:u8080", " 8080", " [::1]:5432", " udp://8080",
-			" u8080", "8080 ",
+			"8080", "db:5432", "a:b:8080", "ubuntu.internal:8080", "u8080",
+			"db:u5432", "ubuntu.internal:u8080", " 8080", " [::1]:5432", " u8080", "8080 ",
 		} {
 			list := starter.List{starter.NewUnixListener(path, 9)}
 			roundTrip(t, list)

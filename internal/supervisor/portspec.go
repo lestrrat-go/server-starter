@@ -43,9 +43,9 @@ type listener struct {
 }
 
 // starterListener converts l, bound to fd, into the root package's Listener
-// representation. Formatting the port spec through starter.FormatPorts rather
-// than with an inline fmt.Sprintf keeps the supervisor's writer and the
-// worker's reader (starter.ParsePorts) on the same validation rules.
+// representation. The supervisor formats it through starter.FormatPorts and
+// starter.FormatSocketTypes, preserving Perl's port wire format while making
+// v2 socket types available through LSS2_SOCKET_TYPES.
 func (l listener) starterListener(fd int) starter.Listener {
 	switch {
 	case l.network == unixNetwork:
@@ -130,10 +130,6 @@ func validatePortTargetDelimiter(target string) error {
 	}
 
 	udp := false
-	if explicitTarget, ok := strings.CutPrefix(target, "udp://"); ok {
-		udp = true
-		target = explicitTarget
-	}
 
 	host := ""
 	portText := target

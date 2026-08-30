@@ -54,6 +54,27 @@ func TestPortsNoEnv(t *testing.T) {
 	require.Nil(t, ports)
 }
 
+func TestPortsUsesSocketTypeMetadata(t *testing.T) {
+	t.Setenv(starter.PortEnvName, "8080=3;/tmp/app.sock=4")
+	t.Setenv(starter.SocketTypesEnvName, "3=udp;4=unix")
+
+	ports, err := starter.Ports()
+	require.NoError(t, err)
+	require.Equal(t, starter.List{
+		starter.NewUDPListener("", 8080, 3),
+		starter.NewUnixListener("/tmp/app.sock", 4),
+	}, ports)
+}
+
+func TestPortsRejectsInvalidSocketTypeMetadata(t *testing.T) {
+	t.Setenv(starter.PortEnvName, "8080=3")
+	t.Setenv(starter.SocketTypesEnvName, "3=unix")
+
+	ports, err := starter.Ports()
+	require.Nil(t, ports)
+	require.ErrorContains(t, err, starter.SocketTypesEnvName)
+}
+
 func TestParsePorts(t *testing.T) {
 	t.Run("bare port", func(t *testing.T) {
 		got, err := starter.ParsePorts("8080=3")
@@ -87,7 +108,7 @@ func TestParsePorts(t *testing.T) {
 	})
 
 	t.Run("UDP host and port", func(t *testing.T) {
-		got, err := starter.ParsePorts("udp://127.0.0.1:9090=4")
+		got, err := starter.ParsePorts("127.0.0.1:u9090=4")
 		require.NoError(t, err)
 		require.Equal(t, starter.NewUDPListener("127.0.0.1", 9090, 4), got[0])
 	})
@@ -104,8 +125,8 @@ func TestParsePorts(t *testing.T) {
 		require.Equal(t, starter.NewUDPListener("", 8080, 4), got[0])
 	})
 
-	t.Run("legacy UDP IPv4 host and port", func(t *testing.T) {
-		got, err := starter.ParsePorts("u127.0.0.1:8080=4")
+	t.Run("UDP IPv4 host and port", func(t *testing.T) {
+		got, err := starter.ParsePorts("127.0.0.1:u8080=4")
 		require.NoError(t, err)
 		require.Equal(t, starter.NewUDPListener("127.0.0.1", 8080, 4), got[0])
 	})
@@ -123,23 +144,16 @@ func TestParsePorts(t *testing.T) {
 	})
 
 	t.Run("UDP IPv6 host and port", func(t *testing.T) {
-		got, err := starter.ParsePorts("udp://[::1]:9090=4")
-		require.NoError(t, err)
-		require.Equal(t, starter.NewUDPListener("::1", 9090, 4), got[0])
-		require.Equal(t, "udp://[::1]:9090=4", got[0].String())
-	})
-
-	t.Run("legacy UDP IPv6 host and port", func(t *testing.T) {
-		got, err := starter.ParsePorts("u[::1]:9090=4")
+		got, err := starter.ParsePorts("[::1]:u9090=4")
 		require.NoError(t, err)
 		require.Equal(t, starter.NewUDPListener("::1", 9090, 4), got[0])
 	})
 
 	t.Run("UDP zone-qualified IPv6 host and port", func(t *testing.T) {
-		got, err := starter.ParsePorts("u[fe80::1%lo0]:8080=3")
+		got, err := starter.ParsePorts("[fe80::1%lo0]:u8080=3")
 		require.NoError(t, err)
 		require.Equal(t, starter.NewUDPListener("fe80::1%lo0", 8080, 3), got[0])
-		require.Equal(t, "udp://[fe80::1%lo0]:8080=3", got[0].String())
+		require.Equal(t, "[fe80::1%lo0]:8080=3", got[0].String())
 	})
 
 	t.Run("UDP port suffix preserves a valid hostname beginning with u", func(t *testing.T) {
@@ -222,7 +236,7 @@ func TestParsePorts(t *testing.T) {
 	})
 
 	t.Run("mixed multi-target spec", func(t *testing.T) {
-		got, err := starter.ParsePorts("unix.sock=5;udp://8080=3;10.0.0.5:9090=4;/foo/bar.sock=6")
+		got, err := starter.ParsePorts("unix.sock=5;u8080=3;10.0.0.5:9090=4;/foo/bar.sock=6")
 		require.NoError(t, err)
 		require.Len(t, got, 4)
 		require.Equal(t, starter.NewUnixListener("unix.sock", 5), got[0])
@@ -404,17 +418,16 @@ func TestFormatPorts(t *testing.T) {
 		listener := starter.NewUDPListener("u127.0.0.1", 8080, 3)
 		spec, err := starter.FormatPorts(listener)
 		require.NoError(t, err)
-		require.Equal(t, "udp://u127.0.0.1:8080=3", spec)
+		require.Equal(t, "u127.0.0.1:8080=3", spec)
 
-		got, err := starter.ParsePorts(spec)
+		types, err := starter.FormatSocketTypes(listener)
 		require.NoError(t, err)
-		require.Equal(t, starter.List{listener}, got)
+		require.Equal(t, "3=udp", types)
 	})
 
-	// Round-trip coverage against ParsePorts for every valid shape the
-	// supervisor can emit (bare port, host:port, bracketed IPv6, unix
-	// path, and the UDP variants) lives in
-	// TestListFormatPortsParsePortsRoundTrip in listener_test.go.
+	// Round-trip coverage against Ports for every valid shape the supervisor can
+	// emit, including UDP, lives in TestListFormatPortsPortsRoundTrip in
+	// listener_test.go.
 
 	t.Run("formats a List via variadic unpacking", func(t *testing.T) {
 		list := starter.List{

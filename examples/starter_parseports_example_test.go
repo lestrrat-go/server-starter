@@ -9,13 +9,11 @@ import (
 // Example_starter_parseports shows the wire format carried by
 // SERVER_STARTER_PORT without needing an environment variable or a real
 // supervisor: a literal spec is fed straight to ParsePorts. The spec below
-// covers the three listener kinds a worker can receive — a TCP hostname that
-// begins with "u", a UDP target on a specific host:port, and a relative unix
-// socket path whose "./" prefix keeps its numeric name distinct from a TCP
-// port. See
+// covers a TCP hostname that begins with "u" and a relative Unix socket path
+// whose "./" prefix keeps its numeric name distinct from a TCP port. See
 // Example_starter_mixedListeners for materializing a mixed list.
 func Example_starter_parseports() {
-	spec := "upstream:8080=3;udp://127.0.0.1:8081=4;./9000=5"
+	spec := "upstream:8080=3;127.0.0.1:8081=4;./9000=5"
 
 	list, err := starter.ParsePorts(spec)
 	if err != nil {
@@ -31,7 +29,7 @@ func Example_starter_parseports() {
 
 	// Output:
 	// upstream:8080=3 (fd=3)
-	// udp://127.0.0.1:8081=4 (fd=4)
+	// 127.0.0.1:8081=4 (fd=4)
 	// ./9000=5 (fd=5)
 }
 
