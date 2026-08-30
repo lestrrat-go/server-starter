@@ -9,7 +9,7 @@ import (
 	"github.com/lestrrat-go/server-starter/v2/internal/supervisor"
 )
 
-const version = "2.0.0-dev"
+var version = "2.0.0-dev"
 
 type options struct {
 	OptArgs                []string
