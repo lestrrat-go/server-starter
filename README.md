@@ -109,6 +109,8 @@ shows that workflow.
 
 See the `examples/` directory for tested examples of the worker-side APIs,
 including the mixed-list workflow.
+The [`samples/`](./samples/README.md) directory contains runnable HTTP and UDP
+echo workers.
 
 ## SUPERVISOR PORT DESCRIPTORS
 

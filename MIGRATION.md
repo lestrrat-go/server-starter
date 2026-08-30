@@ -86,6 +86,8 @@ knows a descriptor is UDP continues to open it as UDP. This implementation
 also sets `LSS2_SOCKET_TYPES`, using `fd=type` entries such as
 `3=tcp;4=udp;5=unix`, so a v2 worker can select `UDPListener` and
 `ListenPacket` automatically. Perl workers ignore that additional variable.
+The [`samples/`](./samples/README.md) directory includes runnable HTTP and
+UDP echo workers that demonstrate both listener types.
 
 ## Listener-spec validation is stricter
 

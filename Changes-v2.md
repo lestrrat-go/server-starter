@@ -21,6 +21,12 @@ mappings and code examples, see [MIGRATION.md](./MIGRATION.md).
   only, while `ListenPacketAll` accepts UDP targets only. Programs with mixed
   listeners should use `Ports` and the exported concrete listener types.
 
+## Sample workers
+
+* The [`samples/`](./samples/README.md) directory provides runnable HTTP and
+  UDP echo workers. They demonstrate stream and packet listener recovery from
+  `start_server`.
+
 ## Listener specifications
 
 * TCP and Unix listener specifications retain Server::Starter's

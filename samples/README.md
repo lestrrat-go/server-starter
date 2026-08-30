@@ -19,7 +19,7 @@ Run the HTTP worker on an inherited TCP listener:
 Run the UDP echo worker on an inherited UDP packet connection:
 
 ```sh
-./start_server --port=udp://127.0.0.1:9000 -- ./samples/udp-echo/udp-echo
+./start_server --port=127.0.0.1:u9000 -- ./samples/udp-echo/udp-echo
 ```
 
 The workers require `start_server`; they do not bind their own ports. Send
